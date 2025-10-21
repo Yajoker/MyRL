@@ -1,5 +1,7 @@
 """感知模块 - 处理观测数据并生成特征表示"""
 
+"""感知模块 - 处理观测数据并生成特征表示"""
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -28,6 +30,33 @@ class LidarProcessor:
         # 历史缓冲区
         self.scan_history = deque(maxlen=history_length)
         self.robot_state_history = deque(maxlen=history_length)
+        
+        # 最新栅格图和障碍物
+        self.latest_grid_map = None
+        self.latest_obstacles = None
+        self.latest_scan = None
+    
+    def update(self, scan_data, robot_state=None):
+        """
+        更新内部状态并处理扫描数据
+        
+        参数:
+            scan_data: 激光雷达扫描数据 [距离1, 距离2, ...]
+            robot_state: 机器人状态 [x, y, theta, v, omega]
+            
+        返回:
+            obstacles: 提取的障碍物列表
+        """
+        # 保存最新扫描数据
+        self.latest_scan = scan_data
+        
+        # 处理扫描数据生成栅格图
+        self.latest_grid_map = self.process_scan(scan_data, robot_state)
+        
+        # 提取障碍物信息
+        self.latest_obstacles = self._extract_obstacles_from_scan(scan_data)
+        
+        return self.latest_obstacles
         
     def process_scan(self, scan_data, robot_state=None):
         """
@@ -80,6 +109,56 @@ class LidarProcessor:
         self.scan_history.append(grid_map)
         
         return grid_map
+    
+    def get_occupancy_grid(self):
+        """
+        获取最新的占据栅格地图
+        
+        返回:
+            grid_map: 栅格地图，值为0-1之间表示占据概率
+        """
+        if self.latest_grid_map is None:
+            # 如果还没有处理过扫描数据，返回空栅格图
+            return np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
+        
+        return self.latest_grid_map
+    
+    def _extract_obstacles_from_scan(self, scan_data):
+        """
+        从激光雷达扫描数据中提取障碍物
+        
+        参数:
+            scan_data: 激光雷达扫描数据 [距离1, 距离2, ...]
+            
+        返回:
+            obstacles: 障碍物列表 [(x1, y1), (x2, y2), ...]
+        """
+        obstacles = []
+        
+        if scan_data is None or len(scan_data) == 0:
+            return obstacles
+        
+        # 计算激光束的角度增量
+        num_beams = len(scan_data)
+        angle_increment = 2 * np.pi / num_beams
+        
+        # 提取障碍物点
+        for i, distance in enumerate(scan_data):
+            # 如果距离超过最大范围或无效，则忽略
+            if distance > self.max_range or distance <= 0:
+                continue
+            
+            # 计算激光束角度（以机器人朝向为0度）
+            angle = i * angle_increment
+            
+            # 计算障碍物的相对坐标（局部坐标系）
+            obstacle_x = distance * np.cos(angle)
+            obstacle_y = distance * np.sin(angle)
+            
+            # 添加到障碍物列表
+            obstacles.append((obstacle_x, obstacle_y))
+        
+        return obstacles
     
     def get_feature_vector(self, scan_data, robot_state):
         """
