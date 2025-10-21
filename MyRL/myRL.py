@@ -175,7 +175,7 @@ class ETHSRLAgent:
         terminal = bool(collision) or bool(goal)
         return state, terminal
 
-    def select_action(self, state, goal=None, scan_data=None):
+    def select_action(self, state, goal=None, scan_data=None, deterministic=False):
         """
         根据当前状态选择动作
         
@@ -183,6 +183,7 @@ class ETHSRLAgent:
             state: 当前环境状态
             goal: 目标位置
             scan_data: 激光雷达扫描数据
+            deterministic: 是否使用确定性策略(默认为False)
             
         返回:
             action: 选定的动作
@@ -210,19 +211,23 @@ class ETHSRLAgent:
             print(f"已规划全局路径，从 {start_pos} 到 {self.current_goal}，路径点数: {len(self.global_path) if self.global_path else 0}")
         
         # 检查是否触发高层控制器更新子目标
-        trigger_update = self.high_trigger.should_trigger(
+        trigger_update, reason = self.high_trigger.check_trigger(
             state, 
             self.current_goal, 
             self.current_subgoal,
-            self.obstacles
+            self.obstacles,
+            scan_data=scan_data,
+            local_path=self.local_path
         )
         
         if trigger_update:
             self.high_trigger_count += 1
-            self.current_subgoal = self.high_controller.get_subgoal(
+            self.current_subgoal, mode, triggered = self.high_controller.select_subgoal(
                 state, 
                 self.current_goal,
-                self.obstacles
+                obstacles=self.obstacles,
+                scan_data=scan_data,
+                local_path=self.local_path
             )
             
             # 如果路径发生变化，重新规划全局路径
@@ -266,23 +271,24 @@ class ETHSRLAgent:
                     print("警告: 使用简单直线路径替代全局规划")
         
         # 从低层控制器获取动作
-        raw_action = self.low_controller.get_action(
+        raw_action = self.low_controller.select_action(
             state, 
-            self.current_subgoal or self.current_goal,
-            self.local_path
+            add_noise=not deterministic  # 根据deterministic参数决定是否添加噪声
         )
         
         # 通过安全层调整动作（如果配置启用）
+        safety_triggered = False
         if self.config.get('SAFETY_LAYER_ENABLED', True):
-            safety_triggered, safe_action = self.safety_layer.adjust_action(
+            is_safe, safe_action, safety_info = self.safety_layer.check_safety(
                 state, 
+                self.current_subgoal or self.current_goal,
                 raw_action,
-                self.obstacles,
-                self.local_path
+                path=self.local_path
             )
             
-            if safety_triggered:
+            if not is_safe:
                 self.safety_trigger_count += 1
+                safety_triggered = True
                 action = safe_action
             else:
                 action = raw_action
@@ -298,12 +304,12 @@ class ETHSRLAgent:
         
         # 创建返回信息
         info = {
-            'high_trigger': trigger_update,
+            'high_triggered': trigger_update,
             'subgoal': self.current_subgoal,
             'local_path': self.local_path,
             'global_path': self.global_path,
             'grid_map': self.grid_map,
-            'safety_active': self.config.get('SAFETY_LAYER_ENABLED', True) and safety_triggered if 'safety_triggered' in locals() else False
+            'safety_triggered': safety_triggered
         }
         
         return action, info
@@ -364,44 +370,68 @@ class ETHSRLAgent:
         
         # 更新低层控制器
         for _ in range(iterations):
-            info = self.low_controller.update_parameters(
-                self.replay_buffer, 
-                batch_size
-            )
+            self.low_controller.train(self.replay_buffer, batch_size)
             
-            for k, v in info.items():
-                update_info[k] += v / iterations
-                
         return update_info
     
-    def add_experience(self, state, action, reward, next_state, done, info=None):
+    def update_curriculum(self, epoch):
         """
-        向经验回放缓冲区添加经验
+        更新课程学习参数
+        
+        参数:
+            epoch: 当前训练轮数
+        """
+        self.curriculum.update(epoch)
+        
+        # 根据当前阶段更新高层触发阈值
+        self.high_trigger.risk_threshold = self.curriculum.get_risk_threshold()
+        
+        # 根据当前阶段调整安全层参数
+        self.safety_layer.v_threshold = self.config.get('V_THRESHOLD', 0.5) * (1.0 + 0.2 * (epoch / self.curriculum.total_epochs))
+    
+    def store_experience(self, state, action, reward, terminal, next_state, info=None):
+        """
+        存储经验到回放缓冲区
         
         参数:
             state: 当前状态
             action: 执行的动作
             reward: 获得的奖励
             next_state: 下一个状态
-            done: 是否终止
+            terminal: 是否终止
             info: 额外信息
         """
         # 计算难度（可根据奖励、是否碰撞等确定）
         difficulty = 'easy'
-        if info and 'difficulty' in info:
-            difficulty = info['difficulty']
-        elif done and reward < 0:  # 碰撞
+        safety_triggered = info.get('safety_triggered', False) if info else False
+        
+        if terminal and reward < 0:  # 碰撞
             difficulty = 'hard'
-        elif done and reward > 0:  # 成功到达
+        elif terminal and reward > 0:  # 成功到达
+            difficulty = 'medium'
+        elif safety_triggered:  # 安全干预
             difficulty = 'medium'
         
         # 添加到缓冲区
-        self.replay_buffer.add(state, action, reward, next_state, done, difficulty)
+        self.replay_buffer.add(
+            state, action, next_state, reward, terminal,
+            difficulty=difficulty, 
+            safety_triggered=safety_triggered
+        )
         
         # 更新统计信息
         self.episode_reward += reward
         self.episode_steps += 1
         self.total_steps += 1
+    
+    def train(self, batch_size=256):
+        """
+        训练模型
+        
+        参数:
+            batch_size: 批次大小
+        """
+        return self.update(batch_size=batch_size, iterations=1)
         
     def on_episode_end(self, success=False, collision=False):
         """
