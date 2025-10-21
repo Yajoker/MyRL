@@ -5,14 +5,15 @@ import torch
 import time
 from collections import deque
 
-from robot_nav.MyRL.global_planner import GlobalPathPlanner
-from robot_nav.MyRL.high_level_trigger import MultiSourceTrigger
-from robot_nav.MyRL.high_level_policy import HighLevelController
-from robot_nav.MyRL.low_level_policy import TD3Controller
-from robot_nav.MyRL.safety_layer import LyapunovSafetyLayer
-from robot_nav.MyRL.perception import LidarProcessor, HistoryEncoder
-from robot_nav.MyRL.utils.buffer import HierarchicalReplayBuffer
-from robot_nav.MyRL.utils.curriculum import CurriculumScheduler
+# 修复导入路径问题
+from global_planner import GlobalPathPlanner  
+from high_level_trigger import MultiSourceTrigger
+from high_level_policy import HighLevelController
+from low_level_policy import TD3Controller
+from safety_layer import LyapunovSafetyLayer
+from perception import LidarProcessor, HistoryEncoder
+from utils.buffer import HierarchicalReplayBuffer
+from utils.curriculum import CurriculumScheduler
 
 class ETHSRLAgent:
     """
@@ -36,6 +37,9 @@ class ETHSRLAgent:
         self.action_dim = action_dim
         self.config = config if config else {}
         self.device = device
+        
+        # 添加初始化代码: 初始化last_action数组
+        self._last_action = np.zeros(action_dim, dtype=np.float32)
         
         # 初始化全局路径规划器（战略层）
         self.global_planner = GlobalPathPlanner(
@@ -170,225 +174,139 @@ class ETHSRLAgent:
         # 终止标志
         terminal = bool(collision) or bool(goal)
         return state, terminal
-    def select_action(self, state, goal, obstacles=None, scan_data=None, deterministic=False):
+
+    def select_action(self, state, goal=None, scan_data=None):
         """
-        选择动作 - 主决策函数
+        根据当前状态选择动作
         
         参数:
-            state: 当前状态
+            state: 当前环境状态
             goal: 目标位置
-            obstacles: 障碍物列表 (可选)
-            scan_data: 激光扫描数据 (可选)
-            deterministic: 是否使用确定性策略
+            scan_data: 激光雷达扫描数据
             
         返回:
-            action: 选择的动作
-            info: 附加信息
+            action: 选定的动作
+            info: 额外信息
         """
-        # 更新当前状态和目标
+        # 更新当前状态
         self.current_state = state
-        self.current_goal = goal
-        self.obstacles = obstacles
+        if goal is not None:
+            self.current_goal = goal
         
-        # 处理感知输入
+        # 处理激光扫描数据
         if scan_data is not None:
-            grid_map = self.lidar_processor.process_scan(scan_data, state)
-            self.grid_map = grid_map
+            self.obstacles = self.lidar_processor.process_scan(scan_data)
+            self.grid_map = self.lidar_processor.get_occupancy_grid()
         
-        # 更新历史编码器
-        if self.last_action is not None:
-            self.history_encoder.update(state, self.last_action)
-        else:
-            self.history_encoder.update(state)
+        # 首先检查全局路径是否已规划
+        if self.global_path is None and self.current_goal is not None:
+            # 为当前位置和目标规划全局路径
+            start_pos = (state[0], state[1])  # 假设state前两个元素是x,y位置
+            self.global_path = self.global_planner.plan_path(
+                start_pos, 
+                self.current_goal, 
+                self.obstacles
+            )
+            print(f"已规划全局路径，从 {start_pos} 到 {self.current_goal}，路径点数: {len(self.global_path) if self.global_path else 0}")
         
-        # 如果全局路径不存在或需要重规划，进行规划
-        if self.global_path is None or self.global_planner.need_replan(
-            self.config.get('REPLAN_THRESHOLD', 5)
-        ):
-            try:
-                self.global_path = self.global_planner.plan(self.grid_map, [0, 0], goal)
-            except ValueError:
-                # 如果规划失败，使用直线路径
-                self.global_path = [goal]
-        
-        # 获取局部路径窗口
-        self.local_path = self.global_planner.get_local_path_window(
-            state[:2],
-            self.config.get('LOCAL_WINDOW_SIZE', 10)
+        # 检查是否触发高层控制器更新子目标
+        trigger_update = self.high_trigger.should_trigger(
+            state, 
+            self.current_goal, 
+            self.current_subgoal,
+            self.obstacles
         )
         
-        # 高层触发检查和子目标选择
-        subgoal, nav_mode, triggered = self.high_controller.select_subgoal(
-            state, goal, obstacles, scan_data, self.local_path
-        )
-        
-        if triggered:
+        if trigger_update:
             self.high_trigger_count += 1
-            
-        # 保存当前子目标
-        self.current_subgoal = subgoal
-        
-        # 低层策略生成原始动作
-        raw_action = self.low_controller.select_action(state, add_noise=not deterministic)
-        
-        # 安全层检查
-        if self.curriculum.should_use_safety_layer():
-            is_safe, safe_action, safety_info = self.safety_layer.check_safety(
-                state, subgoal, raw_action, self.local_path
+            self.current_subgoal = self.high_controller.get_subgoal(
+                state, 
+                self.current_goal,
+                self.obstacles
             )
             
-            if not is_safe:
+            # 如果路径发生变化，重新规划全局路径
+            self.global_path = self.global_planner.plan_path(
+                (state[0], state[1]), 
+                self.current_goal, 
+                self.obstacles
+            )
+        
+        try:
+            # 获取局部路径窗口
+            if self.global_path is not None:
+                self.local_path = self.global_planner.get_local_path_window(
+                    (state[0], state[1]),
+                    window_size=self.config.get('LOCAL_WINDOW_SIZE', 10)
+                )
+            else:
+                # 如果全局路径仍然为None，创建一个简单的直线路径
+                self.local_path = [(state[0], state[1]), self.current_goal]
+                print("警告: 使用简单直线路径替代全局规划")
+        except ValueError as e:
+            # 捕获"全局路径尚未规划"错误，进行处理
+            print(f"错误: {e}")
+            # 尝试重新规划路径
+            if self.current_goal is not None:
+                self.global_path = self.global_planner.plan_path(
+                    (state[0], state[1]), 
+                    self.current_goal, 
+                    self.obstacles
+                )
+                print(f"重新规划全局路径，路径点数: {len(self.global_path) if self.global_path else 0}")
+                # 再次尝试获取局部窗口
+                if self.global_path is not None:
+                    self.local_path = self.global_planner.get_local_path_window(
+                        (state[0], state[1]),
+                        window_size=self.config.get('LOCAL_WINDOW_SIZE', 10)
+                    )
+                else:
+                    # 仍然无法规划，使用简单直线路径
+                    self.local_path = [(state[0], state[1]), self.current_goal]
+                    print("警告: 使用简单直线路径替代全局规划")
+        
+        # 从低层控制器获取动作
+        raw_action = self.low_controller.get_action(
+            state, 
+            self.current_subgoal or self.current_goal,
+            self.local_path
+        )
+        
+        # 通过安全层调整动作（如果配置启用）
+        if self.config.get('SAFETY_LAYER_ENABLED', True):
+            safety_triggered, safe_action = self.safety_layer.adjust_action(
+                state, 
+                raw_action,
+                self.obstacles,
+                self.local_path
+            )
+            
+            if safety_triggered:
                 self.safety_trigger_count += 1
                 action = safe_action
-                safety_triggered = True
             else:
                 action = raw_action
-                safety_triggered = False
         else:
             action = raw_action
-            safety_triggered = False
         
-        # 更新last_action
+        # 更新历史编码器
+        self.history_encoder.update(state, action)
+        
+        # 记住上一个动作
         self.last_action = action
+        self._last_action = np.asarray(action, dtype=np.float32)
         
-        # 返回选择的动作和附加信息
+        # 创建返回信息
         info = {
-            'subgoal': subgoal,
-            'nav_mode': nav_mode,
-            'high_triggered': triggered,
-            'safety_triggered': safety_triggered,
-            'raw_action': raw_action
+            'high_trigger': trigger_update,
+            'subgoal': self.current_subgoal,
+            'local_path': self.local_path,
+            'global_path': self.global_path,
+            'grid_map': self.grid_map,
+            'safety_active': self.config.get('SAFETY_LAYER_ENABLED', True) and safety_triggered if 'safety_triggered' in locals() else False
         }
         
         return action, info
-    
-    def train(self, batch_size=64):
-        """
-        训练代理
-        
-        参数:
-            batch_size: 批次大小
-            
-        返回:
-            训练信息
-        """
-        if len(self.replay_buffer) < batch_size:
-            return {'status': 'buffer_too_small'}
-        
-        # 从经验回放缓冲区采样批次
-        batch, indices, weights = self.replay_buffer.sample(batch_size)
-        
-        if batch is None:
-            return {'status': 'no_samples'}
-        
-        # 根据课程阶段决定训练哪些组件
-        train_info = {}
-        
-        # 训练低层控制器
-        if self.curriculum.should_train_low_level():
-            self.low_controller.train(self.replay_buffer, batch_size)
-            train_info['low_level_trained'] = True
-        
-        # 更新经验优先级
-        priorities = np.ones(len(indices['easy']) + len(indices['medium']) + len(indices['hard']))
-        self.replay_buffer.update_priorities(indices, priorities)
-        
-        return {
-            'status': 'trained',
-            **train_info
-        }
-    
-    def store_experience(self, state, action, reward, done, next_state, info=None):
-        """
-        存储经验到回放缓冲区
-        
-        参数:
-            state: 当前状态
-            action: 执行的动作
-            reward: 获得的奖励
-            done: 是否结束
-            next_state: 下一状态
-            info: 附加信息
-        """
-        # 提取安全触发信息
-        safety_triggered = False
-        if info and 'safety_triggered' in info:
-            safety_triggered = info['safety_triggered']
-        
-        # 存储经验
-        self.replay_buffer.add(state, action, next_state, reward, done, None, safety_triggered)
-        
-        # 更新统计信息
-        self.episode_reward += reward
-        self.episode_steps += 1
-        self.total_steps += 1
-        
-        if done:
-            # 记录本轮结束信息
-            episode_info = {
-                'reward': self.episode_reward,
-                'steps': self.episode_steps,
-                'high_triggers': self.high_trigger_count,
-                'safety_triggers': self.safety_trigger_count,
-                'success': reward > 0  # 假设正奖励表示成功
-            }
-            
-            self.episode_history.append(episode_info)
-            
-            # 更新指标
-            self.metrics['rewards'].append(self.episode_reward)
-            
-            # 重置回合计数器
-            self.episode_reward = 0
-            self.episode_steps = 0
-            self.high_trigger_count = 0
-            self.safety_trigger_count = 0
-    
-    def update_curriculum(self, epoch):
-        """
-        更新课程学习阶段
-        
-        参数:
-            epoch: 当前训练轮数
-        """
-        self.curriculum.update(epoch)
-        
-        # 根据课程调整参数
-        self.high_trigger.risk_threshold = self.curriculum.get_risk_threshold()
-    
-    def save(self, path):
-        """
-        保存模型
-        
-        参数:
-            path: 保存路径
-        """
-        torch.save({
-            'high_policy': self.high_controller.policy.state_dict(),
-            'low_policy': self.low_controller.actor.state_dict(),
-            'low_critic': self.low_controller.critic.state_dict()
-        }, path)
-        
-        print(f"Model saved to {path}")
-    
-    def load(self, path):
-        """
-        加载模型
-        
-        参数:
-            path: 加载路径
-        """
-        checkpoint = torch.load(path)
-        
-        self.high_controller.policy.load_state_dict(checkpoint['high_policy'])
-        self.low_controller.actor.load_state_dict(checkpoint['low_policy'])
-        self.low_controller.critic.load_state_dict(checkpoint['low_critic'])
-        
-        # 更新目标网络
-        self.low_controller.actor_target.load_state_dict(self.low_controller.actor.state_dict())
-        self.low_controller.critic_target.load_state_dict(self.low_controller.critic.state_dict())
-        
-        print(f"Model loaded from {path}")
     
     def reset(self):
         """重置代理状态"""
@@ -418,36 +336,134 @@ class ETHSRLAgent:
         self.last_action = None
         self.grid_map = None
         
+        # 重置_last_action数组
+        self._last_action = np.zeros(self.action_dim, dtype=np.float32)
+        
         # 重置回合统计
         self.episode_reward = 0
         self.episode_steps = 0
         self.high_trigger_count = 0
         self.safety_trigger_count = 0
-    
-    def get_stats(self):
+
+    def update(self, batch_size=256, iterations=1):
         """
-        获取代理统计信息
+        使用经验回放更新代理的策略
         
-        返回:
-            stats: 统计信息字典
+        参数:
+            batch_size: 每次更新的样本数
+            iterations: 更新迭代次数
         """
-        # 计算成功率
-        success_rate = 0
-        if self.episode_history:
-            success_rate = sum(1 for ep in self.episode_history if ep['success']) / len(self.episode_history)
+        if len(self.replay_buffer) < batch_size:
+            return
         
-        # 计算触发频率
-        avg_high_triggers = 0
-        avg_safety_triggers = 0
-        if self.episode_history:
-            avg_high_triggers = sum(ep['high_triggers'] for ep in self.episode_history) / len(self.episode_history)
-            avg_safety_triggers = sum(ep['safety_triggers'] for ep in self.episode_history) / len(self.episode_history)
-        
-        return {
-            'success_rate': success_rate,
-            'high_trigger_rate': avg_high_triggers,
-            'safety_trigger_rate': avg_safety_triggers,
-            'total_steps': self.total_steps,
-            'buffer_size': len(self.replay_buffer),
-            'current_stage': self.curriculum.get_stage()
+        update_info = {
+            'actor_loss': 0,
+            'critic_loss': 0,
+            'td_error': 0
         }
+        
+        # 更新低层控制器
+        for _ in range(iterations):
+            info = self.low_controller.update_parameters(
+                self.replay_buffer, 
+                batch_size
+            )
+            
+            for k, v in info.items():
+                update_info[k] += v / iterations
+                
+        return update_info
+    
+    def add_experience(self, state, action, reward, next_state, done, info=None):
+        """
+        向经验回放缓冲区添加经验
+        
+        参数:
+            state: 当前状态
+            action: 执行的动作
+            reward: 获得的奖励
+            next_state: 下一个状态
+            done: 是否终止
+            info: 额外信息
+        """
+        # 计算难度（可根据奖励、是否碰撞等确定）
+        difficulty = 'easy'
+        if info and 'difficulty' in info:
+            difficulty = info['difficulty']
+        elif done and reward < 0:  # 碰撞
+            difficulty = 'hard'
+        elif done and reward > 0:  # 成功到达
+            difficulty = 'medium'
+        
+        # 添加到缓冲区
+        self.replay_buffer.add(state, action, reward, next_state, done, difficulty)
+        
+        # 更新统计信息
+        self.episode_reward += reward
+        self.episode_steps += 1
+        self.total_steps += 1
+        
+    def on_episode_end(self, success=False, collision=False):
+        """
+        回合结束时的处理
+        
+        参数:
+            success: 是否成功完成任务
+            collision: 是否发生碰撞
+        """
+        # 记录本回合统计
+        self.episode_history.append({
+            'reward': self.episode_reward,
+            'steps': self.episode_steps,
+            'success': success,
+            'collision': collision,
+            'high_triggers': self.high_trigger_count,
+            'safety_triggers': self.safety_trigger_count
+        })
+        
+        # 更新全局统计
+        self.metrics['rewards'].append(self.episode_reward)
+        
+        # 计算成功率和碰撞率（使用最近100回合数据）
+        recent_history = self.episode_history[-100:]
+        success_rate = sum(ep['success'] for ep in recent_history) / len(recent_history)
+        collision_rate = sum(ep['collision'] for ep in recent_history) / len(recent_history)
+        
+        self.metrics['success_rate'].append(success_rate)
+        self.metrics['collision_rate'].append(collision_rate)
+        self.metrics['high_triggers'].append(self.high_trigger_count)
+        self.metrics['safety_triggers'].append(self.safety_trigger_count)
+        
+        # 为下一回合重置统计
+        self.episode_reward = 0
+        self.episode_steps = 0
+        self.high_trigger_count = 0
+        self.safety_trigger_count = 0
+        
+    def save(self, path):
+        """
+        保存代理模型
+        
+        参数:
+            path: 保存路径
+        """
+        save_dict = {
+            'low_controller': self.low_controller.state_dict(),
+            'high_controller': self.high_controller.state_dict(),
+            'total_steps': self.total_steps,
+            'metrics': self.metrics
+        }
+        torch.save(save_dict, path)
+        
+    def load(self, path):
+        """
+        加载代理模型
+        
+        参数:
+            path: 加载路径
+        """
+        checkpoint = torch.load(path)
+        self.low_controller.load_state_dict(checkpoint['low_controller'])
+        self.high_controller.load_state_dict(checkpoint['high_controller'])
+        self.total_steps = checkpoint.get('total_steps', 0)
+        self.metrics = checkpoint.get('metrics', self.metrics)
