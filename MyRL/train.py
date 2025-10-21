@@ -3,7 +3,7 @@
 使用ETHSRL(Event-Triggered Hierarchical Safe Reinforcement Learning)框架进行机器人导航
 """
 
-from robot_nav.MyRL.myRL import ETHSRLAgent  # 导入ETHSRL代理
+from myRL import ETHSRLAgent  # 修改了导入路径
 import torch
 import numpy as np
 import time
@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 
 from robot_nav.SIM_ENV.sim import SIM  # 导入仿真环境
-from utils import get_buffer  # 导入经验回放缓冲区工具函数
+from utils.buffer import HierarchicalReplayBuffer  # 修改了导入路径
 
 # 训练配置输出
 print("=== ETHSRL Training Configuration ===")
@@ -48,7 +48,7 @@ def main(args=None):
     pretraining_iterations = 10  # 预训练期间运行的训练迭代次数
     save_every = 5  # 每n个训练周期保存一次模型
     history_length = 8  # 历史观测长度，用于POMDP信念状态
-    world_file = "worlds/robot_world.yaml"  # 仿真环境世界文件
+    world_file = "worlds/env_a.yaml"  # 仿真环境世界文件
     save_dir = "saved_models/ETHSRL"  # 模型保存目录
     
     # ETHSRL特定参数
@@ -108,14 +108,13 @@ def main(args=None):
     )  # 实例化仿真环境，启用图形显示
 
     # ========== 经验回放缓冲区初始化 ==========
-    replay_buffer = get_buffer(
-        model,  # 模型实例
-        sim,  # 仿真环境实例
-        load_saved_buffer,  # 是否加载保存的缓冲区
-        pretrain,  # 是否预训练
-        pretraining_iterations,  # 预训练迭代次数
-        training_iterations,  # 训练迭代次数
-        batch_size,  # 批次大小
+    # 修改为直接使用HierarchicalReplayBuffer
+    replay_buffer = HierarchicalReplayBuffer(
+        easy_capacity=10000,
+        medium_capacity=20000, 
+        hard_capacity=30000,
+        alpha=0.6,
+        beta=0.4
     )
 
     # ========== 训练统计变量初始化 ==========
@@ -192,7 +191,7 @@ def main(args=None):
             
             # 同时添加到标准缓冲区（用于兼容）
             replay_buffer.add(
-                state, action, reward, terminal, next_state
+                state, action, next_state, reward, terminal
             )
             
             # 更新统计
