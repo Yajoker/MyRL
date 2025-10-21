@@ -196,7 +196,9 @@ class ETHSRLAgent:
         
         # 处理激光扫描数据
         if scan_data is not None:
-            self.obstacles = self.lidar_processor.process_scan(scan_data)
+            # 更新激光雷达处理器并获取障碍物
+            self.obstacles = self.lidar_processor.update(scan_data)
+            # 获取占据栅格图
             self.grid_map = self.lidar_processor.get_occupancy_grid()
         
         # 首先检查全局路径是否已规划
