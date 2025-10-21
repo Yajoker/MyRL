@@ -5,14 +5,14 @@ import torch
 import time
 from collections import deque
 
-from models.global_planner import GlobalPathPlanner
-from models.high_level_trigger import MultiSourceTrigger
-from models.high_level_policy import HighLevelController
-from models.low_level_policy import TD3Controller
-from models.safety_layer import LyapunovSafetyLayer
-from models.perception import LidarProcessor, HistoryEncoder
-from utils.buffer import HierarchicalReplayBuffer
-from utils.curriculum import CurriculumScheduler
+from robot_nav.MyRL.global_planner import GlobalPathPlanner
+from robot_nav.MyRL.high_level_trigger import MultiSourceTrigger
+from robot_nav.MyRL.high_level_policy import HighLevelController
+from robot_nav.MyRL.low_level_policy import TD3Controller
+from robot_nav.MyRL.safety_layer import LyapunovSafetyLayer
+from robot_nav.MyRL.perception import LidarProcessor, HistoryEncoder
+from robot_nav.MyRL.utils.buffer import HierarchicalReplayBuffer
+from robot_nav.MyRL.utils.curriculum import CurriculumScheduler
 
 class ETHSRLAgent:
     """
@@ -134,7 +134,42 @@ class ETHSRLAgent:
             'high_triggers': [],
             'safety_triggers': []
         }
-    
+
+    def prepare_state(self, latest_scan, distance, cos, sin, collision, goal, a):
+        """
+        将当前观测拼成固定长度的一维状态向量。
+        目标：输出长度与 train.py 的 state_dim 一致（默认为 95）。
+        组成：scan(88) + [distance, cos, sin, collision, goal](5) + last_action(2) = 95
+        """
+        max_range = float(self.config.get("MAX_RANGE", 10.0))
+        scan_len = int(self.config.get("SCAN_LEN", 88))  # 让总维度匹配 95
+        scan = np.asarray(latest_scan, dtype=np.float32)
+        scan = np.clip(scan, 0.0, max_range) / max_range
+
+        # 下采样/裁剪/填充到固定 scan_len
+        if scan.size >= scan_len:
+            k = max(1, scan.size // scan_len)
+            scan_ds = scan[::k][:scan_len]
+            if scan_ds.size < scan_len:
+                scan_ds = np.pad(scan_ds, (0, scan_len - scan_ds.size))
+        else:
+            pad = scan_len - scan.size
+            scan_ds = np.pad(scan, (0, pad))
+
+        # 上一步动作
+        if a is not None:
+            a_arr = np.asarray(a, dtype=np.float32).reshape(-1)
+            self._last_action[:min(2, a_arr.size)] = a_arr[:min(2, a_arr.size)]
+
+        feats = np.array(
+            [float(distance), float(cos), float(sin), float(bool(collision)), float(bool(goal))],
+            dtype=np.float32,
+        )
+        state = np.concatenate([scan_ds, feats, self._last_action], axis=0).astype(np.float32)
+
+        # 终止标志
+        terminal = bool(collision) or bool(goal)
+        return state, terminal
     def select_action(self, state, goal, obstacles=None, scan_data=None, deterministic=False):
         """
         选择动作 - 主决策函数
