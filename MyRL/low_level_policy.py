@@ -117,17 +117,17 @@ class TD3Controller:
                 action = np.clip(action + noise, -1.0, 1.0)
             
             return action
-            
+
     def get_action(self, state, subgoal=None, path=None):
-    """
-    获取动作(兼容性方法)
+        """
+        获取动作(兼容性方法)
     
-    参数:
-        state: 当前状态
-        subgoal: 子目标
-        path: 路径
-    """
-    return self.select_action(state)
+        参数:
+            state: 当前状态
+            subgoal: 子目标
+         path: 路径
+        """
+        return self.select_action(state)
     
     def train(self, replay_buffer, batch_size=256):
         """
