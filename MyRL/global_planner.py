@@ -1,382 +1,508 @@
-"""全局路径规划器实现"""
+"""
+全局路径规划器，集成A*等经典规划算法
+"""
 
 import numpy as np
-from heapq import heappush, heappop
+import heapq
+from scipy.ndimage import distance_transform_edt
 import matplotlib.pyplot as plt
 
 class GlobalPathPlanner:
     """
-    全局路径规划器 - 使用A*算法生成全局路径，并提供局部路径窗口
+    全局路径规划器，用于生成从起点到目标的路径
     """
-    def __init__(self, resolution=0.1, allow_diagonal=True):
+    def __init__(self, resolution=0.1, obstacle_inflation=0.2):
         """
-        初始化全局路径规划器
+        初始化路径规划器
         
         参数:
-            resolution: 地图分辨率 (米/像素)
-            allow_diagonal: 是否允许对角线移动
+            resolution: 栅格分辨率（米/像素）
+            obstacle_inflation: 障碍物膨胀距离
         """
         self.resolution = resolution
-        self.allow_diagonal = allow_diagonal
-        self.global_path = None
-        self.obstacle_count = 0  # 记录障碍物接近路径的次数，用于触发重规划
+        self.obstacle_inflation = obstacle_inflation
         
-    def plan(self, grid_map, start, goal):
+        # 内部状态
+        self._global_path = None
+        self._local_window = None
+        self._grid = None
+        self._grid_resolution = resolution
+        self._grid_offset = (0, 0)
+        
+        # A*搜索的方向（8个方向）
+        self._directions = [
+            (1, 0), (0, 1), (-1, 0), (0, -1),  # 上下左右
+            (1, 1), (1, -1), (-1, 1), (-1, -1)  # 对角线
+        ]
+        
+        # 平滑参数
+        self._smooth_weight_data = 0.5
+        self._smooth_weight_smooth = 0.3
+        self._smooth_tolerance = 0.000001
+        
+    def reset(self):
         """
-        使用A*算法规划全局路径
+        重置规划器状态
+        """
+        self._global_path = None
+        self._local_window = None
+        self._grid = None
+        self._grid_resolution = self.resolution
+        self._grid_offset = (0, 0)
+        
+    def plan_path(self, start, goal, obstacles=None):
+        """
+        规划从起点到终点的路径
         
         参数:
-            grid_map: 二维栅格地图 (0=可通行, 1=障碍物)
-            start: 起点坐标 (x, y) [米]
-            goal: 终点坐标 (x, y) [米]
+            start: 起点坐标 (x, y)
+            goal: 终点坐标 (x, y)
+            obstacles: 障碍物列表，每个元素为 (x, y, radius)
             
         返回:
-            path: 世界坐标系中的路径点列表 [(x, y), ...] [米]
+            path: 路径点列表，每个元素为 (x, y)
         """
-        # 将实际坐标转换为栅格坐标
-        start_grid = self._to_grid(start)
-        goal_grid = self._to_grid(goal)
+        # 将坐标转换为网格索引
+        start_node = self._coord_to_node(start)
+        goal_node = self._coord_to_node(goal)
         
-        # 检查起点和终点是否有效
-        if not self._is_valid(grid_map, start_grid) or not self._is_valid(grid_map, goal_grid):
-            raise ValueError("起点或终点不可通行")
+        # 使用A*算法寻找路径
+        path_nodes = self._astar(start_node, goal_node, obstacles)
         
-        # 初始化A*算法所需数据结构
-        open_set = []  # 优先队列，按f值排序
-        closed_set = set()  # 已访问节点集合
+        if not path_nodes:
+            print("警告: 无法找到有效路径，使用直线路径")
+            # 如果找不到路径，返回直线路径
+            self._global_path = [start, goal]
+            return self._global_path
         
-        # g_score[node] = 从起点到node的最低成本
-        g_score = {start_grid: 0}
+        # 将网格索引转换回坐标
+        self._global_path = [self._node_to_coord(node) for node in path_nodes]
         
-        # f_score[node] = g_score[node] + h(node)
-        f_score = {start_grid: self._heuristic(start_grid, goal_grid)}
+        # 路径平滑
+        if len(self._global_path) > 2:
+            self._global_path = self._smooth_path(self._global_path)
         
-        # 记录节点的父节点，用于重建路径
-        came_from = {}
-        
-        # 将起点加入开放集
-        heappush(open_set, (f_score[start_grid], start_grid))
-        
-        # A*主循环
-        while open_set:
-            # 获取f值最小的节点
-            _, current = heappop(open_set)
-            
-            # 如果达到目标，重建并返回路径
-            if current == goal_grid:
-                path = self._reconstruct_path(came_from, current)
-                world_path = [self._to_world(p) for p in path]
-                self.global_path = world_path
-                self.obstacle_count = 0  # 重置障碍物计数
-                return world_path
-            
-            # 将当前节点加入已访问集合
-            closed_set.add(current)
-            
-            # 检查所有相邻节点
-            for neighbor in self._get_neighbors(grid_map, current):
-                # 如果已经访问过，跳过
-                if neighbor in closed_set:
-                    continue
-                
-                # 计算从起点经过当前节点到邻居节点的成本
-                # 对角线移动成本为√2，直线移动成本为1
-                dx = abs(neighbor[0] - current[0])
-                dy = abs(neighbor[1] - current[1])
-                if dx == 1 and dy == 1:  # 对角线移动
-                    tentative_g_score = g_score[current] + 1.414  # √2
-                else:  # 直线移动
-                    tentative_g_score = g_score[current] + 1.0
-                
-                # 如果找到更优路径或者首次访问此节点
-                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                    # 更新路径和得分
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = tentative_g_score + self._heuristic(neighbor, goal_grid)
-                    
-                    # 将邻居节点加入开放集
-                    if neighbor not in [i[1] for i in open_set]:
-                        heappush(open_set, (f_score[neighbor], neighbor))
-        
-        # 如果无法找到路径
-        raise ValueError("无法找到从起点到终点的路径")
+        return self._global_path
     
     def get_local_path_window(self, current_pos, window_size=10):
         """
-        从全局路径中提取局部路径窗口
+        获取当前位置周围的局部路径窗口
         
         参数:
-            current_pos: 当前位置 (x, y) [米]
-            window_size: 窗口大小 (点数)
+            current_pos: 当前位置 (x, y)
+            window_size: 窗口大小，默认10个路径点
             
         返回:
-            local_path: 局部路径窗口 [(x, y), ...] [米]
+            local_path: 局部路径点列表
         """
-        if self.global_path is None:
+        if self._global_path is None:
             raise ValueError("全局路径尚未规划")
         
+        if not self._global_path:  # 检查路径是否为空列表
+            return [current_pos]   # 返回仅包含当前位置的路径
+        
         # 找到全局路径上离当前位置最近的点
-        distances = [np.linalg.norm(np.array(current_pos) - np.array(p)) for p in self.global_path]
-        closest_idx = np.argmin(distances)
+        min_dist = float('inf')
+        min_idx = 0
         
-        # 提取局部窗口
-        end_idx = min(len(self.global_path), closest_idx + window_size)
-        return self.global_path[closest_idx:end_idx]
+        for i, point in enumerate(self._global_path):
+            dist = ((point[0] - current_pos[0]) ** 2 + 
+                    (point[1] - current_pos[1]) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                min_idx = i
+        
+        # 获取从最近点开始的局部窗口
+        end_idx = min(min_idx + window_size, len(self._global_path))
+        self._local_window = self._global_path[min_idx:end_idx]
+        
+        # 如果局部窗口为空（可能是因为已经到达路径末尾），返回最后一个点
+        if not self._local_window and self._global_path:
+            self._local_window = [self._global_path[-1]]
+        
+        return self._local_window
     
-    def check_path_validity(self, grid_map, obstacle_threshold=0.5):
+    def get_path_distance(self, current_pos):
         """
-        检查全局路径是否仍然有效（是否被障碍物阻塞）
+        计算当前位置到目标的路径距离
         
         参数:
-            grid_map: 当前栅格地图
-            obstacle_threshold: 障碍物接近阈值 (米)
+            current_pos: 当前位置 (x, y)
             
         返回:
-            is_valid: 路径是否有效
-            blocked_segment: 被阻塞的路径段 [(x1,y1), (x2,y2)]，如无阻塞则为None
+            path_distance: 路径距离
         """
-        if self.global_path is None or len(self.global_path) < 2:
-            return True, None
+        if not self._global_path:
+            return float('inf')
         
-        # 检查路径上每个点和相邻点之间的线段是否与障碍物相交
-        for i in range(len(self.global_path) - 1):
-            p1 = self.global_path[i]
-            p2 = self.global_path[i + 1]
+        # 找到全局路径上离当前位置最近的点
+        min_dist = float('inf')
+        min_idx = 0
+        
+        for i, point in enumerate(self._global_path):
+            dist = ((point[0] - current_pos[0]) ** 2 + 
+                    (point[1] - current_pos[1]) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                min_idx = i
+        
+        # 计算从最近点到终点的路径距离
+        path_distance = 0.0
+        for i in range(min_idx, len(self._global_path) - 1):
+            p1 = self._global_path[i]
+            p2 = self._global_path[i + 1]
+            path_distance += ((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2) ** 0.5
             
-            # 如果线段与障碍物距离小于阈值，认为路径被阻塞
-            if not self._is_segment_clear(grid_map, p1, p2, obstacle_threshold):
-                self.obstacle_count += 1
-                return False, (p1, p2)
-        
-        return True, None
+        return path_distance
     
-    def need_replan(self, replan_threshold=5):
+    def get_next_waypoint(self, current_pos, lookahead_distance=1.0):
         """
-        判断是否需要重新规划全局路径
+        获取前方指定距离的路径点
         
         参数:
-            replan_threshold: 重规划阈值，障碍物接近次数
+            current_pos: 当前位置 (x, y)
+            lookahead_distance: 前视距离
             
         返回:
-            need_replan: 是否需要重新规划
+            waypoint: 路径点坐标 (x, y)
         """
-        if self.obstacle_count >= replan_threshold:
-            return True
-        return False
+        if not self._global_path:
+            return current_pos
+        
+        # 找到全局路径上离当前位置最近的点
+        min_dist = float('inf')
+        min_idx = 0
+        
+        for i, point in enumerate(self._global_path):
+            dist = ((point[0] - current_pos[0]) ** 2 + 
+                    (point[1] - current_pos[1]) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                min_idx = i
+        
+        # 从最近点开始，找到前方指定距离的路径点
+        accumulated_distance = 0.0
+        for i in range(min_idx, len(self._global_path) - 1):
+            p1 = self._global_path[i]
+            p2 = self._global_path[i + 1]
+            segment_distance = ((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2) ** 0.5
+            
+            if accumulated_distance + segment_distance >= lookahead_distance:
+                # 计算在此线段上的插值点
+                ratio = (lookahead_distance - accumulated_distance) / segment_distance
+                x = p1[0] + ratio * (p2[0] - p1[0])
+                y = p1[1] + ratio * (p2[1] - p1[1])
+                return (x, y)
+            
+            accumulated_distance += segment_distance
+        
+        # 如果没有找到前方点，返回路径最后一点
+        return self._global_path[-1]
     
-    def reset(self):
-        """重置规划器状态"""
-        self.global_path = None
-        self.obstacle_count = 0
-    
-    def visualize_path(self, grid_map=None, start=None, goal=None, figsize=(10, 10)):
+    def visualize_path(self, obstacles=None, show=True):
         """
-        可视化全局路径和局部路径窗口
+        可视化全局路径和障碍物
         
         参数:
-            grid_map: 栅格地图 (可选)
-            start: 起点坐标 (可选)
-            goal: 终点坐标 (可选)
-            figsize: 图像大小
+            obstacles: 障碍物列表
+            show: 是否显示图像
         """
-        plt.figure(figsize=figsize)
+        if self._global_path is None:
+            print("没有可视化的路径")
+            return
         
-        # 如果提供了地图，绘制地图
-        if grid_map is not None:
-            plt.imshow(grid_map.T, cmap='binary', origin='lower')
+        fig, ax = plt.subplots(figsize=(10, 10))
         
-        # 如果有全局路径，绘制全局路径
-        if self.global_path is not None:
-            path_x = [p[0] for p in self.global_path]
-            path_y = [p[1] for p in self.global_path]
-            plt.plot(path_x, path_y, 'b-', linewidth=2, label='Global Path')
+        # 绘制全局路径
+        path_x = [p[0] for p in self._global_path]
+        path_y = [p[1] for p in self._global_path]
+        ax.plot(path_x, path_y, 'b-', linewidth=2, label='Global Path')
         
-        # 如果提供了起点和终点，绘制起点和终点
-        if start is not None:
-            plt.plot(start[0], start[1], 'go', markersize=10, label='Start')
-        if goal is not None:
-            plt.plot(goal[0], goal[1], 'ro', markersize=10, label='Goal')
+        # 绘制起点和终点
+        if self._global_path:
+            ax.plot(self._global_path[0][0], self._global_path[0][1], 'go', markersize=10, label='Start')
+            ax.plot(self._global_path[-1][0], self._global_path[-1][1], 'ro', markersize=10, label='Goal')
+            
+        # 绘制局部窗口
+        if self._local_window:
+            local_x = [p[0] for p in self._local_window]
+            local_y = [p[1] for p in self._local_window]
+            ax.plot(local_x, local_y, 'g-', linewidth=3, alpha=0.7, label='Local Window')
+            
+        # 绘制障碍物
+        if obstacles:
+            for obs in obstacles:
+                if len(obs) == 3:  # (x, y, radius) 格式
+                    x, y, r = obs
+                    circle = plt.Circle((x, y), r, color='r', alpha=0.3)
+                    ax.add_artist(circle)
+                else:  # (x, y) 格式
+                    x, y = obs
+                    ax.plot(x, y, 'rx', markersize=5)
         
-        plt.legend()
-        plt.grid(True)
-        plt.title('Global Path Planning')
-        plt.xlabel('X (m)')
-        plt.ylabel('Y (m)')
-        plt.axis('equal')
-        plt.show()
+        ax.set_aspect('equal')
+        ax.legend()
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_title('Global Path Planning')
+        ax.grid(True)
+        
+        if show:
+            plt.show()
+        
+        return fig, ax
     
-    def _to_grid(self, world_point):
+    def _create_grid(self, start, goal, obstacles=None):
         """
-        将世界坐标转换为栅格坐标
+        创建路径规划的栅格地图
         
         参数:
-            world_point: 世界坐标 (x, y) [米]
+            start: 起点坐标
+            goal: 终点坐标
+            obstacles: 障碍物列表
             
         返回:
-            grid_point: 栅格坐标 (row, col)
+            grid: 栅格地图（0表示自由空间，1表示障碍物）
         """
-        return (int(round(world_point[0] / self.resolution)), 
-                int(round(world_point[1] / self.resolution)))
+        # 确定地图边界
+        min_x = min(start[0], goal[0]) - 5.0
+        max_x = max(start[0], goal[0]) + 5.0
+        min_y = min(start[1], goal[1]) - 5.0
+        max_y = max(start[1], goal[1]) + 5.0
+        
+        # 确保包含所有障碍物
+        if obstacles:
+            for obs in obstacles:
+                if len(obs) == 3:  # (x, y, radius) 格式
+                    x, y, r = obs
+                    min_x = min(min_x, x - r - self.obstacle_inflation)
+                    max_x = max(max_x, x + r + self.obstacle_inflation)
+                    min_y = min(min_y, y - r - self.obstacle_inflation)
+                    max_y = max(max_y, y + r + self.obstacle_inflation)
+                else:  # (x, y) 格式
+                    x, y = obs
+                    min_x = min(min_x, x - self.obstacle_inflation)
+                    max_x = max(max_x, x + self.obstacle_inflation)
+                    min_y = min(min_y, y - self.obstacle_inflation)
+                    max_y = max(max_y, y + self.obstacle_inflation)
+        
+        # 确定栅格尺寸
+        width = int((max_x - min_x) / self.resolution) + 1
+        height = int((max_y - min_y) / self.resolution) + 1
+        
+        # 创建栅格地图
+        grid = np.zeros((height, width), dtype=np.uint8)
+        
+        # 记录网格偏移量
+        self._grid_offset = (min_x, min_y)
+        self._grid_resolution = self.resolution
+        
+        # 标记障碍物
+        if obstacles:
+            for obs in obstacles:
+                if len(obs) == 3:  # (x, y, radius) 格式
+                    x, y, r = obs
+                    # 膨胀障碍物半径
+                    inflated_r = r + self.obstacle_inflation
+                    # 转换为栅格坐标
+                    grid_x = int((x - min_x) / self.resolution)
+                    grid_y = int((y - min_y) / self.resolution)
+                    grid_r = int(inflated_r / self.resolution)
+                    
+                    # 标记圆形障碍物
+                    y_indices, x_indices = np.ogrid[-grid_y:height-grid_y, -grid_x:width-grid_x]
+                    mask = x_indices*x_indices + y_indices*y_indices <= grid_r*grid_r
+                    grid[mask] = 1
+                else:  # (x, y) 格式
+                    x, y = obs
+                    # 转换为栅格坐标
+                    grid_x = int((x - min_x) / self.resolution)
+                    grid_y = int((y - min_y) / self.resolution)
+                    
+                    # 膨胀点障碍物
+                    inflation_cells = int(self.obstacle_inflation / self.resolution)
+                    for i in range(-inflation_cells, inflation_cells + 1):
+                        for j in range(-inflation_cells, inflation_cells + 1):
+                            if (i*i + j*j <= inflation_cells*inflation_cells and
+                                0 <= grid_y + i < height and
+                                0 <= grid_x + j < width):
+                                grid[grid_y + i, grid_x + j] = 1
+        
+        self._grid = grid
+        return grid
     
-    def _to_world(self, grid_point):
+    def _coord_to_node(self, coord):
         """
-        将栅格坐标转换为世界坐标
+        将物理坐标转换为栅格节点索引
         
         参数:
-            grid_point: 栅格坐标 (row, col)
+            coord: 物理坐标 (x, y)
             
         返回:
-            world_point: 世界坐标 (x, y) [米]
+            node: 栅格索引 (row, col)
         """
-        return (grid_point[0] * self.resolution, 
-                grid_point[1] * self.resolution)
+        if self._grid is None:
+            return (int(coord[1] / self.resolution), int(coord[0] / self.resolution))
+        
+        col = int((coord[0] - self._grid_offset[0]) / self._grid_resolution)
+        row = int((coord[1] - self._grid_offset[1]) / self._grid_resolution)
+        return (row, col)
     
-    def _heuristic(self, a, b):
+    def _node_to_coord(self, node):
         """
-        启发式函数 - 曼哈顿距离
+        将栅格节点索引转换为物理坐标
         
         参数:
-            a, b: 两个栅格坐标
+            node: 栅格索引 (row, col)
             
         返回:
-            距离值
+            coord: 物理坐标 (x, y)
         """
-        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+        if self._grid is None:
+            return (node[1] * self.resolution, node[0] * self.resolution)
+        
+        x = node[1] * self._grid_resolution + self._grid_offset[0]
+        y = node[0] * self._grid_resolution + self._grid_offset[1]
+        return (x, y)
     
-    def _is_valid(self, grid_map, grid_point):
+    def _heuristic(self, node, goal):
         """
-        检查栅格点是否有效（在地图内且不是障碍物）
+        A*算法的启发式函数（欧几里得距离）
         
         参数:
-            grid_map: 栅格地图
-            grid_point: 栅格坐标
+            node: 当前节点 (row, col)
+            goal: 目标节点 (row, col)
             
         返回:
-            is_valid: 是否有效
+            distance: 估计距离
         """
-        x, y = grid_point
-        # 检查是否在地图边界内
-        if x < 0 or x >= grid_map.shape[0] or y < 0 or y >= grid_map.shape[1]:
-            return False
-        # 检查是否是障碍物
-        if grid_map[x, y] == 1:
-            return False
-        return True
+        return ((node[0] - goal[0]) ** 2 + (node[1] - goal[1]) ** 2) ** 0.5
     
-    def _get_neighbors(self, grid_map, grid_point):
+    def _astar(self, start, goal, obstacles=None):
         """
-        获取栅格点的相邻点
+        A*路径规划算法
         
         参数:
-            grid_map: 栅格地图
-            grid_point: 栅格坐标
+            start: 起点节点 (row, col)
+            goal: 终点节点 (row, col)
+            obstacles: 障碍物列表
             
         返回:
-            neighbors: 有效的相邻点列表
+            path: 路径节点列表
         """
-        x, y = grid_point
-        neighbors = []
+        # 创建栅格地图
+        grid = self._create_grid(self._node_to_coord(start), self._node_to_coord(goal), obstacles)
+        height, width = grid.shape
         
-        # 直线移动
-        for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-            nx, ny = x + dx, y + dy
-            if self._is_valid(grid_map, (nx, ny)):
-                neighbors.append((nx, ny))
+        # 检查起点和终点是否在栅格范围内且不是障碍物
+        if (start[0] < 0 or start[0] >= height or
+            start[1] < 0 or start[1] >= width or
+            goal[0] < 0 or goal[0] >= height or
+            goal[1] < 0 or goal[1] >= width):
+            print("起点或终点超出栅格范围")
+            return []
         
-        # 对角线移动（如果允许）
-        if self.allow_diagonal:
-            for dx, dy in [(1, 1), (1, -1), (-1, -1), (-1, 1)]:
-                nx, ny = x + dx, y + dy
-                if self._is_valid(grid_map, (nx, ny)):
-                    # 确保对角线移动时两个相邻格子都不是障碍物
-                    if self._is_valid(grid_map, (x, y + dy)) and self._is_valid(grid_map, (x + dx, y)):
-                        neighbors.append((nx, ny))
+        if grid[start[0], start[1]] == 1 or grid[goal[0], goal[1]] == 1:
+            print("起点或终点位于障碍物内")
+            return []
         
-        return neighbors
+        # 初始化开放列表和关闭列表
+        open_list = []
+        closed_set = set()
+        came_from = {}
+        g_score = {start: 0}
+        f_score = {start: self._heuristic(start, goal)}
+        
+        # 将起点加入开放列表
+        heapq.heappush(open_list, (f_score[start], start))
+        
+        while open_list:
+            # 获取f值最小的节点
+            _, current = heapq.heappop(open_list)
+            
+            # 如果到达目标，构建路径并返回
+            if current == goal:
+                path = [current]
+                while current in came_from:
+                    current = came_from[current]
+                    path.append(current)
+                return path[::-1]  # 反转路径，从起点到终点
+            
+            # 将当前节点加入关闭列表
+            closed_set.add(current)
+            
+            # 检查所有相邻节点
+            for dx, dy in self._directions:
+                neighbor = (current[0] + dx, current[1] + dy)
+                
+                # 检查相邻节点是否有效
+                if (neighbor[0] < 0 or neighbor[0] >= height or
+                    neighbor[1] < 0 or neighbor[1] >= width):
+                    continue
+                
+                # 检查相邻节点是否是障碍物或已在关闭列表中
+                if grid[neighbor[0], neighbor[1]] == 1 or neighbor in closed_set:
+                    continue
+                
+                # 计算通过当前节点到达相邻节点的代价
+                tentative_g_score = g_score[current]
+                if dx == 0 or dy == 0:  # 水平/垂直移动
+                    tentative_g_score += 1.0
+                else:  # 对角线移动
+                    tentative_g_score += 1.414
+                
+                # 如果相邻节点不在开放列表中，或找到了更好的路径
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    # 更新相邻节点的信息
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = g_score[neighbor] + self._heuristic(neighbor, goal)
+                    
+                    # 将相邻节点加入开放列表
+                    heapq.heappush(open_list, (f_score[neighbor], neighbor))
+        
+        # 如果无法找到路径，返回空列表
+        print("找不到从起点到终点的路径")
+        return []
     
-    def _reconstruct_path(self, came_from, current):
+    def _smooth_path(self, path, iterations=100):
         """
-        从came_from字典重建路径
+        平滑路径
         
         参数:
-            came_from: 记录每个节点的父节点的字典
-            current: 当前节点（终点）
+            path: 原始路径点列表
+            iterations: 平滑迭代次数
             
         返回:
-            path: 从起点到终点的路径
+            smooth_path: 平滑后的路径点列表
         """
-        path = [current]
-        while current in came_from:
-            current = came_from[current]
-            path.append(current)
+        if len(path) <= 2:
+            return path
         
-        # 返回从起点到终点的路径（逆序）
-        return path[::-1]
-    
-    def _is_segment_clear(self, grid_map, p1, p2, threshold):
-        """
-        检查线段是否与障碍物相交
+        # 创建路径的副本
+        smooth_path = [[x, y] for x, y in path]
         
-        参数:
-            grid_map: 栅格地图
-            p1, p2: 线段的两个端点
-            threshold: 障碍物接近阈值
+        # 梯度下降法平滑
+        for _ in range(iterations):
+            change = 0.0
+            # 不修改起点和终点
+            for i in range(1, len(path) - 1):
+                for j in range(2):  # x和y坐标
+                    # 数据拉力（保持接近原始路径）
+                    data_pull = self._smooth_weight_data * (path[i][j] - smooth_path[i][j])
+                    
+                    # 平滑拉力（保持路径平滑）
+                    smooth_pull = self._smooth_weight_smooth * (
+                        smooth_path[i-1][j] + smooth_path[i+1][j] - 2.0 * smooth_path[i][j]
+                    )
+                    
+                    # 更新路径点
+                    change = data_pull + smooth_pull
+                    smooth_path[i][j] += change
             
-        返回:
-            is_clear: 线段是否安全
-        """
-        # 将世界坐标转换为栅格坐标
-        p1_grid = self._to_grid(p1)
-        p2_grid = self._to_grid(p2)
-        
-        # 使用Bresenham算法计算线段上的所有格子
-        cells = self._bresenham_line(p1_grid[0], p1_grid[1], p2_grid[0], p2_grid[1])
-        
-        # 检查线段上的所有格子是否有障碍物
-        threshold_grid = int(threshold / self.resolution)
-        for x, y in cells:
-            if not self._is_valid(grid_map, (x, y)):
-                return False
-            
-            # 检查周围的格子
-            for dx in range(-threshold_grid, threshold_grid + 1):
-                for dy in range(-threshold_grid, threshold_grid + 1):
-                    nx, ny = x + dx, y + dy
-                    if 0 <= nx < grid_map.shape[0] and 0 <= ny < grid_map.shape[1]:
-                        if grid_map[nx, ny] == 1:
-                            return False
-        
-        return True
-    
-    def _bresenham_line(self, x0, y0, x1, y1):
-        """
-        Bresenham直线算法，计算两点之间的所有栅格点
-        
-        参数:
-            x0, y0: 起点栅格坐标
-            x1, y1: 终点栅格坐标
-            
-        返回:
-            cells: 线段上的所有栅格点
-        """
-        cells = []
-        dx = abs(x1 - x0)
-        dy = abs(y1 - y0)
-        sx = 1 if x0 < x1 else -1
-        sy = 1 if y0 < y1 else -1
-        err = dx - dy
-        
-        while True:
-            cells.append((x0, y0))
-            if x0 == x1 and y0 == y1:
+            # 如果变化很小，提前结束
+            if abs(change) < self._smooth_tolerance:
                 break
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                x0 += sx
-            if e2 < dx:
-                err += dx
-                y0 += sy
         
-        return cells
+        # 转换回元组格式
+        return [(p[0], p[1]) for p in smooth_path]
