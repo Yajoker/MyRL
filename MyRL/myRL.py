@@ -281,9 +281,12 @@ class ETHSRLAgent:
         # 通过安全层调整动作（如果配置启用）
         safety_triggered = False
         if self.config.get('SAFETY_LAYER_ENABLED', True):
+            # 修正：使用条件语句替代or操作符
+            target = self.current_subgoal if self.current_subgoal is not None else self.current_goal
+            
             is_safe, safe_action, safety_info = self.safety_layer.check_safety(
                 state, 
-                self.current_subgoal or self.current_goal,
+                target,  # 使用修正后的目标
                 raw_action,
                 path=self.local_path
             )
