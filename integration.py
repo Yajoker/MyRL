@@ -37,9 +37,9 @@ class HierarchicalNavigationSystem:
         # 设置计算设备：若未指定则自动检测 GPU，否则使用 CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # 定义高层与低层状态维度
-        # 高层状态 = 激光数据 + [目标距离, 目标方向余弦, 目标方向正弦]
-        high_level_state_dim = laser_dim + 3
+        # 定义高层与低层状态维度 - 更新高层状态维度
+        # 高层状态 = 激光数据 + [目标距离, 目标方向余弦, 目标方向正弦, 上一步线速度, 上一步角速度]
+        high_level_state_dim = laser_dim + 5
         # 低层状态 = 激光数据 + [子目标距离, 子目标角度, 上一步线速度, 上一步角速度]
         low_level_state_dim = laser_dim + 4
 
@@ -93,17 +93,22 @@ class HierarchicalNavigationSystem:
         if self.current_subgoal is None:
             should_replan = True
         else:
-            # 否则根据事件触发条件判断是否需要重新规划
+            # 否则根据事件触发条件判断是否需要重新规划 - 更新为传递历史动作
             should_replan = self.high_level_planner.check_triggers(
                 laser_scan,
                 robot_pose,
-                [goal_distance, goal_cos, goal_sin]
+                [goal_distance, goal_cos, goal_sin],
+                prev_action=self.prev_action  # 传递历史动作
             )
 
-        # 若满足触发条件，则生成新的子目标
+        # 若满足触发条件，则生成新的子目标 - 更新为传递历史动作
         if should_replan:
             subgoal_distance, subgoal_angle = self.high_level_planner.generate_subgoal(
-                laser_scan, goal_distance, goal_cos, goal_sin
+                laser_scan,
+                goal_distance,
+                goal_cos,
+                goal_sin,
+                prev_action=self.prev_action  # 传递历史动作
             )
             # 更新系统的当前子目标信息
             self.current_subgoal = (subgoal_distance, subgoal_angle)
