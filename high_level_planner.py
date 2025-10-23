@@ -39,9 +39,12 @@ class SubgoalNetwork(nn.Module):
         # 全局目标信息处理层
         self.goal_embed = nn.Linear(3, 32)  # 处理距离、余弦、正弦三个目标信息
 
-        # 全连接层
+        # 历史动作嵌入层 - 新增
+        self.action_embed = nn.Linear(2, 16)  # 处理历史线速度和角速度
+
+        # 全连接层 - 更新输入维度
         cnn_output_dim = self._get_cnn_output_dim(belief_dim)  # 计算CNN输出维度
-        self.fc1 = nn.Linear(cnn_output_dim + 32, hidden_dim)  # 第一层全连接
+        self.fc1 = nn.Linear(cnn_output_dim + 32 + 16, hidden_dim)  # 第一层全连接，加入动作嵌入
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)  # 第二层全连接
 
         # 输出层：子目标距离和角度
@@ -57,13 +60,14 @@ class SubgoalNetwork(nn.Module):
         x = self.cnn3(x)
         return x.numel()  # 返回元素总数
 
-    def forward(self, belief_state, goal_info):
+    def forward(self, belief_state, goal_info, prev_action):
         """
         子目标网络的前向传播
 
         Args:
             belief_state: 包含激光雷达数据的张量
             goal_info: 包含[距离, cos, sin]全局目标信息的张量
+            prev_action: 包含[线速度, 角速度]历史动作的张量
 
         Returns:
             包含(子目标距离, 子目标角度)的元组
@@ -78,8 +82,11 @@ class SubgoalNetwork(nn.Module):
         # 处理目标信息
         g = F.relu(self.goal_embed(goal_info))  # 目标嵌入 + ReLU激活
 
-        # 合并特征
-        combined = torch.cat((x, g), dim=1)
+        # 处理历史动作 - 新增
+        a = F.relu(self.action_embed(prev_action))  # 动作嵌入 + ReLU激活
+
+        # 合并特征 - 更新为包含动作
+        combined = torch.cat((x, g, a), dim=1)
 
         # 全连接层处理
         x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU
@@ -125,6 +132,7 @@ class EventTrigger:
         self.last_heading = 0.0  # 上次航向
         self.last_subgoal = None  # 上次子目标
         self.current_threshold = base_threshold  # 当前阈值
+        self.last_velocity = [0.0, 0.0]  # 上次速度 [线速度, 角速度] - 新增
 
     def risk_assessment_trigger(self, risk_level, env_complexity):
         """
@@ -171,6 +179,25 @@ class EventTrigger:
 
         self.last_heading = current_heading  # 更新上次航向
         return heading_change > self.heading_threshold  # 变化超过阈值则触发
+
+    def velocity_change_trigger(self, current_velocity):
+        """
+        触发基于速度显著变化 - 新增
+
+        Args:
+            current_velocity: 当前线速度和角速度 [lin_vel, ang_vel]
+
+        Returns:
+            布尔值，指示是否满足触发条件
+        """
+        vel_change = abs(current_velocity[0] - self.last_velocity[0])  # 线速度变化
+        ang_change = abs(current_velocity[1] - self.last_velocity[1])  # 角速度变化
+
+        # 更新上次速度
+        self.last_velocity = current_velocity.copy()
+
+        # 线速度变化大或角速度变化大则触发
+        return vel_change > 0.1 or ang_change > 0.5
 
     def subgoal_reachability_trigger(self, current_pos, subgoal_pos, min_obstacle_dist):
         """
@@ -265,6 +292,7 @@ class HighLevelPlanner:
         self.current_subgoal = None  # 当前子目标
         self.last_goal_distance = float('inf')  # 上次目标距离
         self.last_goal_direction = 0.0  # 上次目标方向
+        self.prev_action = [0.0, 0.0]  # 上一动作 [线速度, 角速度] - 新增
 
         # 如果请求则加载预训练模型
         if load_model:
@@ -312,7 +340,26 @@ class HighLevelPlanner:
 
         return goal_info
 
-    def check_triggers(self, laser_scan, robot_pose, goal_info, min_obstacle_dist=None):
+    def process_action_info(self, prev_action):
+        """
+        处理历史动作为张量 - 新增
+
+        Args:
+            prev_action: 上一步的动作 [线速度, 角速度]
+
+        Returns:
+            处理后的动作信息张量
+        """
+        # 简单归一化
+        lin_vel = prev_action[0] * 2  # 假设线速度范围在[0, 0.5]
+        ang_vel = prev_action[1]  # 假设角速度范围在[-1, 1]
+
+        # 组合成张量
+        action_info = torch.FloatTensor([lin_vel, ang_vel]).to(self.device)
+
+        return action_info
+
+    def check_triggers(self, laser_scan, robot_pose, goal_info, prev_action=None, min_obstacle_dist=None):
         """
         检查是否有任何事件触发器被激活
 
@@ -320,6 +367,7 @@ class HighLevelPlanner:
             laser_scan: 当前激光雷达读数
             robot_pose: 当前机器人位姿 [x, y, theta]
             goal_info: 全局目标信息 [distance, cos, sin]
+            prev_action: 上一步的动作 [线速度, 角速度] - 新增参数
             min_obstacle_dist: 到最近障碍物的距离（如果为None，则从laser_scan计算）
 
         Returns:
@@ -345,6 +393,11 @@ class HighLevelPlanner:
         obstacle_trigger = self.event_trigger.obstacle_proximity_trigger(min_obstacle_dist)  # 障碍物接近触发
         heading_trigger = self.event_trigger.heading_change_trigger(robot_pose[2])  # 航向变化触发
 
+        # 速度变化触发检查 - 新增
+        velocity_trigger = False
+        if prev_action is not None:
+            velocity_trigger = self.event_trigger.velocity_change_trigger(prev_action)
+
         # 从当前子目标创建子目标位置（如果存在）
         subgoal_pos = None
         if self.current_subgoal is not None:
@@ -362,7 +415,7 @@ class HighLevelPlanner:
         )
 
         # 组合所有触发器（任一触发即生成新子目标）
-        trigger_new_subgoal = risk_trigger or obstacle_trigger or heading_trigger or reachability_trigger
+        trigger_new_subgoal = risk_trigger or obstacle_trigger or heading_trigger or reachability_trigger or velocity_trigger
 
         # 如果触发，重置时间计数器
         if trigger_new_subgoal:
@@ -370,7 +423,7 @@ class HighLevelPlanner:
 
         return trigger_new_subgoal
 
-    def generate_subgoal(self, laser_scan, goal_distance, goal_cos, goal_sin):
+    def generate_subgoal(self, laser_scan, goal_distance, goal_cos, goal_sin, prev_action=None):
         """
         基于当前状态生成新子目标
 
@@ -379,6 +432,7 @@ class HighLevelPlanner:
             goal_distance: 到全局目标的距离
             goal_cos: 到全局目标角度的余弦值
             goal_sin: 到全局目标角度的正弦值
+            prev_action: 上一步的动作 [线速度, 角速度] - 新增参数
 
         Returns:
             包含(子目标距离, 子目标角度)的元组
@@ -387,11 +441,19 @@ class HighLevelPlanner:
         laser_tensor = self.process_laser_scan(laser_scan)  # 激光数据张量化
         goal_tensor = self.process_goal_info(goal_distance, goal_cos, goal_sin)  # 目标信息张量化
 
+        # 如果未提供动作，则使用存储的上一步动作
+        if prev_action is None:
+            prev_action = self.prev_action
+
+        # 处理动作信息 - 新增
+        action_tensor = self.process_action_info(prev_action)
+
         # 使用网络生成子目标（不计算梯度）
         with torch.no_grad():
             distance, angle = self.subgoal_network(
                 laser_tensor.unsqueeze(0),  # 增加批次维度
-                goal_tensor.unsqueeze(0)  # 增加批次维度
+                goal_tensor.unsqueeze(0),  # 增加批次维度
+                action_tensor.unsqueeze(0)  # 增加批次维度 - 新增
             )
 
         # 转换为numpy数组
@@ -402,6 +464,7 @@ class HighLevelPlanner:
         self.current_subgoal = (subgoal_distance, subgoal_angle)
         self.last_goal_distance = goal_distance
         self.last_goal_direction = np.arctan2(goal_sin, goal_cos)  # 计算目标方向角度
+        self.prev_action = prev_action.copy() if prev_action is not None else self.prev_action  # 更新历史动作 - 新增
 
         return subgoal_distance, subgoal_angle
 
@@ -498,12 +561,13 @@ class HighLevelPlanner:
         next_states = torch.FloatTensor(next_states).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
 
-        # 将状态分割为激光和目标组件
-        laser_scans = states[:, :-3]  # 激光数据部分
-        goal_info = states[:, -3:]  # 目标信息部分
+        # 将状态分割为激光、目标和历史动作组件 - 更新
+        laser_scans = states[:, :-5]  # 激光数据部分
+        goal_info = states[:, -5:-2]  # 目标信息部分 [距离, cos, sin]
+        prev_action = states[:, -2:]  # 历史动作部分 [线速度, 角速度] - 新增
 
         # 生成子目标
-        subgoal_distances, subgoal_angles = self.subgoal_network(laser_scans, goal_info)
+        subgoal_distances, subgoal_angles = self.subgoal_network(laser_scans, goal_info, prev_action)
         subgoals = torch.cat([subgoal_distances, subgoal_angles], dim=1)  # 合并距离和角度
 
         # 计算损失（简化示例使用MSE）
