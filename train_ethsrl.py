@@ -22,8 +22,8 @@ class TrainingConfig:
 
     buffer_size: int = 100_000  # 经验回放缓冲区大小
     batch_size: int = 64  # 训练批次大小
-    max_epochs: int = 40  # 最大训练轮数
-    episodes_per_epoch: int = 60  # 每轮训练的情节数
+    max_epochs: int = 60  # 最大训练轮数
+    episodes_per_epoch: int = 70  # 每轮训练的情节数
     max_steps: int = 300  # 每个情节的最大步数
     train_every_n_episodes: int = 2  # 每N个情节训练一次
     training_iterations: int = 80  # 每次训练的迭代次数
@@ -73,25 +73,31 @@ def get_robot_pose(sim: SIM) -> Tuple[float, float, float]:
 def evaluate(system: HierarchicalNavigationSystem, sim: SIM, config: TrainingConfig, epoch: int) -> None:
     """运行无探索噪声的评估 rollout 并记录汇总统计信息"""
 
-    print("-" * 46)  # 打印分隔线
-    print(f"Epoch {epoch}: 运行评估轨迹")
-
+    print("\n" + "="*60)
+    print(f"🎯 EPOCH {epoch:03d} EVALUATION")
+    print("="*60)
+    
     # 初始化评估指标
-    avg_reward = 0.0  # 平均奖励
-    collisions = 0    # 碰撞次数
-    successes = 0     # 成功到达目标次数
+    total_reward = 0.0
+    total_steps = 0
+    collision_count = 0
+    goal_count = 0
+    timeout_count = 0
+    episode_rewards = []
+    episode_lengths = []
 
-    # 运行指定次数的评估情节
-    for _ in range(config.eval_episodes):
+    # 运行多个评估回合
+    for ep_idx in range(config.eval_episodes):
         system.reset()  # 重置系统状态
         # 重置模拟环境并获取初始观测
         latest_scan, distance, cos, sin, collision, goal, prev_action, reward = sim.reset()
         prev_action = [0.0, 0.0]  # 初始化动作为零
-        done = False  # 情节完成标志
-        step = 0      # 步数计数器
+        done = False
+        steps = 0
+        episode_reward = 0.0
 
-        # 运行单个评估情节
-        while not done and step < config.max_steps:
+        # 单个评估回合循环
+        while not done and steps < config.max_steps:
             robot_pose = get_robot_pose(sim)  # 获取机器人位姿
             goal_info = [distance, cos, sin]  # 目标信息
 
@@ -124,79 +130,144 @@ def evaluate(system: HierarchicalNavigationSystem, sim: SIM, config: TrainingCon
             )
 
             prev_action = [lin_cmd, ang_cmd]  # 更新历史动作
-            avg_reward += reward  # 累计奖励
-            step += 1  # 增加步数
+            episode_reward += reward
+            steps += 1
 
             # 检查终止条件
             if collision:
-                collisions += 1  # 记录碰撞
+                collision_count += 1
                 done = True
-            if goal:
-                successes += 1  # 记录成功
+            elif goal:
+                goal_count += 1
+                done = True
+            elif steps >= config.max_steps:
+                timeout_count += 1
                 done = True
 
-    # 计算平均指标
-    avg_reward /= max(config.eval_episodes, 1)
-    avg_collision_rate = collisions / max(config.eval_episodes, 1)
-    avg_success_rate = successes / max(config.eval_episodes, 1)
+        # 记录单回合数据
+        episode_rewards.append(episode_reward)
+        episode_lengths.append(steps)
+        total_reward += episode_reward
+        total_steps += steps
+        
+        # 显示单回合评估进度
+        status = "🎯" if goal else "💥" if collision else "⏰"
+        print(f"   Evaluation Episode {ep_idx+1:2d}/{config.eval_episodes}: {status} | "
+              f"Steps: {steps:3d} | Reward: {episode_reward:7.1f}")
 
-    # 打印评估结果
-    print(f"平均奖励        : {avg_reward:.2f}")
-    print(f"碰撞率          : {avg_collision_rate:.2f}")
-    print(f"目标到达率      : {avg_success_rate:.2f}")
-    print("-" * 46)
-
-    # 记录到TensorBoard
+    # ========== 计算统计指标 ==========
+    avg_reward = total_reward / config.eval_episodes
+    avg_steps = total_steps / config.eval_episodes
+    success_rate = goal_count / config.eval_episodes * 100
+    collision_rate = collision_count / config.eval_episodes * 100
+    timeout_rate = timeout_count / config.eval_episodes * 100
+    
+    # 计算标准差
+    reward_std = np.std(episode_rewards) if config.eval_episodes > 1 else 0
+    steps_std = np.std(episode_lengths) if config.eval_episodes > 1 else 0
+    
+    # ========== 格式化输出 ==========
+    print("\n📈 Performance Summary:")
+    print(f"   • Success Rate:      {success_rate:6.1f}% ({goal_count:2d}/{config.eval_episodes:2d})")
+    print(f"   • Collision Rate:    {collision_rate:6.1f}% ({collision_count:2d}/{config.eval_episodes:2d})")
+    print(f"   • Timeout Rate:      {timeout_rate:6.1f}% ({timeout_count:2d}/{config.eval_episodes:2d})")
+    print(f"   • Average Reward:    {avg_reward:8.2f} ± {reward_std:.2f}")
+    print(f"   • Average Steps:     {avg_steps:8.1f} ± {steps_std:.1f}")
+    
+    # 额外指标
+    if goal_count > 0:
+        successful_episodes_reward = sum(r for i, r in enumerate(episode_rewards) 
+                                       if episode_lengths[i] < config.max_steps and not collision)
+        avg_success_reward = successful_episodes_reward / goal_count
+        print(f"   • Avg Success Reward: {avg_success_reward:8.2f}")
+    
+    print("-" * 60)
+    print(f"⏰ Evaluation completed: {config.eval_episodes} episodes")
+    print("=" * 60)
+    
+    # ========== TensorBoard记录 ==========
     writer = system.low_level_controller.writer
+    writer.add_scalar("eval/success_rate", success_rate, epoch)
+    writer.add_scalar("eval/collision_rate", collision_rate, epoch)
+    writer.add_scalar("eval/timeout_rate", timeout_rate, epoch)
     writer.add_scalar("eval/avg_reward", avg_reward, epoch)
-    writer.add_scalar("eval/collision_rate", avg_collision_rate, epoch)
-    writer.add_scalar("eval/goal_rate", avg_success_rate, epoch)
+    writer.add_scalar("eval/avg_steps", avg_steps, epoch)
+    writer.add_scalar("eval/reward_std", reward_std, epoch)
+    
+    # 记录原始计数
+    writer.add_scalar("eval_raw/success_count", goal_count, epoch)
+    writer.add_scalar("eval_raw/collision_count", collision_count, epoch)
 
 
 def main(args=None):
     """ETHSRL+GP的主要训练循环"""
 
+    # ========== 训练初始化日志 ==========
+    print("\n" + "="*60)
+    print("🚀 Starting ETHSRL+GP Hierarchical Navigation Training")
+    print("="*60)
+    print(f"📋 Training Configuration:")
+    print(f"   • Device: {torch.device('cuda' if torch.cuda.is_available() else 'cpu')}")
+    print(f"   • Max epochs: {60}, Episodes per epoch: {70}")
+    print(f"   • Training iterations: {80}, Batch size: {64}")
+    print(f"   • Max steps per episode: {300}")
+    print(f"   • Train every {2} episodes")
+    print("="*60)
+
     # 设备和系统初始化
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # 自动选择设备
-    config = TrainingConfig()  # 创建训练配置
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    config = TrainingConfig()
 
-    system = HierarchicalNavigationSystem(device=device)  # 初始化分层导航系统
-    replay_buffer = TD3ReplayAdapter(buffer_size=config.buffer_size)  # 初始化回放缓冲区
+    # ========== 系统初始化 ==========
+    print("🔄 Initializing ETHSRL+GP system...")
+    system = HierarchicalNavigationSystem(device=device)
+    replay_buffer = TD3ReplayAdapter(buffer_size=config.buffer_size)
+    print("✅ System initialization completed")
 
-    # 初始化模拟环境
+    # ========== 环境初始化 ==========
+    print("🔄 Initializing simulation environment...")
     sim = SIM(world_file="worlds/env_a.yaml", disable_plotting=False)
+    print("✅ Environment initialization completed")
+
+    # ========== 训练统计变量初始化 ==========
+    episode_reward = 0.0
+    epoch_total_reward = 0.0
+    epoch_total_steps = 0
+    epoch_goal_count = 0
+    epoch_collision_count = 0
 
     # 训练计数器初始化
-    episode = 0  # 情节计数器
-    epoch = 0    # 训练轮数计数器
+    episode = 0
+    epoch = 0
+
+    print("\n🎬 Starting main training loop...")
+    print("-" * 50)
 
     # 主训练循环
     while epoch < config.max_epochs:
-        system.reset()  # 重置系统状态
+        system.reset()
         # 重置模拟环境并获取初始观测
         latest_scan, distance, cos, sin, collision, goal, prev_action, reward = sim.reset()
-        prev_action = [0.0, 0.0]  # 初始化动作为零
+        prev_action = [0.0, 0.0]
 
         # 单个情节变量初始化
-        step = 0  # 步数计数器
-        episode_reward = 0.0  # 情节累计奖励
-        done = False  # 情节完成标志
+        steps = 0
+        episode_reward = 0.0
+        done = False
 
         # 单个情节循环
-        while not done and step < config.max_steps:
-            robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-            goal_info = [distance, cos, sin]  # 目标信息
+        while not done and steps < config.max_steps:
+            robot_pose = get_robot_pose(sim)
+            goal_info = [distance, cos, sin]
 
             # 确定是否需要新的子目标
             if system.current_subgoal is None or system.high_level_planner.check_triggers(
                 latest_scan, robot_pose, goal_info
             ):
-                # 生成新的子目标
                 subgoal_distance, subgoal_angle = system.high_level_planner.generate_subgoal(
                     latest_scan, distance, cos, sin
                 )
             else:
-                # 使用当前子目标
                 subgoal_distance, subgoal_angle = system.current_subgoal
 
             # 处理观测为状态向量
@@ -208,7 +279,7 @@ def main(args=None):
             action = system.low_level_controller.predict_action(
                 state, add_noise=True, noise_scale=config.exploration_noise
             )
-            action = np.clip(action, -1.0, 1.0)  # 裁剪动作到合法范围
+            action = np.clip(action, -1.0, 1.0)
 
             # 将动作转换为控制命令
             lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))
@@ -219,7 +290,16 @@ def main(args=None):
                 lin_velocity=lin_cmd, ang_velocity=ang_cmd
             )
 
-            episode_reward += reward  # 累计情节奖励
+            episode_reward += reward
+            epoch_total_reward += reward
+            epoch_total_steps += 1
+
+            # 每50步显示一次训练进度
+            if steps % 50 == 0:
+                print(f"🏃 Training | Epoch {epoch:2d}/{config.max_epochs} | "
+                      f"Episode {episode:3d}/{config.episodes_per_epoch} | "
+                      f"Step {steps:3d}/{config.max_steps} | "
+                      f"Reward: {reward:7.2f}")
 
             # 准备下一个状态
             next_prev_action = [executed_action[0], executed_action[1]]
@@ -231,14 +311,24 @@ def main(args=None):
             )
 
             # 检查终止条件
-            done = collision or goal or step == config.max_steps - 1
+            done = collision or goal or steps == config.max_steps - 1
+            
             # 将经验添加到回放缓冲区
             replay_buffer.add(state, action, reward, float(done), next_state)
 
-            prev_action = next_prev_action  # 更新历史动作
-            step += 1  # 增加步数
+            prev_action = next_prev_action
+            steps += 1
 
-        episode += 1  # 增加情节计数
+        # 更新统计
+        if goal:
+            epoch_goal_count += 1
+        if collision:
+            epoch_collision_count += 1
+
+        # 显示回合结束信息
+        status = "🎯 GOAL" if goal else "💥 COLLISION" if collision else "⏰ TIMEOUT"
+        print(f"   Episode {episode:3d} finished: {status} | "
+              f"Steps: {steps:3d} | Total Reward: {episode_reward:7.1f}")
 
         # 记录情节奖励到TensorBoard
         writer = system.low_level_controller.writer
@@ -246,26 +336,62 @@ def main(args=None):
 
         # 检查是否应该进行训练
         if (
-            replay_buffer.size() >= config.min_buffer_size  # 缓冲区有足够数据
-            and episode % config.train_every_n_episodes == 0  # 达到训练间隔
+            replay_buffer.size() >= config.min_buffer_size
+            and episode % config.train_every_n_episodes == 0
         ):
+            current_buffer_size = replay_buffer.size()
+            print(f"   🔄 Training model... (Buffer: {current_buffer_size} samples)")
+            
             # 执行训练迭代
             for _ in range(config.training_iterations):
                 system.low_level_controller.update(
                     replay_buffer,
                     batch_size=config.batch_size,
-                    discount=0.99,  # 折扣因子
-                    tau=0.005,  # 目标网络软更新系数
-                    policy_noise=0.2,  # 策略噪声
-                    noise_clip=0.5,  # 噪声裁剪
-                    policy_freq=2,  # 策略更新频率
+                    discount=0.99,
+                    tau=0.005,
+                    policy_noise=0.2,
+                    noise_clip=0.5,
+                    policy_freq=2,
                 )
+            print(f"   ✅ Training completed")
+
+        episode += 1
 
         # 检查是否完成一个训练轮次
         if episode % config.episodes_per_epoch == 0:
-            epoch += 1  # 增加轮次计数
-            evaluate(system, sim, config, epoch)  # 运行评估
+            # 训练阶段统计
+            epoch_avg_reward = epoch_total_reward / config.episodes_per_epoch
+            epoch_success_rate = epoch_goal_count / config.episodes_per_epoch * 100
+            epoch_collision_rate = epoch_collision_count / config.episodes_per_epoch * 100
+            
+            print("\n" + "="*60)
+            print(f"📊 EPOCH {epoch:03d} TRAINING SUMMARY")
+            print("="*60)
+            print(f"   • Success Rate:    {epoch_success_rate:6.1f}% ({epoch_goal_count:2d}/{config.episodes_per_epoch:2d})")
+            print(f"   • Collision Rate:  {epoch_collision_rate:6.1f}% ({epoch_collision_count:2d}/{config.episodes_per_epoch:2d})")
+            print(f"   • Average Reward:  {epoch_avg_reward:8.2f}")
+            print(f"   • Total Steps:     {epoch_total_steps:8d}")
+            print(f"   • Buffer Size:     {replay_buffer.size():8d}")
+            print("="*60)
+            
+            # 重置epoch统计
+            epoch_total_reward = 0.0
+            epoch_total_steps = 0
+            epoch_goal_count = 0
+            epoch_collision_count = 0
+            
+            epoch += 1
+            
+            # 运行评估
+            evaluate(system, sim, config, epoch)
+
+    # ========== 训练完成日志 ==========
+    print("\n" + "="*60)
+    print("🎉 ETHSRL+GP Training Completed!")
+    print("="*60)
+    print(f"📈 Final performance after {config.max_epochs} epochs")
+    print("="*60)
 
 
 if __name__ == "__main__":
-    main()  # 运行主函数
+    main()
