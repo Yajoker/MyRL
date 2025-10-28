@@ -1,8 +1,8 @@
 world:
-  height: 20  # 世界高度为 10 米
-  width: 20   # 世界宽度为 10 米（注：这里注释错误，应该是 width）
-  step_time: 0.1  # 控制器每步更新周期为 0.3 秒（即 3.33Hz）
-  sample_time: 0.1  # 渲染与数据提取的采样周期为 0.3 秒
+  height: 20  # 世界高度为 20 米
+  width: 20   # 世界宽度为 20 米（注：这里注释错误，应该是 width）
+  step_time: 0.1  # 控制器每步更新周期为 0.1 秒
+  sample_time: 0.1  # 渲染与数据提取的采样周期为 0.1 秒
   offset: [0, 0] # 世界坐标系的原点偏移量为 (0, 0)
   control_mode: 'auto'  # 'keyboard', 'auto'
   collision_mode: 'unobstructed_obstacles'  # 'stop', 'unobstructed', 'unobstructed_obstacles'
@@ -13,19 +13,19 @@ world:
 
 robot:
   - kinematics: {name: 'diff'}  # 差分驱动机器人（左右轮独立控制）
-    shape: {name: 'circle', radius: 0.2}  # 机器人形状为圆形，半径 0.2 米
+    shape: {name: 'circle', radius: 0.3}  # 机器人形状为圆形，半径 0.3 米
     vel_min: [ 0, -1.0 ]  # 最小速度：[线速度，角速度]
     behavior: {name: 'rvo'}
     vel_max: [ 1.0, 1.0 ]  # 最大速度：[线速度，角速度]
     state: [6, 2, 0, 0]  # 初始状态：[x, y, 朝向θ, 初始速度]
     goal: [14, 18, 0]  # 目标位置：[x, y, 朝向]
     arrive_mode: position  # 到达条件只看位置是否到达，不看朝向
-    goal_threshold: 0.3  # 到达目标的距离阈值为 0.3 米
+    goal_threshold: 0.5  # 到达目标的距离阈值为 0.5 米
 
     sensors:
       - type: 'lidar2d'  # 激光雷达类型：2D 激光
         range_min: 0  # 最小测量距离为 0 米
-        range_max: 6  # 最大测量距离为 7 米
+        range_max: 9  # 最大测量距离为 9 米
         angle_range: 3.14  # 雷达覆盖范围为 180 度（弧度）
         number: 180  # 激光束数量（分辨率）为 180 条
         noise: True  # 是否添加测量噪声：是
@@ -64,8 +64,8 @@ obstacle:
       name: 'linestring'
       vertices:
         - [ 8, 0 ]
-        - [ 8, 8 ]
-        - [ 12, 8 ]
+        - [ 8, 7 ]
+        - [ 12, 7 ]
         - [ 12, 0 ]
     state: [0, 0, 0]
     kinematics: { name: 'static' }
@@ -74,8 +74,8 @@ obstacle:
       name: 'linestring'
       vertices:
         - [ 8, 20 ]
-        - [ 8, 12 ]
-        - [ 12, 12 ]
+        - [ 8, 13 ]
+        - [ 12, 13 ]
         - [ 12, 20 ]
     state: [0, 0, 0]
     kinematics: { name: 'static' }
