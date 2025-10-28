@@ -4,9 +4,10 @@
 处理环境信息和全局目标，生成安全的中间子目标
 """
 
+import math
 import numpy as np
-import time
 from pathlib import Path
+from typing import Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -26,224 +27,232 @@ class SubgoalNetwork(nn.Module):
         初始化子目标生成网络
 
         Args:
-            belief_dim: 信念状态输入的维度
+            belief_dim: 信念状态输入的维度（激光雷达数据点数）
             hidden_dim: 隐藏层的维度
         """
         super(SubgoalNetwork, self).__init__()
 
-        # CNN层用于处理激光雷达数据
-        self.cnn1 = nn.Conv1d(1, 8, kernel_size=5, stride=2)  # 第一层CNN
-        self.cnn2 = nn.Conv1d(8, 16, kernel_size=3, stride=2)  # 第二层CNN
-        self.cnn3 = nn.Conv1d(16, 8, kernel_size=3, stride=1)  # 第三层CNN
+        # CNN层用于处理激光雷达数据（一维卷积，处理序列数据）
+        self.cnn1 = nn.Conv1d(1, 8, kernel_size=5, stride=2)  # 第一层CNN：输入1通道，输出8通道
+        self.cnn2 = nn.Conv1d(8, 16, kernel_size=3, stride=2)  # 第二层CNN：输入8通道，输出16通道
+        self.cnn3 = nn.Conv1d(16, 8, kernel_size=3, stride=1)  # 第三层CNN：输入16通道，输出8通道
 
         # 全局目标信息处理层
-        self.goal_embed = nn.Linear(3, 32)  # 处理距离、余弦、正弦三个目标信息
+        self.goal_embed = nn.Linear(3, 32)  # 处理距离、余弦、正弦三个目标信息，输出32维
 
-        # 历史动作嵌入层 - 新增
-        self.action_embed = nn.Linear(2, 16)  # 处理历史线速度和角速度
+        # 历史动作嵌入层
+        self.action_embed = nn.Linear(2, 16)  # 处理历史线速度和角速度，输出16维
 
         # 全连接层 - 更新输入维度
         cnn_output_dim = self._get_cnn_output_dim(belief_dim)  # 计算CNN输出维度
-        self.fc1 = nn.Linear(cnn_output_dim + 32 + 16, hidden_dim)  # 第一层全连接，加入动作嵌入
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)  # 第二层全连接
+        # 第一层全连接：输入=CNN输出+目标嵌入+动作嵌入，输出=隐藏层维度
+        self.fc1 = nn.Linear(cnn_output_dim + 32 + 16, hidden_dim)
+        # 第二层全连接：输入=隐藏层维度，输出=隐藏层维度的一半
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
 
         # 输出层：子目标距离和角度
-        self.distance_head = nn.Linear(hidden_dim // 2, 1)  # 距离输出头
-        self.angle_head = nn.Linear(hidden_dim // 2, 1)  # 角度输出头
+        self.distance_head = nn.Linear(hidden_dim // 2, 1)  # 距离输出头：输出1维距离值
+        self.angle_head = nn.Linear(hidden_dim // 2, 1)  # 角度输出头：输出1维角度值
 
     def _get_cnn_output_dim(self, belief_dim):
         """计算CNN层展平后的输出维度"""
         # 创建虚拟输入来计算输出维度
-        x = torch.zeros(1, 1, belief_dim)
-        x = self.cnn1(x)
-        x = self.cnn2(x)
-        x = self.cnn3(x)
-        return x.numel()  # 返回元素总数
+        x = torch.zeros(1, 1, belief_dim)  # 批次大小1，通道数1，输入维度belief_dim
+        x = self.cnn1(x)  # 通过第一层CNN
+        x = self.cnn2(x)  # 通过第二层CNN
+        x = self.cnn3(x)  # 通过第三层CNN
+        return x.numel()  # 返回元素总数（展平后的维度）
 
     def forward(self, belief_state, goal_info, prev_action):
         """
         子目标网络的前向传播
 
         Args:
-            belief_state: 包含激光雷达数据的张量
-            goal_info: 包含[距离, cos, sin]全局目标信息的张量
-            prev_action: 包含[线速度, 角速度]历史动作的张量
+            belief_state: 包含激光雷达数据的张量，形状[batch_size, belief_dim]
+            goal_info: 包含[距离, cos, sin]全局目标信息的张量，形状[batch_size, 3]
+            prev_action: 包含[线速度, 角速度]历史动作的张量，形状[batch_size, 2]
 
         Returns:
             包含(子目标距离, 子目标角度)的元组
         """
         # 处理激光雷达数据
-        laser = belief_state.unsqueeze(1)  # 增加通道维度
+        laser = belief_state.unsqueeze(1)  # 增加通道维度：[batch_size, 1, belief_dim]
         x = F.relu(self.cnn1(laser))  # 第一层CNN + ReLU激活
         x = F.relu(self.cnn2(x))  # 第二层CNN + ReLU激活
         x = F.relu(self.cnn3(x))  # 第三层CNN + ReLU激活
-        x = x.flatten(start_dim=1)  # 展平特征图
+        x = x.flatten(start_dim=1)  # 展平特征图：[batch_size, cnn_output_dim]
 
         # 处理目标信息
-        g = F.relu(self.goal_embed(goal_info))  # 目标嵌入 + ReLU激活
+        g = F.relu(self.goal_embed(goal_info))  # 目标嵌入 + ReLU激活：[batch_size, 32]
 
-        # 处理历史动作 - 新增
-        a = F.relu(self.action_embed(prev_action))  # 动作嵌入 + ReLU激活
+        # 处理历史动作
+        a = F.relu(self.action_embed(prev_action))  # 动作嵌入 + ReLU激活：[batch_size, 16]
 
         # 合并特征 - 更新为包含动作
-        combined = torch.cat((x, g, a), dim=1)
+        combined = torch.cat((x, g, a), dim=1)  # 拼接所有特征：[batch_size, cnn_output_dim+32+16]
 
         # 全连接层处理
-        x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU
-        x = F.relu(self.fc2(x))  # 第二层全连接 + ReLU
+        x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU：[batch_size, hidden_dim]
+        x = F.relu(self.fc2(x))  # 第二层全连接 + ReLU：[batch_size, hidden_dim//2]
 
         # 生成子目标参数
-        distance = 3 * torch.sigmoid(self.distance_head(x))  # 距离范围[0, 3]米
-        angle = torch.tanh(self.angle_head(x)) * np.pi  # 角度范围[-π, π]
+        distance = 3 * torch.sigmoid(self.distance_head(x))  # 距离范围[0, 3]米，sigmoid确保非负
+        angle = torch.tanh(self.angle_head(x)) * np.pi  # 角度范围[-π, π]，tanh确保在-1到1之间
 
         return distance, angle
 
 
 class EventTrigger:
-    """
-    多源事件触发机制实现
-    包含多种触发条件，基于环境因素、机器人状态和时间约束决定何时生成新子目标
-    """
+    """事件触发器，聚焦安全距离与进度两类触发条件。"""
 
-    def __init__(self,
-                 base_threshold=0.7,
-                 complexity_factor=0.3,
-                 safe_distance=0.5,
-                 heading_threshold=0.3,
-                 min_interval=1.0):
+    def __init__(
+        self,
+        safety_trigger_distance: float = 1.5,
+        subgoal_reach_threshold: float = 0.5,
+        stagnation_steps: int = 40,
+        progress_epsilon: float = 0.1,
+        min_interval: float = 1.0,
+        step_duration: float = 0.1,
+    ) -> None:
         """
-        初始化事件触发机制
+        初始化事件触发器
 
         Args:
-            base_threshold: 基础风险阈值 τ0
-            complexity_factor: 环境复杂性影响系数 α
-            safe_distance: 安全距离阈值（米）
-            heading_threshold: 航向变化阈值（弧度）
-            min_interval: 触发之间的最小时间间隔（秒）
+            safety_trigger_distance: 安全触发距离阈值（米）
+            subgoal_reach_threshold: 子目标到达阈值（米）
+            stagnation_steps: 停滞步数阈值
+            progress_epsilon: 进度容差（米）
+            min_interval: 最小触发间隔（秒）
+            step_duration: 步长持续时间（秒）
         """
-        self.base_threshold = base_threshold
-        self.complexity_factor = complexity_factor
-        self.safe_distance = safe_distance
-        self.heading_threshold = heading_threshold
+        # 触发参数设置
+        self.safety_trigger_distance = safety_trigger_distance
+        self.subgoal_reach_threshold = subgoal_reach_threshold
+        self.stagnation_steps = max(1, int(stagnation_steps))  # 确保至少1步
+        self.progress_epsilon = progress_epsilon
         self.min_interval = min_interval
+        self.step_duration = step_duration
+        # 计算最小步数间隔：将时间间隔转换为步数间隔
+        self.min_step_interval = max(1, int(math.ceil(min_interval / step_duration))) if step_duration > 0 else 1
 
-        # 状态变量
-        self.last_trigger_time = 0.0  # 上次触发时间
-        self.last_heading = 0.0  # 上次航向
-        self.last_subgoal = None  # 上次子目标
-        self.current_threshold = base_threshold  # 当前阈值
-        self.last_velocity = [0.0, 0.0]  # 上次速度 [线速度, 角速度] - 新增
+        # 状态变量初始化
+        self.last_trigger_step = -self.min_step_interval  # 上次触发时间步，初始化为负值确保第一次可触发
+        self.last_subgoal: Optional[np.ndarray] = None  # 上次子目标位置
+        self.best_goal_distance: Optional[float] = None  # 最佳目标距离（用于进度跟踪）
+        self.last_progress_step = 0  # 上次有进展的时间步
 
-    def risk_assessment_trigger(self, risk_level, env_complexity):
-        """
-        基于环境风险评估的触发
+    def safe_distance_trigger(self, min_obstacle_dist: float) -> bool:
+        """若最近障碍物距离低于安全阈值则触发。"""
 
-        Args:
-            risk_level: 当前评估的风险等级 [0, 1]
-            env_complexity: 计算的环境复杂性 [0, 1]
+        if np.isnan(min_obstacle_dist):  # 检查距离是否为NaN
+            return False
+        return min_obstacle_dist <= self.safety_trigger_distance  # 距离小于等于安全阈值则触发
 
-        Returns:
-            布尔值，指示是否满足触发条件
-        """
-        # 基于环境复杂性动态调整阈值
-        self.current_threshold = self.base_threshold * (1 - self.complexity_factor * env_complexity)
-        return risk_level > self.current_threshold  # 风险超过阈值则触发
+    def reset_progress(self, goal_distance: float, current_step: int) -> None:
+        """在生成新子目标时重置进度基准。"""
 
-    def obstacle_proximity_trigger(self, min_obstacle_dist):
-        """
-        基于障碍物接近度的触发
+        if not np.isfinite(goal_distance):  # 检查目标距离是否有限（非无穷大/NaN）
+            self.best_goal_distance = None  # 重置最佳距离
+            self.last_progress_step = current_step  # 更新进度时间步
+            return
 
-        Args:
-            min_obstacle_dist: 到最近障碍物的距离（米）
+        # 设置新的最佳距离基准
+        self.best_goal_distance = goal_distance
+        self.last_progress_step = current_step
 
-        Returns:
-            布尔值，指示是否满足触发条件
-        """
-        return min_obstacle_dist < self.safe_distance * 1.5  # 距离小于安全距离的1.5倍则触发
+    def update_progress(self, goal_distance: float, current_step: int) -> None:
+        """根据当前全局目标距离更新最优进度。"""
 
-    def heading_change_trigger(self, current_heading):
-        """
-        基于航向显著变化的触发
+        if not np.isfinite(goal_distance):  # 检查距离是否有效
+            return
 
-        Args:
-            current_heading: 当前机器人航向（弧度）
+        if self.best_goal_distance is None:  # 如果还没有最佳距离记录
+            self.best_goal_distance = goal_distance  # 设置初始最佳距离
+            self.last_progress_step = current_step  # 记录当前时间步
+            return
 
-        Returns:
-            布尔值，指示是否满足触发条件
-        """
-        heading_change = abs(self.last_heading - current_heading)  # 计算航向变化
+        # 如果当前距离比最佳距离小（更接近目标），且超过进度容差
+        if goal_distance + self.progress_epsilon < self.best_goal_distance:
+            self.best_goal_distance = goal_distance  # 更新最佳距离
+            self.last_progress_step = current_step  # 更新进度时间步
 
-        # 处理±π环绕
-        if heading_change > np.pi:
-            heading_change = 2 * np.pi - heading_change
+    def is_stagnated(self, current_step: int) -> bool:
+        """判断是否出现长时间进展停滞。"""
 
-        self.last_heading = current_heading  # 更新上次航向
-        return heading_change > self.heading_threshold  # 变化超过阈值则触发
+        if self.best_goal_distance is None:  # 如果没有进度基准
+            return False
+        # 检查从上次进展到现在是否超过停滞步数阈值
+        return (current_step - self.last_progress_step) >= self.stagnation_steps
 
-    def velocity_change_trigger(self, current_velocity):
-        """
-        触发基于速度显著变化 - 新增
+    def _ray_distance_to_angle(self, laser_scan: Optional[np.ndarray], angle: float) -> float:
+        """将角度转换为激光雷达扫描中的距离值"""
+        
+        if laser_scan is None or len(laser_scan) == 0 or np.isnan(angle):  # 检查输入有效性
+            return float('inf')  # 无效输入返回无穷大
 
-        Args:
-            current_velocity: 当前线速度和角速度 [lin_vel, ang_vel]
+        # 将角度从[-π, π]归一化到[0, 1]
+        normalized = (angle + np.pi) / (2 * np.pi)
+        normalized = float(np.clip(normalized, 0.0, 1.0))  # 确保在0-1范围内
+        # 计算对应的激光雷达索引
+        index = int(round(normalized * (len(laser_scan) - 1)))
+        distance = laser_scan[index]  # 获取该方向的激光距离
+        if np.isnan(distance):  # 检查距离是否有效
+            return float('inf')
+        return float(distance)  # 返回有效距离
 
-        Returns:
-            布尔值，指示是否满足触发条件
-        """
-        vel_change = abs(current_velocity[0] - self.last_velocity[0])  # 线速度变化
-        ang_change = abs(current_velocity[1] - self.last_velocity[1])  # 角速度变化
+    def intelligent_progress_trigger(
+        self,
+        *,
+        dist_to_subgoal: Optional[float],
+        current_step: int,
+        subgoal_angle: Optional[float],
+        laser_scan: Optional[np.ndarray],
+        min_obstacle_dist: float,
+    ) -> bool:
+        """组合子目标完成、进度停滞和子目标受阻的智能触发。"""
 
-        # 更新上次速度
-        self.last_velocity = current_velocity.copy()
+        if dist_to_subgoal is None:  # 如果没有当前子目标
+            return False
 
-        # 线速度变化大或角速度变化大则触发
-        return vel_change > 0.1 or ang_change > 0.5
+        # 条件1: 子目标到达触发 - 距离子目标足够近
+        if dist_to_subgoal <= self.subgoal_reach_threshold:
+            return True
 
-    def subgoal_reachability_trigger(self, current_pos, subgoal_pos, min_obstacle_dist):
-        """
-        基于子目标可达性评估的触发
+        # 条件2: 进度停滞触发 - 长时间没有向全局目标进展
+        stagnation = self.is_stagnated(current_step)
 
-        Args:
-            current_pos: 当前机器人位置 [x, y]
-            subgoal_pos: 当前子目标位置 [x, y]
-            min_obstacle_dist: 到最近障碍物的距离
+        # 条件3: 子目标受阻触发 - 子目标方向有障碍物
+        blocked = False
+        if laser_scan is not None and subgoal_angle is not None:  # 检查输入有效性
+            ray_distance = self._ray_distance_to_angle(laser_scan, subgoal_angle)  # 获取子目标方向的距离
+            blocked = (
+                np.isfinite(ray_distance)  # 距离有效
+                and ray_distance <= self.safety_trigger_distance  # 子目标方向有近距离障碍物
+                and min_obstacle_dist <= self.safety_trigger_distance  # 整体环境有近距离障碍物
+            )
 
-        Returns:
-            布尔值，指示是否满足触发条件
-        """
-        if self.last_subgoal is None:
-            return False  # 没有子目标时不触发
+        # 任一进度相关条件满足即触发
+        return stagnation or blocked
 
-        # 计算到子目标的距离
-        subgoal_dist = np.linalg.norm(np.array(current_pos) - np.array(subgoal_pos))
+    def time_based_trigger(self, current_step: int) -> bool:
+        """确保触发之间满足最小步数间隔。"""
 
-        # 如果子目标很近，检查是否已到达
-        if subgoal_dist < 0.3:
-            return True  # 已到达子目标，需要新子目标
+        # 检查自上次触发以来是否经过足够步数
+        return current_step - self.last_trigger_step >= self.min_step_interval
 
-        # 如果到子目标的路径被阻塞
-        if min_obstacle_dist < self.safe_distance and subgoal_dist > self.safe_distance:
-            # 计算到障碍物和子目标的向量点积
-            if np.dot(current_pos, subgoal_pos) / (np.linalg.norm(current_pos) * np.linalg.norm(subgoal_pos)) > 0.7:
-                return True  # 路径阻塞，需要新子目标
+    def reset_time(self, current_step: int) -> None:
+        """记录触发发生的时间步。"""
 
-        return False  # 不需要新子目标
+        self.last_trigger_step = current_step  # 更新上次触发时间步
 
-    def time_based_trigger(self):
-        """
-        确保触发之间的最小时间间隔
+    def reset_state(self) -> None:
+        """重置触发器在回合之间的内部状态。"""
 
-        Returns:
-            布尔值，指示自上次触发以来是否经过了足够时间
-        """
-        current_time = time.time()
-        if current_time - self.last_trigger_time > self.min_interval:
-            return True  # 时间间隔满足
-        return False  # 时间间隔不满足
-
-    def reset_time(self):
-        """重置上次触发时间为当前时间"""
-        self.last_trigger_time = time.time()
+        # 重置所有状态变量
+        self.last_trigger_step = -self.min_step_interval
+        self.last_subgoal = None
+        self.best_goal_distance = None
+        self.last_progress_step = 0
 
 
 class HighLevelPlanner:
@@ -259,17 +268,21 @@ class HighLevelPlanner:
                  save_directory=Path("ethsrl/models/high_level"),
                  model_name="high_level_planner",
                  load_model=False,
-                 load_directory=None):
+                 load_directory=None,
+                 step_duration=0.1,
+                 min_interval=1.0):
         """
         初始化高层规划器
 
         Args:
-            belief_dim: 信念状态的维度
+            belief_dim: 信念状态的维度（激光雷达数据点数）
             device: 计算设备（CPU/GPU）
             save_directory: 模型检查点保存目录
             model_name: 模型文件名
             load_model: 是否加载预训练模型
             load_directory: 模型加载目录（如果为None则使用save_directory）
+            step_duration: 步长持续时间（秒）
+            min_interval: 最小触发间隔（秒）
         """
         self.belief_dim = belief_dim
         # 设置计算设备，默认为GPU（如果可用）否则CPU
@@ -279,25 +292,49 @@ class HighLevelPlanner:
         self.subgoal_network = SubgoalNetwork(belief_dim=belief_dim).to(self.device)
 
         # 初始化事件触发器
-        self.event_trigger = EventTrigger()
+        self.event_trigger = EventTrigger(min_interval=min_interval, step_duration=step_duration)
+        self.step_duration = step_duration
 
         # 训练设置
-        self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=1e-4)  # 优化器
-        self.writer = SummaryWriter(comment=model_name)  # TensorBoard记录器
-        self.iter_count = 0  # 迭代计数器
+        self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=1e-4)  # Adam优化器
+        self.writer = SummaryWriter(comment=model_name)  # TensorBoard记录器，用于可视化训练过程
+        self.iter_count = 0  # 迭代计数器，记录训练步数
         self.model_name = model_name  # 模型名称
         self.save_directory = save_directory  # 保存目录
 
         # 当前状态跟踪
-        self.current_subgoal = None  # 当前子目标
-        self.last_goal_distance = float('inf')  # 上次目标距离
-        self.last_goal_direction = 0.0  # 上次目标方向
-        self.prev_action = [0.0, 0.0]  # 上一动作 [线速度, 角速度] - 新增
+        self.current_subgoal = None  # 当前子目标（相对坐标：距离，角度）
+        self.last_goal_distance = float('inf')  # 上次目标距离，初始化为无穷大
+        self.last_goal_direction = 0.0  # 上次目标方向角度
+        self.prev_action = [0.0, 0.0]  # 上一动作 [线速度, 角速度]
+        self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标的世界坐标[x, y]
 
         # 如果请求则加载预训练模型
         if load_model:
             load_dir = load_directory if load_directory else save_directory
             self.load_model(filename=model_name, directory=load_dir)
+
+    def get_relative_subgoal(self, robot_pose: Optional[Sequence[float]]) -> Tuple[Optional[float], Optional[float]]:
+        """计算当前子目标相对于机器人姿态的距离和角度。"""
+
+        if robot_pose is None or self.current_subgoal_world is None:  # 检查输入有效性
+            return None, None
+
+        robot_xy = np.asarray(robot_pose[:2], dtype=np.float32)  # 提取机器人位置[x, y]
+        subgoal_world = np.asarray(self.current_subgoal_world, dtype=np.float32)  # 子目标世界坐标
+        delta = subgoal_world - robot_xy  # 计算相对位移向量
+        distance = float(np.linalg.norm(delta))  # 计算欧几里得距离
+
+        if distance <= 1e-6:  # 如果距离非常小（接近到达）
+            return 0.0, 0.0  # 返回零距离和零角度
+
+        heading = float(robot_pose[2])  # 机器人朝向角度
+        # 计算子目标相对于机器人朝向的角度
+        angle = math.atan2(float(delta[1]), float(delta[0])) - heading
+        # 规范化角度到[-π, π]范围
+        angle = math.atan2(math.sin(angle), math.cos(angle))
+
+        return distance, angle  # 返回相对距离和角度
 
     def process_laser_scan(self, laser_scan):
         """
@@ -309,16 +346,16 @@ class HighLevelPlanner:
         Returns:
             处理后的激光雷达张量
         """
-        laser_scan = np.array(laser_scan)
+        laser_scan = np.array(laser_scan)  # 转换为numpy数组
 
-        # 处理无穷大值
+        # 处理无穷大值（表示没有障碍物检测）
         inf_mask = np.isinf(laser_scan)
-        laser_scan[inf_mask] = 7.0  # 用最大范围值替换
+        laser_scan[inf_mask] = 7.0  # 用最大范围值替换（假设激光雷达最大范围7米）
 
         # 归一化到[0, 1]范围
         laser_scan = laser_scan / 7.0
 
-        return torch.FloatTensor(laser_scan).to(self.device)
+        return torch.FloatTensor(laser_scan).to(self.device)  # 转换为PyTorch张量并移动到设备
 
     def process_goal_info(self, distance, cos_angle, sin_angle):
         """
@@ -332,17 +369,17 @@ class HighLevelPlanner:
         Returns:
             处理后的目标信息张量
         """
-        # 归一化距离
-        norm_distance = min(distance / 10.0, 1.0)  # 最大10米，归一化到[0,1]
+        # 归一化距离：最大10米，归一化到[0,1]
+        norm_distance = min(distance / 10.0, 1.0)
 
-        # 组合成张量
+        # 组合成张量：[归一化距离, cos角度, sin角度]
         goal_info = torch.FloatTensor([norm_distance, cos_angle, sin_angle]).to(self.device)
 
         return goal_info
 
     def process_action_info(self, prev_action):
         """
-        处理历史动作为张量 - 新增
+        处理历史动作为张量
 
         Args:
             prev_action: 上一步的动作 [线速度, 角速度]
@@ -350,16 +387,37 @@ class HighLevelPlanner:
         Returns:
             处理后的动作信息张量
         """
-        # 简单归一化
-        lin_vel = prev_action[0] * 2  # 假设线速度范围在[0, 0.5]
-        ang_vel = prev_action[1]  # 假设角速度范围在[-1, 1]
+        # 简单归一化处理
+        lin_vel = prev_action[0] * 2  # 假设线速度范围在[0, 0.5]，缩放到[0,1]
+        ang_vel = prev_action[1]  # 假设角速度范围在[-1, 1]，保持不变
 
-        # 组合成张量
+        # 组合成张量：[线速度, 角速度]
         action_info = torch.FloatTensor([lin_vel, ang_vel]).to(self.device)
 
         return action_info
 
-    def check_triggers(self, laser_scan, robot_pose, goal_info, prev_action=None, min_obstacle_dist=None):
+    def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, prev_action):
+        """构造高层规划器训练所需的状态向量"""
+
+        with torch.no_grad():  # 不计算梯度，仅用于推理
+            # 处理各组件数据
+            laser_tensor = self.process_laser_scan(laser_scan)
+            goal_tensor = self.process_goal_info(distance, cos_angle, sin_angle)
+            action_tensor = self.process_action_info(prev_action)
+            # 拼接所有组件形成完整状态向量
+            state_tensor = torch.cat((laser_tensor, goal_tensor, action_tensor))
+
+        return state_tensor.cpu().numpy()  # 转换为numpy数组并返回
+
+    def check_triggers(
+        self,
+        laser_scan,
+        robot_pose,
+        goal_info,
+        prev_action=None,
+        min_obstacle_dist=None,
+        current_step: int = 0,
+    ):
         """
         检查是否有任何事件触发器被激活
 
@@ -367,63 +425,65 @@ class HighLevelPlanner:
             laser_scan: 当前激光雷达读数
             robot_pose: 当前机器人位姿 [x, y, theta]
             goal_info: 全局目标信息 [distance, cos, sin]
-            prev_action: 上一步的动作 [线速度, 角速度] - 新增参数
+            prev_action: 上一步的动作 [线速度, 角速度]
             min_obstacle_dist: 到最近障碍物的距离（如果为None，则从laser_scan计算）
+            current_step: 当前时间步
 
         Returns:
             布尔值，指示是否应生成新子目标
         """
-        # 如果最小时间未过，不触发
-        if not self.event_trigger.time_based_trigger():
-            return False
+        # 检查时间间隔条件
+        time_ready = self.event_trigger.time_based_trigger(current_step)
+
+        # 提取目标距离信息
+        goal_distance = float(goal_info[0]) if goal_info else float('inf')
+        laser_scan = np.asarray(laser_scan, dtype=np.float32)  # 确保激光数据为numpy数组
 
         # 如果未提供则计算最小障碍物距离
         if min_obstacle_dist is None:
-            valid_scans = laser_scan[~np.isinf(laser_scan)]  # 过滤有效扫描值
+            valid_scans = laser_scan[np.isfinite(laser_scan)]  # 过滤有效扫描值（非NaN/无穷大）
             min_obstacle_dist = np.min(valid_scans) if valid_scans.size > 0 else float('inf')
 
-        # 计算环境复杂性
-        env_complexity = self.compute_environment_complexity(laser_scan)
+        # 更新进度信息（用于停滞检测）
+        self.event_trigger.update_progress(goal_distance, current_step)
 
-        # 计算风险等级（简化版）
-        risk_level = 1.0 - min(min_obstacle_dist / 3.0, 1.0)  # 距离越近风险越高
+        # 计算当前子目标的空间信息
+        dist_to_subgoal, subgoal_angle = self.get_relative_subgoal(robot_pose)
+        if dist_to_subgoal is not None:  # 如果有有效子目标
+            # 更新事件触发器中的子目标位置
+            self.event_trigger.last_subgoal = np.asarray(self.current_subgoal_world, dtype=np.float32).tolist()
+        else:
+            self.event_trigger.last_subgoal = None
 
-        # 检查各个触发器
-        risk_trigger = self.event_trigger.risk_assessment_trigger(risk_level, env_complexity)  # 风险评估触发
-        obstacle_trigger = self.event_trigger.obstacle_proximity_trigger(min_obstacle_dist)  # 障碍物接近触发
-        heading_trigger = self.event_trigger.heading_change_trigger(robot_pose[2])  # 航向变化触发
-
-        # 速度变化触发检查 - 新增
-        velocity_trigger = False
-        if prev_action is not None:
-            velocity_trigger = self.event_trigger.velocity_change_trigger(prev_action)
-
-        # 从当前子目标创建子目标位置（如果存在）
-        subgoal_pos = None
-        if self.current_subgoal is not None:
-            distance, angle = self.current_subgoal
-            # 计算子目标的世界坐标
-            subgoal_x = robot_pose[0] + distance * np.cos(robot_pose[2] + angle)
-            subgoal_y = robot_pose[1] + distance * np.sin(robot_pose[2] + angle)
-            subgoal_pos = [subgoal_x, subgoal_y]
-
-        # 可达性触发检查
-        reachability_trigger = self.event_trigger.subgoal_reachability_trigger(
-            [robot_pose[0], robot_pose[1]],  # 当前位置
-            subgoal_pos if subgoal_pos else [robot_pose[0], robot_pose[1]],  # 子目标位置
-            min_obstacle_dist  # 最小障碍物距离
+        # 核心触发条件检查
+        safe_trigger = self.event_trigger.safe_distance_trigger(min_obstacle_dist)  # 安全距离触发
+        progress_trigger = self.event_trigger.intelligent_progress_trigger(  # 智能进度触发
+            dist_to_subgoal=dist_to_subgoal,
+            current_step=current_step,
+            subgoal_angle=subgoal_angle,
+            laser_scan=laser_scan,
+            min_obstacle_dist=min_obstacle_dist,
         )
 
-        # 组合所有触发器（任一触发即生成新子目标）
-        trigger_new_subgoal = risk_trigger or obstacle_trigger or heading_trigger or reachability_trigger or velocity_trigger
+        # 最终触发决策：时间间隔满足 AND (安全触发 OR 进度触发)
+        trigger_new_subgoal = time_ready and (safe_trigger or progress_trigger)
 
         # 如果触发，重置时间计数器
         if trigger_new_subgoal:
-            self.event_trigger.reset_time()
+            self.event_trigger.reset_time(current_step)
 
         return trigger_new_subgoal
 
-    def generate_subgoal(self, laser_scan, goal_distance, goal_cos, goal_sin, prev_action=None):
+    def generate_subgoal(
+        self,
+        laser_scan,
+        goal_distance,
+        goal_cos,
+        goal_sin,
+        prev_action=None,
+        robot_pose=None,
+        current_step: Optional[int] = None,
+    ):
         """
         基于当前状态生成新子目标
 
@@ -432,12 +492,14 @@ class HighLevelPlanner:
             goal_distance: 到全局目标的距离
             goal_cos: 到全局目标角度的余弦值
             goal_sin: 到全局目标角度的正弦值
-            prev_action: 上一步的动作 [线速度, 角速度] - 新增参数
+            prev_action: 上一步的动作 [线速度, 角速度]
+            robot_pose: 机器人位姿 [x, y, theta]（用于计算世界坐标）
+            current_step: 当前全局时间步（用于进度重置）
 
         Returns:
             包含(子目标距离, 子目标角度)的元组
         """
-        # 处理输入
+        # 处理输入数据
         laser_tensor = self.process_laser_scan(laser_scan)  # 激光数据张量化
         goal_tensor = self.process_goal_info(goal_distance, goal_cos, goal_sin)  # 目标信息张量化
 
@@ -445,28 +507,45 @@ class HighLevelPlanner:
         if prev_action is None:
             prev_action = self.prev_action
 
-        # 处理动作信息 - 新增
+        # 处理动作信息
         action_tensor = self.process_action_info(prev_action)
 
         # 使用网络生成子目标（不计算梯度）
-        with torch.no_grad():
+        with torch.no_grad():  # 推理模式，不计算梯度
             distance, angle = self.subgoal_network(
-                laser_tensor.unsqueeze(0),  # 增加批次维度
-                goal_tensor.unsqueeze(0),  # 增加批次维度
-                action_tensor.unsqueeze(0)  # 增加批次维度 - 新增
+                laser_tensor.unsqueeze(0),  # 增加批次维度：[1, belief_dim] -> [1, 1, belief_dim]
+                goal_tensor.unsqueeze(0),  # 增加批次维度：[3] -> [1, 3]
+                action_tensor.unsqueeze(0),  # 增加批次维度：[2] -> [1, 2]
             )
 
-        # 转换为numpy数组
-        subgoal_distance = distance.cpu().numpy().item()
-        subgoal_angle = angle.cpu().numpy().item()
+        # 转换为numpy数组并提取标量值
+        subgoal_distance = distance.cpu().numpy().item()  # 子目标距离
+        subgoal_angle = angle.cpu().numpy().item()  # 子目标角度
 
         # 存储供将来参考
-        self.current_subgoal = (subgoal_distance, subgoal_angle)
-        self.last_goal_distance = goal_distance
+        self.current_subgoal = (subgoal_distance, subgoal_angle)  # 存储相对坐标
+        self.last_goal_distance = goal_distance  # 更新上次目标距离
         self.last_goal_direction = np.arctan2(goal_sin, goal_cos)  # 计算目标方向角度
-        self.prev_action = prev_action.copy() if prev_action is not None else self.prev_action  # 更新历史动作 - 新增
+        # 更新历史动作（深拷贝避免引用问题）
+        self.prev_action = prev_action.copy() if prev_action is not None else self.prev_action
 
-        return subgoal_distance, subgoal_angle
+        # 计算子目标的世界坐标（如果提供了机器人位姿）
+        if robot_pose is not None:
+            # 从相对坐标计算绝对世界坐标
+            subgoal_x = robot_pose[0] + subgoal_distance * np.cos(robot_pose[2] + subgoal_angle)
+            subgoal_y = robot_pose[1] + subgoal_distance * np.sin(robot_pose[2] + subgoal_angle)
+            world_target = np.array([subgoal_x, subgoal_y], dtype=np.float32)
+            self.current_subgoal_world = world_target  # 存储世界坐标
+            self.event_trigger.last_subgoal = world_target.tolist()  # 更新事件触发器中的子目标
+        else:
+            self.current_subgoal_world = None
+            self.event_trigger.last_subgoal = None
+
+        # 重置进度基准（新子目标意味着重新开始进度跟踪）
+        progress_step = current_step if current_step is not None else 0
+        self.event_trigger.reset_progress(goal_distance, progress_step)
+
+        return subgoal_distance, subgoal_angle  # 返回新生成的子目标
 
     def compute_environment_complexity(self, laser_scan):
         """
@@ -480,15 +559,16 @@ class HighLevelPlanner:
         """
         # 用最大范围值替换无穷大值
         scan = np.array(laser_scan)
-        scan[np.isinf(scan)] = 7.0
+        scan[np.isinf(scan)] = 7.0  # 替换无穷大为最大范围值
 
         # 基于以下因素的简单复杂性度量：
         # 1. 扫描读数的方差（方差越大越复杂）
         # 2. 平均距离（障碍物越近越复杂）
-        variance = np.var(scan) / 10.0  # 归一化方差
-        avg_distance = np.mean(scan) / 7.0  # 归一化均值
+        variance = np.var(scan) / 10.0  # 归一化方差（假设最大方差10）
+        avg_distance = np.mean(scan) / 7.0  # 归一化均值（最大范围7米）
 
         # 计算复杂性得分（平均距离的倒数，用方差加权）
+        # 障碍物越近、分布越不均匀，复杂性越高
         complexity = (1.0 - avg_distance) * (0.5 + 0.5 * min(variance, 1.0))
 
         return min(complexity, 1.0)  # 确保在[0, 1]范围内
@@ -504,40 +584,42 @@ class HighLevelPlanner:
         Returns:
             安全的(距离, 角度)元组列表
         """
-        safe_subgoals = []
+        safe_subgoals = []  # 存储安全子目标
 
-        # 将扫描转换为笛卡尔坐标以便处理
-        angles = np.linspace(-np.pi, np.pi, len(laser_scan))  # 生成角度数组
+        # 将扫描转换为笛卡尔坐标以便处理（生成对应的角度数组）
+        angles = np.linspace(-np.pi, np.pi, len(laser_scan))  # 生成角度数组，覆盖360度
 
-        for subgoal in candidate_subgoals:
-            distance, angle = subgoal
+        for subgoal in candidate_subgoals:  # 遍历所有候选子目标
+            distance, angle = subgoal  # 解包子目标距离和角度
 
             # 检查到子目标的路径是否清晰
+            # 将角度转换为激光雷达索引
             index = int((angle + np.pi) / (2 * np.pi) * len(laser_scan))  # 计算对应索引
-            index = max(0, min(index, len(laser_scan) - 1))  # 确保有效索引
+            index = max(0, min(index, len(laser_scan) - 1))  # 确保有效索引范围
 
             # 检查子目标是否在安全距离内
-            if distance < laser_scan[index] - self.event_trigger.safe_distance:
+            # 条件：子目标距离 < 激光读数 - 安全距离
+            if distance < laser_scan[index] - self.event_trigger.safety_trigger_distance:
                 safe_subgoals.append(subgoal)  # 路径清晰，子目标安全
 
-        # 如果所有子目标都不安全，选择最安全的一个
+        # 如果所有子目标都不安全，选择最安全的一个（fallback策略）
         if not safe_subgoals and candidate_subgoals:
-            safest_distance = 0  # 最远距离
-            safest_subgoal = None
+            safest_distance = 0  # 最远距离（初始化为0）
+            safest_subgoal = None  # 最安全子目标
 
-            for subgoal in candidate_subgoals:
+            for subgoal in candidate_subgoals:  # 重新遍历所有候选
                 distance, angle = subgoal
                 index = int((angle + np.pi) / (2 * np.pi) * len(laser_scan))
                 index = max(0, min(index, len(laser_scan) - 1))
 
                 if laser_scan[index] > safest_distance:  # 找到最远障碍物的方向
-                    safest_distance = laser_scan[index]
-                    safest_subgoal = subgoal
+                    safest_distance = laser_scan[index]  # 更新最远距离
+                    safest_subgoal = subgoal  # 更新最安全子目标
 
             if safest_subgoal:
                 safe_subgoals.append(safest_subgoal)  # 添加最安全的子目标
 
-        return safe_subgoals
+        return safe_subgoals  # 返回安全子目标列表
 
     def update_planner(self, states, actions, rewards, next_states, dones, batch_size=64):
         """
@@ -545,7 +627,7 @@ class HighLevelPlanner:
 
         Args:
             states: 环境状态批次
-            actions: 采取的动作批次
+            actions: 采取的动作批次（真实的子目标）
             rewards: 获得的奖励批次
             next_states: 结果状态批次
             dones: 完成标志批次
@@ -554,41 +636,53 @@ class HighLevelPlanner:
         Returns:
             训练指标字典
         """
-        # 转换为张量
+        # 转换为PyTorch张量并移动到设备
         states = torch.FloatTensor(states).to(self.device)
         actions = torch.FloatTensor(actions).to(self.device)
-        rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)
+        rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)  # 增加维度便于广播
         next_states = torch.FloatTensor(next_states).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
 
-        # 将状态分割为激光、目标和历史动作组件 - 更新
-        laser_scans = states[:, :-5]  # 激光数据部分
-        goal_info = states[:, -5:-2]  # 目标信息部分 [距离, cos, sin]
-        prev_action = states[:, -2:]  # 历史动作部分 [线速度, 角速度] - 新增
+        # 将状态分割为激光、目标和历史动作组件
+        laser_scans = states[:, :-5]  # 激光数据部分：除最后5个元素外的所有元素
+        goal_info = states[:, -5:-2]  # 目标信息部分：倒数第5到第3个元素 [距离, cos, sin]
+        prev_action = states[:, -2:]  # 历史动作部分：最后2个元素 [线速度, 角速度]
 
-        # 生成子目标
+        # 生成子目标（网络预测）
         subgoal_distances, subgoal_angles = self.subgoal_network(laser_scans, goal_info, prev_action)
-        subgoals = torch.cat([subgoal_distances, subgoal_angles], dim=1)  # 合并距离和角度
+        # 合并距离和角度为完整子目标
+        subgoals = torch.cat([subgoal_distances, subgoal_angles], dim=1)
 
-        # 计算损失（简化示例使用MSE）
-        # 在实际实现中，可能使用更复杂的损失函数
-        loss = F.mse_loss(subgoals, actions)
+        # 基于奖励对回放样本加权，突出表现更好的子目标
+        with torch.no_grad():  # 权重计算不参与梯度计算
+            reward_centered = rewards - rewards.mean()  # 中心化奖励（减去均值）
+            weights = torch.relu(reward_centered)  # 仅保留高于平均回报的样本（ReLU过滤负值）
+            if torch.count_nonzero(weights) == 0:  # 如果所有权重都为0
+                weights = torch.ones_like(reward_centered)  # 使用均匀权重避免除零错误
 
-        # 优化
+        # 计算每个样本的MSE损失
+        per_sample_loss = F.mse_loss(subgoals, actions, reduction='none').mean(dim=1, keepdim=True)
+        # 加权损失：突出高回报样本的重要性
+        loss = (per_sample_loss * weights).sum() / weights.sum()
+
+        # 优化步骤
         self.optimizer.zero_grad()  # 清零梯度
-        loss.backward()  # 反向传播
-        self.optimizer.step()  # 更新参数
+        loss.backward()  # 反向传播计算梯度
+        self.optimizer.step()  # 更新网络参数
 
         # 更新训练计数器
         self.iter_count += 1
 
-        # 记录指标
-        self.writer.add_scalar('planner/loss', loss.item(), self.iter_count)
+        # 记录指标到TensorBoard
+        self.writer.add_scalar('planner/loss', loss.item(), self.iter_count)  # 损失值
+        self.writer.add_scalar('planner/reward_weight_mean', weights.mean().item(), self.iter_count)  # 平均权重
 
+        # 返回训练指标
         return {
-            'loss': loss.item(),
+            'loss': loss.item(),  # 损失值
             'avg_distance': subgoal_distances.mean().item(),  # 平均子目标距离
-            'avg_angle': subgoal_angles.mean().item()  # 平均子目标角度
+            'avg_angle': subgoal_angles.mean().item(),  # 平均子目标角度
+            'weight_mean': weights.mean().item(),  # 平均权重
         }
 
     def save_model(self, filename, directory):
@@ -602,7 +696,7 @@ class HighLevelPlanner:
         # 如果目录不存在则创建
         Path(directory).mkdir(parents=True, exist_ok=True)
 
-        # 保存模型
+        # 保存模型状态字典
         torch.save(self.subgoal_network.state_dict(), f"{directory}/{filename}.pth")
         print(f"模型已保存到 {directory}/{filename}.pth")
 
@@ -615,7 +709,8 @@ class HighLevelPlanner:
             directory: 加载目录
         """
         try:
+            # 加载模型状态字典
             self.subgoal_network.load_state_dict(torch.load(f"{directory}/{filename}.pth"))
             print(f"模型已从 {directory}/{filename}.pth 加载")
-        except FileNotFoundError as e:
+        except FileNotFoundError as e:  # 处理文件不存在的情况
             print(f"加载模型时出错: {e}")
