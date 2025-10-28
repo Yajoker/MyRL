@@ -31,7 +31,7 @@ class TrainingConfig:
     batch_size: int = 64  # 训练批次大小
     max_epochs: int = 60  # 最大训练轮数
     episodes_per_epoch: int = 70  # 每轮训练的情节数
-    max_steps: int = 500  # 每个情节的最大步数
+    max_steps: int = 1000  # 每个情节的最大步数
     train_every_n_episodes: int = 2  # 每N个情节训练一次
     training_iterations: int = 80  # 每次训练的迭代次数
     exploration_noise: float = 0.2  # 探索噪声强度
@@ -39,7 +39,7 @@ class TrainingConfig:
     max_lin_velocity: float = 0.5  # 最大线速度
     max_ang_velocity: float = 1.0  # 最大角速度
     eval_episodes: int = 10  # 评估时使用的情节数
-    subgoal_radius: float = 0.35  # 判定子目标达成的距离阈值
+    subgoal_radius: float = 0.5  # 判定子目标达成的距离阈值
     save_every: int = 5  # 每隔多少个情节保存一次模型（<=0 表示仅最终保存）
 
 
@@ -109,7 +109,6 @@ def finalize_subgoal_transition(
 
     # 计算高层奖励
     reward, components = compute_high_level_reward(
-        accumulated_low_level_reward=context.low_level_return,
         start_goal_distance=context.start_goal_distance,
         end_goal_distance=context.last_goal_distance,
         subgoal_completed=context.subgoal_completed,
@@ -358,8 +357,6 @@ def evaluate(
             low_reward, _ = compute_low_level_reward(
                 prev_subgoal_distance=prev_subgoal_distance,
                 current_subgoal_distance=current_subgoal_distance,
-                action=[lin_cmd, ang_cmd],
-                prev_action=prev_action,
                 min_obstacle_distance=min_obstacle_distance,
                 reached_goal=goal,
                 reached_subgoal=reached_subgoal,
@@ -465,7 +462,7 @@ def main(args=None):
 
     # ========== 系统初始化 ==========
     print("🔄 Initializing ETHSRL+GP system...")
-    system = HierarchicalNavigationSystem(device=device)
+    system = HierarchicalNavigationSystem(device=device, subgoal_threshold=config.subgoal_radius)
     replay_buffer = TD3ReplayAdapter(buffer_size=config.buffer_size)
     print("✅ System initialization completed")
 
@@ -662,8 +659,6 @@ def main(args=None):
             low_reward, _ = compute_low_level_reward(
                 prev_subgoal_distance=prev_subgoal_distance,
                 current_subgoal_distance=current_subgoal_distance,
-                action=[lin_cmd, ang_cmd],
-                prev_action=prev_action,
                 min_obstacle_distance=min_obstacle_distance,
                 reached_goal=goal,
                 reached_subgoal=reached_subgoal,
