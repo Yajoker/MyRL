@@ -181,21 +181,16 @@ class LowLevelCriticNetwork(nn.Module):
 
         # Q1值计算
         s1 = F.leaky_relu(self.layer_1(s))  # 状态特征提取
-        # 分别处理状态和动作分支，然后合并
-        self.layer_2_s(s1)
-        self.layer_2_a(action)
-        s11 = torch.mm(s1, self.layer_2_s.weight.data.t())  # 状态分支
-        s12 = torch.mm(action, self.layer_2_a.weight.data.t())  # 动作分支
-        s1 = F.leaky_relu(s11 + s12 + self.layer_2_a.bias.data)  # 合并并激活
+        s1_state = self.layer_2_s(s1)
+        s1_action = self.layer_2_a(action)
+        s1 = F.leaky_relu(s1_state + s1_action)  # 合并并激活
         q1 = self.layer_3(s1)  # 输出Q1值
 
         # Q2值计算（与Q1相同结构）
         s2 = F.leaky_relu(self.layer_4(s))
-        self.layer_5_s(s2)
-        self.layer_5_a(action)
-        s21 = torch.mm(s2, self.layer_5_s.weight.data.t())
-        s22 = torch.mm(action, self.layer_5_a.weight.data.t())
-        s2 = F.leaky_relu(s21 + s22 + self.layer_5_a.bias.data)
+        s2_state = self.layer_5_s(s2)
+        s2_action = self.layer_5_a(action)
+        s2 = F.leaky_relu(s2_state + s2_action)
         q2 = self.layer_6(s2)
 
         return q1, q2
