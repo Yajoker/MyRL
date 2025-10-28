@@ -270,7 +270,8 @@ class HighLevelPlanner:
                  load_model=False,
                  load_directory=None,
                  step_duration=0.1,
-                 min_interval=1.0):
+                 min_interval=1.0,
+                 subgoal_reach_threshold: float = 0.5):
         """
         初始化高层规划器
 
@@ -292,7 +293,11 @@ class HighLevelPlanner:
         self.subgoal_network = SubgoalNetwork(belief_dim=belief_dim).to(self.device)
 
         # 初始化事件触发器
-        self.event_trigger = EventTrigger(min_interval=min_interval, step_duration=step_duration)
+        self.event_trigger = EventTrigger(
+            min_interval=min_interval,
+            step_duration=step_duration,
+            subgoal_reach_threshold=subgoal_reach_threshold,
+        )
         self.step_duration = step_duration
 
         # 训练设置
