@@ -26,7 +26,8 @@ class HierarchicalNavigationSystem:
         load_models: bool = False,
         models_directory: Path = Path("ethsrl/models"),
         step_duration: float = 0.1,
-        trigger_min_interval: float = 1.0,
+    trigger_min_interval: float = 1.0,
+    subgoal_threshold: float = 0.5,
     ) -> None:
         """
         初始化分层导航系统。
@@ -54,6 +55,7 @@ class HierarchicalNavigationSystem:
             load_model=load_models,  # 是否加载已有模型
             step_duration=step_duration,
             min_interval=trigger_min_interval,
+            subgoal_reach_threshold=subgoal_threshold,
         )
 
         # 初始化低层控制器（负责执行动作）
@@ -74,6 +76,7 @@ class HierarchicalNavigationSystem:
         self.step_count = 0  # 总步数计数
         self.last_replanning_step = 0  # 上次重新规划的步数（用于事件触发判断）
         self.step_duration = step_duration
+        self.subgoal_threshold = subgoal_threshold
 
     def step(self, laser_scan, goal_distance, goal_cos, goal_sin, robot_pose):
         """
@@ -181,7 +184,7 @@ class HierarchicalNavigationSystem:
         self.high_level_planner.event_trigger.reset_state()
 
 
-def create_navigation_system(load_models=False):
+def create_navigation_system(load_models=False, subgoal_threshold: float = 0.5):
     """
     工厂函数：创建一个完整的分层导航系统实例。
 
@@ -195,5 +198,6 @@ def create_navigation_system(load_models=False):
         laser_dim=180,  # 激光维度
         action_dim=2,  # 动作维度
         max_action=1.0,  # 最大动作幅值
-        load_models=load_models  # 是否加载模型
+        load_models=load_models,  # 是否加载模型
+        subgoal_threshold=subgoal_threshold,
     )
