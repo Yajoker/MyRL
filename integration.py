@@ -1,5 +1,6 @@
 from pathlib import Path
 import time
+from typing import Optional
 import numpy as np
 import torch
 
@@ -16,13 +17,17 @@ class HierarchicalNavigationSystem:
     以实现高效、安全的自主机器人导航。
     """
 
-    def __init__(self,
-                 laser_dim=180,
-                 action_dim=2,
-                 max_action=1.0,
-                 device=None,
-                 load_models=False,
-                 models_directory=Path("ethsrl/models")):
+    def __init__(
+        self,
+        laser_dim: int = 180,
+        action_dim: int = 2,
+        max_action: float = 1.0,
+        device=None,
+        load_models: bool = False,
+        models_directory: Path = Path("ethsrl/models"),
+        step_duration: float = 0.1,
+        trigger_min_interval: float = 1.0,
+    ) -> None:
         """
         初始化分层导航系统。
 
@@ -37,10 +42,7 @@ class HierarchicalNavigationSystem:
         # 设置计算设备：若未指定则自动检测 GPU，否则使用 CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # 定义高层与低层状态维度 - 更新高层状态维度
-        # 高层状态 = 激光数据 + [目标距离, 目标方向余弦, 目标方向正弦, 上一步线速度, 上一步角速度]
-        high_level_state_dim = laser_dim + 5
-        # 低层状态 = 激光数据 + [子目标距离, 子目标角度, 上一步线速度, 上一步角速度]
+        # 计算状态维度
         low_level_state_dim = laser_dim + 4
 
         # 初始化高层规划器（负责生成子目标）
@@ -49,7 +51,9 @@ class HierarchicalNavigationSystem:
             device=self.device,  # 使用的计算设备
             save_directory=models_directory / "high_level",  # 模型保存路径
             model_name="high_level_planner",  # 模型名称
-            load_model=load_models  # 是否加载已有模型
+            load_model=load_models,  # 是否加载已有模型
+            step_duration=step_duration,
+            min_interval=trigger_min_interval,
         )
 
         # 初始化低层控制器（负责执行动作）
@@ -65,9 +69,11 @@ class HierarchicalNavigationSystem:
 
         # 系统运行状态变量
         self.current_subgoal = None  # 当前子目标（距离、角度）
+        self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标在世界坐标系中的位置
         self.prev_action = [0.0, 0.0]  # 上一步执行的动作 [线速度, 角速度]
         self.step_count = 0  # 总步数计数
         self.last_replanning_step = 0  # 上次重新规划的步数（用于事件触发判断）
+        self.step_duration = step_duration
 
     def step(self, laser_scan, goal_distance, goal_cos, goal_sin, robot_pose):
         """
@@ -87,35 +93,53 @@ class HierarchicalNavigationSystem:
         self.step_count += 1
 
         # 标志位：是否需要重新生成子目标
-        should_replan = False
-
-        # 如果当前没有子目标，则必须重新规划
-        if self.current_subgoal is None:
+        if self.current_subgoal_world is None:
             should_replan = True
         else:
-            # 否则根据事件触发条件判断是否需要重新规划 - 更新为传递历史动作
             should_replan = self.high_level_planner.check_triggers(
                 laser_scan,
                 robot_pose,
                 [goal_distance, goal_cos, goal_sin],
-                prev_action=self.prev_action  # 传递历史动作
+                prev_action=self.prev_action,
+                current_step=self.step_count,
             )
 
-        # 若满足触发条件，则生成新的子目标 - 更新为传递历史动作
+        subgoal_distance = None
+        subgoal_angle = None
+
         if should_replan:
             subgoal_distance, subgoal_angle = self.high_level_planner.generate_subgoal(
                 laser_scan,
                 goal_distance,
                 goal_cos,
                 goal_sin,
-                prev_action=self.prev_action  # 传递历史动作
+                prev_action=self.prev_action,
+                robot_pose=robot_pose,
+                current_step=self.step_count,
             )
-            # 更新系统的当前子目标信息
-            self.current_subgoal = (subgoal_distance, subgoal_angle)
-            # 记录重新规划的时间步
+            planner_world = self.high_level_planner.current_subgoal_world
+            self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world, dtype=np.float32)
             self.last_replanning_step = self.step_count
-            # 打印子目标信息（调试用）
-            print(f"New subgoal: distance={subgoal_distance:.2f}m, angle={subgoal_angle:.2f}rad")
+            self.high_level_planner.event_trigger.reset_time(self.step_count)
+
+        # 使用最新的机器人姿态计算子目标在机器人坐标系下的表示
+        relative_geometry = self.high_level_planner.get_relative_subgoal(robot_pose)
+        if relative_geometry[0] is None:
+            if subgoal_distance is not None and subgoal_angle is not None:
+                relative_geometry = (float(subgoal_distance), float(subgoal_angle))
+            elif self.current_subgoal is not None:
+                relative_geometry = self.current_subgoal
+            else:
+                relative_geometry = (0.0, 0.0)
+
+        self.current_subgoal = (float(relative_geometry[0]), float(relative_geometry[1]))
+
+        if should_replan:
+            print(
+                "New subgoal: distance={:.2f}m, angle={:.2f}rad".format(
+                    self.current_subgoal[0], self.current_subgoal[1]
+                )
+            )
 
         # 生成低层输入状态，用于控制器决策
         low_level_state = self.low_level_controller.process_observation(
@@ -146,9 +170,15 @@ class HierarchicalNavigationSystem:
         （例如在新仿真回合开始时调用）
         """
         self.current_subgoal = None  # 清空子目标
+        self.current_subgoal_world = None
         self.prev_action = [0.0, 0.0]  # 重置上一步动作
         self.step_count = 0  # 步数归零
         self.last_replanning_step = 0  # 清除上次规划记录
+        self.high_level_planner.current_subgoal = None
+        self.high_level_planner.current_subgoal_world = None
+        self.high_level_planner.prev_action = [0.0, 0.0]
+        self.high_level_planner.event_trigger.last_subgoal = None
+        self.high_level_planner.event_trigger.reset_state()
 
 
 def create_navigation_system(load_models=False):
