@@ -21,7 +21,7 @@ class SIM(SIM_ENV):
         robot_goal: 机器人的目标位置
     """
 
-    def __init__(self, world_file="env_a.yaml", disable_plotting=False):
+    def __init__(self, world_file="env.yaml", disable_plotting=False):
         """
         初始化仿真环境
 
@@ -86,72 +86,24 @@ class SIM(SIM_ENV):
         # 返回所有观测值和状态信息
         return latest_scan, distance, cos, sin, collision, goal, action, reward
 
-    def reset(
-        self,
-        robot_state=None,
-        robot_goal=None,
-        random_obstacles=True,
-        random_obstacle_ids=None,
-    ):
+    def reset(self):
         """
-        重置仿真环境，可选择设置机器人和障碍物状态
+        重置仿真环境，但不改变机器人位置、障碍物位置和目标位置
 
-        参数:
-            robot_state: 机器人的初始状态，格式为[x, y, theta, speed]的列表
-            robot_goal: 机器人的目标状态
-            random_obstacles: 是否随机重新定位障碍物
-            random_obstacle_ids: 要随机化的特定障碍物ID列表
-
-        返回:
-            tuple: 重置后的初始观测值，包括LIDAR扫描、距离、余弦/正弦、
-                   以及奖励相关的标志和值
+        Returns:
+            (tuple): 初始观测值
         """
-        # 如果未提供机器人初始状态，在1-9范围内随机生成位置
-        if robot_state is None:
-            robot_state = [[random.uniform(1, 9)], [random.uniform(1, 9)], [0]]
-
-        # 设置机器人初始状态
-        self.env.robot.set_state(
-            state=np.array(robot_state),
-            init=True,
-        )
-
-        # 如果需要随机重置障碍物位置
-        if random_obstacles:
-            # 如果未指定障碍物ID，默认重置所有7个障碍物
-            if random_obstacle_ids is None:
-                random_obstacle_ids = [i + 1 for i in range(7)]
-            # 在指定范围内随机设置障碍物位置，确保不重叠
-            self.env.random_obstacle_position(
-                range_low=[0, 0, -3.14],
-                range_high=[10, 10, 3.14],
-                ids=random_obstacle_ids,
-                non_overlapping=True,
-            )
-
-        # 设置机器人目标位置
-        if robot_goal is None:
-            # 随机设置目标位置，避开障碍物
-            self.env.robot.set_random_goal(
-                obstacle_list=self.env.obstacle_list,
-                init=True,
-                range_limits=[[1, 1, -3.141592653589793], [9, 9, 3.141592653589793]],
-            )
-        else:
-            # 使用指定的目标位置
-            self.env.robot.set_goal(np.array(robot_goal), init=True)
-
-        # 重置环境
+        # 只重置环境状态，保持原有位置配置
         self.env.reset()
-        # 更新记录的目标位置
+
+        # 获取当前的目标位置
         self.robot_goal = self.env.robot.goal
 
-        # 执行初始动作并获取初始状态
+        # 执行一步空动作来获取初始观测
         action = [0.0, 0.0]
         latest_scan, distance, cos, sin, _, _, action, reward = self.step(
             lin_velocity=action[0], ang_velocity=action[1]
         )
-        # 返回初始观测值，碰撞和目标标志设为False
         return latest_scan, distance, cos, sin, False, False, action, reward
 
     @staticmethod
