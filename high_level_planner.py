@@ -7,7 +7,7 @@
 import math
 import numpy as np
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -22,12 +22,13 @@ class SubgoalNetwork(nn.Module):
     为机器人提供中间路径点，实现更安全高效的导航
     """
 
-    def __init__(self, belief_dim=90, hidden_dim=256):
+    def __init__(self, belief_dim=90, goal_info_dim=3, hidden_dim=256):
         """
         初始化子目标生成网络
 
         Args:
             belief_dim: 信念状态输入的维度（激光雷达数据点数）
+            goal_info_dim: 目标信息（含航点特征）的维度
             hidden_dim: 隐藏层的维度
         """
         super(SubgoalNetwork, self).__init__()
@@ -38,7 +39,7 @@ class SubgoalNetwork(nn.Module):
         self.cnn3 = nn.Conv1d(16, 8, kernel_size=3, stride=1)  # 第三层CNN：输入16通道，输出8通道
 
         # 全局目标信息处理层
-        self.goal_embed = nn.Linear(3, 32)  # 处理距离、余弦、正弦三个目标信息，输出32维
+        self.goal_embed = nn.Linear(goal_info_dim, 64)  # 处理距离、余弦、正弦及航点特征
 
         # 历史动作嵌入层
         self.action_embed = nn.Linear(2, 16)  # 处理历史线速度和角速度，输出16维
@@ -46,7 +47,7 @@ class SubgoalNetwork(nn.Module):
         # 全连接层 - 更新输入维度
         cnn_output_dim = self._get_cnn_output_dim(belief_dim)  # 计算CNN输出维度
         # 第一层全连接：输入=CNN输出+目标嵌入+动作嵌入，输出=隐藏层维度
-        self.fc1 = nn.Linear(cnn_output_dim + 32 + 16, hidden_dim)
+        self.fc1 = nn.Linear(cnn_output_dim + 64 + 16, hidden_dim)
         # 第二层全连接：输入=隐藏层维度，输出=隐藏层维度的一半
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
 
@@ -69,7 +70,7 @@ class SubgoalNetwork(nn.Module):
 
         Args:
             belief_state: 包含激光雷达数据的张量，形状[batch_size, belief_dim]
-            goal_info: 包含[距离, cos, sin]全局目标信息的张量，形状[batch_size, 3]
+            goal_info: 包含全局目标与航点特征的张量，形状[batch_size, goal_info_dim]
             prev_action: 包含[线速度, 角速度]历史动作的张量，形状[batch_size, 2]
 
         Returns:
@@ -89,7 +90,7 @@ class SubgoalNetwork(nn.Module):
         a = F.relu(self.action_embed(prev_action))  # 动作嵌入 + ReLU激活：[batch_size, 16]
 
         # 合并特征 - 更新为包含动作
-        combined = torch.cat((x, g, a), dim=1)  # 拼接所有特征：[batch_size, cnn_output_dim+32+16]
+        combined = torch.cat((x, g, a), dim=1)  # 拼接所有特征：[batch_size, cnn_output_dim+64+16]
 
         # 全连接层处理
         x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU：[batch_size, hidden_dim]
@@ -262,16 +263,19 @@ class HighLevelPlanner:
     使用神经网络计算子目标，并管理事件触发机制决定何时计算新子目标
     """
 
-    def __init__(self,
-                 belief_dim=90,
-                 device=None,
-                 save_directory=Path("ethsrl/models/high_level1"),
-                 model_name="high_level_planner",
-                 load_model=False,
-                 load_directory=None,
-                 step_duration=0.1,
-                 min_interval=1.0,
-                 subgoal_reach_threshold: float = 0.5):
+    def __init__(
+        self,
+        belief_dim=90,
+        device=None,
+        save_directory=Path("ethsrl/models/high_level1"),
+        model_name="high_level_planner",
+        load_model=False,
+        load_directory=None,
+        step_duration=0.1,
+        min_interval=1.0,
+        subgoal_reach_threshold: float = 0.5,
+        waypoint_lookahead: int = 3,
+    ):
         """
         初始化高层规划器
 
@@ -289,8 +293,15 @@ class HighLevelPlanner:
         # 设置计算设备，默认为GPU（如果可用）否则CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        # 航点窗口相关参数
+        self.waypoint_lookahead = max(1, int(waypoint_lookahead))
+        self.goal_feature_dim = 3 + 2 * self.waypoint_lookahead
+
         # 初始化子目标生成网络
-        self.subgoal_network = SubgoalNetwork(belief_dim=belief_dim).to(self.device)
+        self.subgoal_network = SubgoalNetwork(
+            belief_dim=belief_dim,
+            goal_info_dim=self.goal_feature_dim,
+        ).to(self.device)
 
         # 初始化事件触发器
         self.event_trigger = EventTrigger(
@@ -362,25 +373,23 @@ class HighLevelPlanner:
 
         return torch.FloatTensor(laser_scan).to(self.device)  # 转换为PyTorch张量并移动到设备
 
-    def process_goal_info(self, distance, cos_angle, sin_angle):
-        """
-        处理目标信息为张量
+    def process_goal_info(self, distance, cos_angle, sin_angle, waypoint_features=None):
+        """将目标与航点特征组合成网络输入张量。"""
 
-        Args:
-            distance: 到全局目标的距离
-            cos_angle: 到全局目标角度的余弦值
-            sin_angle: 到全局目标角度的正弦值
+        norm_distance = min(float(distance) / 10.0, 1.0)
+        base_features: List[float] = [norm_distance, float(cos_angle), float(sin_angle)]
 
-        Returns:
-            处理后的目标信息张量
-        """
-        # 归一化距离：最大10米，归一化到[0,1]
-        norm_distance = min(distance / 10.0, 1.0)
+        tail_len = max(0, self.goal_feature_dim - 3)
+        if tail_len > 0:
+            if waypoint_features is None:
+                waypoint_features = [0.0] * tail_len
+            else:
+                waypoint_features = list(waypoint_features)[:tail_len]
+                if len(waypoint_features) < tail_len:
+                    waypoint_features.extend([0.0] * (tail_len - len(waypoint_features)))
+            base_features.extend(float(value) for value in waypoint_features)
 
-        # 组合成张量：[归一化距离, cos角度, sin角度]
-        goal_info = torch.FloatTensor([norm_distance, cos_angle, sin_angle]).to(self.device)
-
-        return goal_info
+        return torch.FloatTensor(base_features).to(self.device)
 
     def process_action_info(self, prev_action):
         """
@@ -393,26 +402,64 @@ class HighLevelPlanner:
             处理后的动作信息张量
         """
         # 简单归一化处理
-        lin_vel = prev_action[0] * 2  # 假设线速度范围在[0, 0.5]，缩放到[0,1]
-        ang_vel = prev_action[1]  # 假设角速度范围在[-1, 1]，保持不变
+        lin_vel = float(prev_action[0]) * 2  # 假设线速度范围在[0, 0.5]，缩放到[0,1]
+        ang_vel = float(prev_action[1])  # 假设角速度范围在[-1, 1]，保持不变
 
         # 组合成张量：[线速度, 角速度]
         action_info = torch.FloatTensor([lin_vel, ang_vel]).to(self.device)
 
         return action_info
 
-    def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, prev_action):
+    @staticmethod
+    def _wrap_angle(angle: float) -> float:
+        return math.atan2(math.sin(angle), math.cos(angle))
+
+    def _world_to_relative(self, robot_pose, waypoint) -> Tuple[float, float]:
+        if robot_pose is None:
+            return 0.0, 0.0
+
+        waypoint_vec = np.asarray(waypoint, dtype=np.float32)
+        dx = float(waypoint_vec[0] - robot_pose[0])
+        dy = float(waypoint_vec[1] - robot_pose[1])
+        distance = math.hypot(dx, dy)
+        angle = self._wrap_angle(math.atan2(dy, dx) - robot_pose[2])
+        return distance, angle
+
+    def _relative_to_world(self, robot_pose, distance: float, angle: float) -> np.ndarray:
+        if robot_pose is None:
+            return np.zeros(2, dtype=np.float32)
+        world_x = robot_pose[0] + distance * math.cos(robot_pose[2] + angle)
+        world_y = robot_pose[1] + distance * math.sin(robot_pose[2] + angle)
+        return np.array([world_x, world_y], dtype=np.float32)
+
+    def build_waypoint_features(self, waypoints, robot_pose) -> List[float]:
+        features: List[float] = []
+        max_count = self.waypoint_lookahead
+
+        for idx in range(max_count):
+            if waypoints is not None and idx < len(waypoints):
+                entry = waypoints[idx]
+                waypoint_pos = entry
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    waypoint_pos = entry[1]
+                distance, angle = self._world_to_relative(robot_pose, waypoint_pos)
+                features.extend([distance, angle])
+            else:
+                features.extend([0.0, 0.0])
+
+        return features
+
+    def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, prev_action, waypoints=None, robot_pose=None):
         """构造高层规划器训练所需的状态向量"""
 
-        with torch.no_grad():  # 不计算梯度，仅用于推理
-            # 处理各组件数据
+        with torch.no_grad():
             laser_tensor = self.process_laser_scan(laser_scan)
-            goal_tensor = self.process_goal_info(distance, cos_angle, sin_angle)
+            waypoint_features = self.build_waypoint_features(waypoints, robot_pose)
+            goal_tensor = self.process_goal_info(distance, cos_angle, sin_angle, waypoint_features)
             action_tensor = self.process_action_info(prev_action)
-            # 拼接所有组件形成完整状态向量
             state_tensor = torch.cat((laser_tensor, goal_tensor, action_tensor))
 
-        return state_tensor.cpu().numpy()  # 转换为numpy数组并返回
+        return state_tensor.cpu().numpy()
 
     def check_triggers(
         self,
@@ -488,6 +535,7 @@ class HighLevelPlanner:
         prev_action=None,
         robot_pose=None,
         current_step: Optional[int] = None,
+        waypoints=None,
     ):
         """
         基于当前状态生成新子目标
@@ -500,13 +548,15 @@ class HighLevelPlanner:
             prev_action: 上一步的动作 [线速度, 角速度]
             robot_pose: 机器人位姿 [x, y, theta]（用于计算世界坐标）
             current_step: 当前全局时间步（用于进度重置）
+            waypoints: 当前全局规划提供的候选航点
 
         Returns:
             包含(子目标距离, 子目标角度)的元组
         """
         # 处理输入数据
         laser_tensor = self.process_laser_scan(laser_scan)  # 激光数据张量化
-        goal_tensor = self.process_goal_info(goal_distance, goal_cos, goal_sin)  # 目标信息张量化
+        waypoint_features = self.build_waypoint_features(waypoints, robot_pose)
+        goal_tensor = self.process_goal_info(goal_distance, goal_cos, goal_sin, waypoint_features)
 
         # 如果未提供动作，则使用存储的上一步动作
         if prev_action is None:
@@ -523,25 +573,67 @@ class HighLevelPlanner:
                 action_tensor.unsqueeze(0),  # 增加批次维度：[2] -> [1, 2]
             )
 
-        # 转换为numpy数组并提取标量值
-        subgoal_distance = distance.cpu().numpy().item()  # 子目标距离
-        subgoal_angle = angle.cpu().numpy().item()  # 子目标角度
+        predicted_distance = float(distance.cpu().numpy().item())
+        predicted_angle = float(angle.cpu().numpy().item())
+
+        candidate_info = []
+        if robot_pose is not None and waypoints:
+            for entry in waypoints:
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    idx, waypoint = entry
+                else:
+                    idx = None
+                    waypoint = entry
+                waypoint_vec = np.asarray(waypoint, dtype=np.float32)
+                rel_dist, rel_angle = self._world_to_relative(robot_pose, waypoint_vec)
+                candidate_info.append(
+                    {
+                        "index": idx,
+                        "position": waypoint_vec,
+                        "distance": rel_dist,
+                        "angle": rel_angle,
+                    }
+                )
+
+        selected_index = None
+        final_distance = predicted_distance
+        final_angle = predicted_angle
+        world_target = None
+
+        if candidate_info and robot_pose is not None:
+            best_idx = 0
+            best_score = math.inf
+            for idx, info in enumerate(candidate_info):
+                distance_delta = abs(predicted_distance - info["distance"])
+                angle_delta = abs(self._wrap_angle(predicted_angle - info["angle"]))
+                score = distance_delta + 0.5 * angle_delta
+                if score < best_score:
+                    best_score = score
+                    best_idx = idx
+
+            chosen = candidate_info[best_idx]
+            if chosen["index"] is not None:
+                selected_index = int(chosen["index"])
+
+            distance_adjust = max(-0.75, min(0.75, predicted_distance - chosen["distance"]))
+            angle_offset = self._wrap_angle(predicted_angle - chosen["angle"])
+            angle_adjust = max(-math.pi / 6, min(math.pi / 6, angle_offset))
+            final_distance = max(0.2, chosen["distance"] + distance_adjust)
+            final_angle = self._wrap_angle(chosen["angle"] + angle_adjust)
+            world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
+        elif robot_pose is not None:
+            world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
 
         # 存储供将来参考
-        self.current_subgoal = (subgoal_distance, subgoal_angle)  # 存储相对坐标
-        self.last_goal_distance = goal_distance  # 更新上次目标距离
-        self.last_goal_direction = np.arctan2(goal_sin, goal_cos)  # 计算目标方向角度
-        # 更新历史动作（深拷贝避免引用问题）
-        self.prev_action = prev_action.copy() if prev_action is not None else self.prev_action
+        self.current_subgoal = (final_distance, final_angle)
+        self.last_goal_distance = float(goal_distance)
+        self.last_goal_direction = math.atan2(goal_sin, goal_cos)
+        if prev_action is not None:
+            self.prev_action = list(prev_action)
 
-        # 计算子目标的世界坐标（如果提供了机器人位姿）
-        if robot_pose is not None:
-            # 从相对坐标计算绝对世界坐标
-            subgoal_x = robot_pose[0] + subgoal_distance * np.cos(robot_pose[2] + subgoal_angle)
-            subgoal_y = robot_pose[1] + subgoal_distance * np.sin(robot_pose[2] + subgoal_angle)
-            world_target = np.array([subgoal_x, subgoal_y], dtype=np.float32)
-            self.current_subgoal_world = world_target  # 存储世界坐标
-            self.event_trigger.last_subgoal = world_target.tolist()  # 更新事件触发器中的子目标
+        if world_target is not None:
+            self.current_subgoal_world = world_target
+            self.event_trigger.last_subgoal = world_target.tolist()
         else:
             self.current_subgoal_world = None
             self.event_trigger.last_subgoal = None
@@ -550,7 +642,9 @@ class HighLevelPlanner:
         progress_step = current_step if current_step is not None else 0
         self.event_trigger.reset_progress(goal_distance, progress_step)
 
-        return subgoal_distance, subgoal_angle  # 返回新生成的子目标
+        metadata = {"selected_waypoint": selected_index}
+
+        return final_distance, final_angle, metadata
 
     def compute_environment_complexity(self, laser_scan):
         """
@@ -647,12 +741,13 @@ class HighLevelPlanner:
         rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)  # 增加维度便于广播
         dones = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
         next_states = torch.FloatTensor(next_states).to(self.device)
-        
 
-        # 将状态分割为激光、目标和历史动作组件
-        laser_scans = states[:, :-5]  # 激光数据部分：除最后5个元素外的所有元素
-        goal_info = states[:, -5:-2]  # 目标信息部分：倒数第5到第3个元素 [距离, cos, sin]
-        prev_action = states[:, -2:]  # 历史动作部分：最后2个元素 [线速度, 角速度]
+        goal_feature_dim = self.goal_feature_dim
+        action_feature_dim = 2
+        split_index = states.shape[1] - (goal_feature_dim + action_feature_dim)
+        laser_scans = states[:, :split_index]
+        goal_info = states[:, split_index : split_index + goal_feature_dim]
+        prev_action = states[:, -action_feature_dim:]
 
         # 生成子目标（网络预测）
         subgoal_distances, subgoal_angles = self.subgoal_network(laser_scans, goal_info, prev_action)
