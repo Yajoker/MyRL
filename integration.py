@@ -252,6 +252,16 @@ class HierarchicalNavigationSystem:
         if not filtered:
             filtered = [goal_vec.copy()]
 
+        goal_dists = [float(np.linalg.norm(goal_vec - wp)) for wp in filtered]
+        print(f"[GlobalPlanner] Waypoints in world frame ({len(filtered)} total):")
+        for idx, (wp, dist) in enumerate(zip(filtered, goal_dists)):
+            print(f"  #{idx:02d} {wp.tolist()} | dist_to_goal={dist:.3f} m")
+
+        if len(goal_dists) > 1:
+            monotonic = all(goal_dists[i + 1] <= goal_dists[i] + 1e-6 for i in range(len(goal_dists) - 1))
+            if not monotonic:
+                print("[GlobalPlanner] Warning: waypoint distance does not consistently decrease toward the goal.")
+
         self.global_waypoints = filtered
         self.current_waypoint_index = 0
         self._advance_waypoints(robot_pose)
