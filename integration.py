@@ -1,11 +1,12 @@
 from pathlib import Path
 import time
-from typing import Optional
+from typing import List, Optional
 import numpy as np
 import torch
 
 # 导入系统内部模块：低层控制器和高层规划器
 from ethsrl.core.control.low_level_controller import LowLevelController
+from ethsrl.core.planning.global_planner import GlobalPlanner
 from ethsrl.core.planning.high_level_planner import HighLevelPlanner
 
 
@@ -26,8 +27,12 @@ class HierarchicalNavigationSystem:
         load_models: bool = False,
         models_directory: Path = Path("ethsrl/models"),
         step_duration: float = 0.1,
-    trigger_min_interval: float = 1.0,
-    subgoal_threshold: float = 0.5,
+        trigger_min_interval: float = 1.0,
+        subgoal_threshold: float = 0.5,
+        world_file: Optional[Path] = None,
+        global_plan_resolution: float = 0.25,
+        global_plan_margin: float = 0.35,
+        waypoint_lookahead: int = 3,
     ) -> None:
         """
         初始化分层导航系统。
@@ -56,6 +61,7 @@ class HierarchicalNavigationSystem:
             step_duration=step_duration,
             min_interval=trigger_min_interval,
             subgoal_reach_threshold=subgoal_threshold,
+            waypoint_lookahead=waypoint_lookahead,
         )
 
         # 初始化低层控制器（负责执行动作）
@@ -77,8 +83,23 @@ class HierarchicalNavigationSystem:
         self.last_replanning_step = 0  # 上次重新规划的步数（用于事件触发判断）
         self.step_duration = step_duration
         self.subgoal_threshold = subgoal_threshold
+        self.waypoint_lookahead = waypoint_lookahead
 
-    def step(self, laser_scan, goal_distance, goal_cos, goal_sin, robot_pose):
+        self.global_planner: Optional[GlobalPlanner] = None
+        if world_file is not None:
+            try:
+                self.global_planner = GlobalPlanner(
+                    world_file=world_file,
+                    resolution=global_plan_resolution,
+                    safety_margin=global_plan_margin,
+                )
+            except FileNotFoundError as exc:
+                print(f"[GlobalPlanner] {exc}. Global planning disabled.")
+        self.global_waypoints: List[np.ndarray] = []
+        self.current_waypoint_index: int = 0
+        self.global_goal: Optional[np.ndarray] = None
+
+    def step(self, laser_scan, goal_distance, goal_cos, goal_sin, robot_pose, goal_position=None):
         """
         执行导航系统的单步操作（Step）。
 
@@ -88,12 +109,25 @@ class HierarchicalNavigationSystem:
             goal_cos: 到全局目标方向的余弦值
             goal_sin: 到全局目标方向的正弦值
             robot_pose: 当前机器人位姿 [x, y, θ]
+            goal_position: 全局目标在世界坐标系中的位置 [x, y]
 
         返回:
             动作 [线速度, 角速度]
         """
         # 步数加一
         self.step_count += 1
+
+        # 如果提供了最新的目标位置，则确保全局路径已更新
+        if goal_position is not None:
+            self.plan_global_route(robot_pose, goal_position)
+        elif self.global_waypoints:
+            self._advance_waypoints(robot_pose)
+
+        waypoint_candidates = self.get_active_waypoints(
+            robot_pose, include_indices=True
+        )
+
+        goal_info = [goal_distance, goal_cos, goal_sin]
 
         # 标志位：是否需要重新生成子目标
         if self.current_subgoal_world is None:
@@ -102,16 +136,17 @@ class HierarchicalNavigationSystem:
             should_replan = self.high_level_planner.check_triggers(
                 laser_scan,
                 robot_pose,
-                [goal_distance, goal_cos, goal_sin],
+                goal_info,
                 prev_action=self.prev_action,
                 current_step=self.step_count,
             )
 
-        subgoal_distance = None
-        subgoal_angle = None
+        subgoal_distance: Optional[float] = None
+        subgoal_angle: Optional[float] = None
+        decision_meta: dict = {}
 
         if should_replan:
-            subgoal_distance, subgoal_angle = self.high_level_planner.generate_subgoal(
+            subgoal_distance, subgoal_angle, decision_meta = self.high_level_planner.generate_subgoal(
                 laser_scan,
                 goal_distance,
                 goal_cos,
@@ -119,11 +154,17 @@ class HierarchicalNavigationSystem:
                 prev_action=self.prev_action,
                 robot_pose=robot_pose,
                 current_step=self.step_count,
+                waypoints=waypoint_candidates,
             )
+            self.update_selected_waypoint(decision_meta.get("selected_waypoint"))
             planner_world = self.high_level_planner.current_subgoal_world
             self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world, dtype=np.float32)
             self.last_replanning_step = self.step_count
             self.high_level_planner.event_trigger.reset_time(self.step_count)
+        else:
+            planner_world = self.high_level_planner.current_subgoal_world
+            if planner_world is not None:
+                self.current_subgoal_world = np.asarray(planner_world, dtype=np.float32)
 
         # 使用最新的机器人姿态计算子目标在机器人坐标系下的表示
         relative_geometry = self.high_level_planner.get_relative_subgoal(robot_pose)
@@ -138,11 +179,19 @@ class HierarchicalNavigationSystem:
         self.current_subgoal = (float(relative_geometry[0]), float(relative_geometry[1]))
 
         if should_replan:
-            print(
-                "New subgoal: distance={:.2f}m, angle={:.2f}rad".format(
-                    self.current_subgoal[0], self.current_subgoal[1]
+            selected_wp = decision_meta.get("selected_waypoint")
+            if selected_wp is not None:
+                print(
+                    "New subgoal (wp {}): distance={:.2f}m, angle={:.2f}rad".format(
+                        int(selected_wp), self.current_subgoal[0], self.current_subgoal[1]
+                    )
                 )
-            )
+            else:
+                print(
+                    "New subgoal: distance={:.2f}m, angle={:.2f}rad".format(
+                        self.current_subgoal[0], self.current_subgoal[1]
+                    )
+                )
 
         # 生成低层输入状态，用于控制器决策
         low_level_state = self.low_level_controller.process_observation(
@@ -167,6 +216,107 @@ class HierarchicalNavigationSystem:
         # 返回控制命令
         return [linear_velocity, angular_velocity]
 
+    def plan_global_route(self, robot_pose, goal_position, force: bool = False):
+        """Compute (or refresh) the global waypoint sequence."""
+
+        if self.global_planner is None:
+            return []
+
+        start_xy = np.asarray(robot_pose[:2], dtype=np.float32)
+        goal_vec = np.asarray(goal_position[:2], dtype=np.float32)
+
+        if (
+            not force
+            and self.global_goal is not None
+            and self.global_waypoints
+            and np.linalg.norm(goal_vec - self.global_goal) < 1e-4
+        ):
+            self._advance_waypoints(robot_pose)
+            return self.global_waypoints
+
+        self.global_goal = goal_vec
+
+        try:
+            raw_path = self.global_planner.plan(start_xy, goal_vec)
+        except RuntimeError as exc:
+            print(f"[GlobalPlanner] {exc}. Using direct segment to goal.")
+            raw_path = [goal_vec]
+
+        filtered: List[np.ndarray] = []
+        for waypoint in raw_path:
+            waypoint_vec = np.asarray(waypoint, dtype=np.float32)
+            if np.linalg.norm(waypoint_vec - start_xy) <= 0.5 * self.global_planner.resolution:
+                continue
+            filtered.append(waypoint_vec)
+
+        if not filtered:
+            filtered = [goal_vec.copy()]
+
+        self.global_waypoints = filtered
+        self.current_waypoint_index = 0
+        self._advance_waypoints(robot_pose)
+        return self.global_waypoints
+
+    def _advance_waypoints(self, robot_pose) -> None:
+        if not self.global_waypoints:
+            return
+        if robot_pose is None:
+            return
+
+        position = np.asarray(robot_pose[:2], dtype=np.float32)
+        threshold = max(0.1, self.subgoal_threshold * 0.8)
+        if self.global_planner is not None:
+            threshold = max(threshold, 0.5 * self.global_planner.resolution)
+
+        while self.current_waypoint_index < len(self.global_waypoints):
+            waypoint = self.global_waypoints[self.current_waypoint_index]
+            if np.linalg.norm(waypoint - position) <= threshold:
+                if self.current_waypoint_index < len(self.global_waypoints) - 1:
+                    self.current_waypoint_index += 1
+                else:
+                    break
+            else:
+                break
+
+    def get_active_waypoints(self, robot_pose, lookahead: Optional[int] = None, include_indices: bool = False):
+        """Return the waypoint window closest to the robot."""
+
+        if not self.global_waypoints:
+            return []
+
+        self._advance_waypoints(robot_pose)
+
+        horizon = lookahead or self.waypoint_lookahead
+        start_idx = min(self.current_waypoint_index, len(self.global_waypoints) - 1)
+        end_idx = min(len(self.global_waypoints), start_idx + max(1, horizon))
+
+        indices = range(start_idx, end_idx)
+        if include_indices:
+            return [(idx, self.global_waypoints[idx].copy()) for idx in indices]
+        return [self.global_waypoints[idx].copy() for idx in indices]
+
+    def update_selected_waypoint(self, selected_index: Optional[int]) -> None:
+        """Record the global waypoint chosen by the high-level planner."""
+
+        if selected_index is None or not self.global_waypoints:
+            return
+
+        idx = int(selected_index)
+        if idx < 0:
+            idx = 0
+        if idx >= len(self.global_waypoints):
+            idx = len(self.global_waypoints) - 1
+
+        if idx >= self.current_waypoint_index:
+            self.current_waypoint_index = idx
+
+    def clear_global_route(self) -> None:
+        """Reset stored waypoints and goal information."""
+
+        self.global_waypoints = []
+        self.current_waypoint_index = 0
+        self.global_goal = None
+
     def reset(self):
         """
         重置整个导航系统的内部状态。
@@ -182,9 +332,17 @@ class HierarchicalNavigationSystem:
         self.high_level_planner.prev_action = [0.0, 0.0]
         self.high_level_planner.event_trigger.last_subgoal = None
         self.high_level_planner.event_trigger.reset_state()
+        self.clear_global_route()
 
 
-def create_navigation_system(load_models=False, subgoal_threshold: float = 0.5):
+def create_navigation_system(
+    load_models: bool = False,
+    subgoal_threshold: float = 0.5,
+    world_file: Optional[Path] = None,
+    global_plan_resolution: float = 0.25,
+    global_plan_margin: float = 0.35,
+    waypoint_lookahead: int = 3,
+):
     """
     工厂函数：创建一个完整的分层导航系统实例。
 
@@ -200,4 +358,8 @@ def create_navigation_system(load_models=False, subgoal_threshold: float = 0.5):
         max_action=1.0,  # 最大动作幅值
         load_models=load_models,  # 是否加载模型
         subgoal_threshold=subgoal_threshold,
+        world_file=world_file,
+        global_plan_resolution=global_plan_resolution,
+        global_plan_margin=global_plan_margin,
+        waypoint_lookahead=waypoint_lookahead,
     )
