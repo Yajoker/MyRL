@@ -211,7 +211,7 @@ class LowLevelController:
             lr=1e-4,
             save_every=0,
             load_model=False,
-            save_directory=Path("ethsrl/models/low_level"),
+            save_directory=Path("ethsrl/models/low_level1"),
             model_name="low_level_controller",
             load_directory=None,
     ):
@@ -336,7 +336,8 @@ class LowLevelController:
             包含损失信息的字典
         """
         # 从回放缓冲区采样一个小批量
-        state, action, reward, next_state, done = replay_buffer.sample(batch_size)
+        # ReplayBuffer 返回的顺序为 (states, actions, rewards, dones, next_states)
+        state, action, reward, done, next_state = replay_buffer.sample(batch_size)
 
         # 转换为张量并移动到设备
         state = torch.FloatTensor(state).to(self.device)
