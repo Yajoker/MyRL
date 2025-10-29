@@ -265,7 +265,7 @@ class HighLevelPlanner:
     def __init__(self,
                  belief_dim=90,
                  device=None,
-                 save_directory=Path("ethsrl/models/high_level"),
+                 save_directory=Path("ethsrl/models/high_level1"),
                  model_name="high_level_planner",
                  load_model=False,
                  load_directory=None,
@@ -626,7 +626,7 @@ class HighLevelPlanner:
 
         return safe_subgoals  # 返回安全子目标列表
 
-    def update_planner(self, states, actions, rewards, next_states, dones, batch_size=64):
+    def update_planner(self, states, actions, rewards, dones, next_states, batch_size=64):
         """
         使用收集的经验更新规划器的神经网络
 
@@ -645,8 +645,9 @@ class HighLevelPlanner:
         states = torch.FloatTensor(states).to(self.device)
         actions = torch.FloatTensor(actions).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)  # 增加维度便于广播
-        next_states = torch.FloatTensor(next_states).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
+        next_states = torch.FloatTensor(next_states).to(self.device)
+        
 
         # 将状态分割为激光、目标和历史动作组件
         laser_scans = states[:, :-5]  # 激光数据部分：除最后5个元素外的所有元素
