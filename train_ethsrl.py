@@ -6,6 +6,7 @@ ETHSRL+GP分层导航系统的训练入口点
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -41,6 +42,10 @@ class TrainingConfig:
     eval_episodes: int = 10  # 评估时使用的情节数
     subgoal_radius: float = 0.5  # 判定子目标达成的距离阈值
     save_every: int = 5  # 每隔多少个情节保存一次模型（<=0 表示仅最终保存）
+    world_file: str = "env_b.yaml"  # 使用的世界配置文件（位于ethsrl/worlds）
+    waypoint_lookahead: int = 3  # 全局规划提供给高层的航点数量
+    global_plan_resolution: float = 0.25  # 全局规划网格分辨率
+    global_plan_margin: float = 0.35  # 全局规划安全膨胀系数
 
 
 @dataclass
@@ -211,6 +216,17 @@ def get_robot_pose(sim: SIM) -> Tuple[float, float, float]:
     )
 
 
+def get_goal_pose(sim: SIM) -> Tuple[float, float, float]:
+    """返回仿真环境中当前目标位姿 (x, y, theta)."""
+
+    goal = sim.env.robot.goal
+    return (
+        float(goal[0].item()),
+        float(goal[1].item()),
+        float(goal[2].item()) if len(goal) > 2 else 0.0,
+    )
+
+
 def evaluate(
     system: HierarchicalNavigationSystem,
     sim: SIM,
@@ -248,6 +264,9 @@ def evaluate(
         latest_scan, distance, cos, sin, collision, goal, prev_action, _ = sim.reset()
         prev_action = [0.0, 0.0]  # 初始化动作
         current_subgoal_world: Optional[np.ndarray] = None
+        robot_pose = get_robot_pose(sim)
+        eval_goal_pose = get_goal_pose(sim)
+        system.plan_global_route(robot_pose, eval_goal_pose, force=True)
         done = False
         steps = 0
         episode_reward = 0.0
@@ -255,6 +274,8 @@ def evaluate(
         # 单次评估情节循环
         while not done and steps < config.max_steps:
             robot_pose = get_robot_pose(sim)
+            system.plan_global_route(robot_pose, eval_goal_pose)
+            active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)
             goal_info = [distance, cos, sin]
 
             # 检查是否需要重新规划
@@ -271,13 +292,11 @@ def evaluate(
 
             subgoal_distance: Optional[float] = None
             subgoal_angle: Optional[float] = None
-
-            subgoal_distance: Optional[float] = None
-            subgoal_angle: Optional[float] = None
+            metadata = {}
 
             if should_replan:
                 # 生成新子目标
-                subgoal_distance, subgoal_angle = system.high_level_planner.generate_subgoal(
+                subgoal_distance, subgoal_angle, metadata = system.high_level_planner.generate_subgoal(
                     latest_scan,
                     distance,
                     cos,
@@ -285,7 +304,9 @@ def evaluate(
                     prev_action=prev_action,
                     robot_pose=robot_pose,
                     current_step=steps,
+                    waypoints=active_waypoints,
                 )
+                system.update_selected_waypoint(metadata.get("selected_waypoint"))
                 planner_world = system.high_level_planner.current_subgoal_world
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None
                 system.high_level_planner.event_trigger.reset_time(steps)
@@ -337,6 +358,8 @@ def evaluate(
 
             # 更新子目标距离
             next_pose = get_robot_pose(sim)
+            system.plan_global_route(next_pose, eval_goal_pose)
+            _ = system.get_active_waypoints(next_pose, include_indices=True)
             current_subgoal_distance = None
             if current_subgoal_world is not None:
                 next_pos = np.array(next_pose[:2], dtype=np.float32)
@@ -446,6 +469,34 @@ def main(args=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = TrainingConfig()
 
+    raw_world = Path(config.world_file)
+    base_dir = Path(__file__).resolve().parent
+    candidate_paths: List[Path] = []
+    if raw_world.is_absolute():
+        candidate_paths.append(raw_world)
+    else:
+        candidate_paths.extend(
+            [
+                base_dir / raw_world,
+                base_dir / "worlds" / raw_world,
+                base_dir.parent / "robot_nav" / "worlds" / raw_world,
+            ]
+        )
+
+    world_path: Optional[Path] = None
+    for candidate in candidate_paths:
+        if candidate.exists():
+            world_path = candidate.resolve()
+            break
+
+    if world_path is None:
+        search_list = ", ".join(str(p) for p in candidate_paths)
+        raise FileNotFoundError(
+            f"Unable to locate world file '{config.world_file}'. Checked: {search_list}"
+        )
+
+    world_path_str = str(world_path)
+
     # ========== 训练初始化日志 ==========
     print("\n" + "="*60)
     print("🚀 Starting ETHSRL+GP Hierarchical Navigation Training")
@@ -460,6 +511,14 @@ def main(args=None):
     )
     print(f"   • Max steps per episode: {config.max_steps}")
     print(f"   • Train every {config.train_every_n_episodes} episodes")
+    print(f"   • World file: {world_path}")
+    print(
+        "   • Global planner: res={:.2f} m, margin={:.2f} m, lookahead={}".format(
+            config.global_plan_resolution,
+            config.global_plan_margin,
+            config.waypoint_lookahead,
+        )
+    )
     if config.save_every > 0:
         print(f"   • Save models every {config.save_every} episodes")
     else:
@@ -468,13 +527,20 @@ def main(args=None):
 
     # ========== 系统初始化 ==========
     print("🔄 Initializing ETHSRL+GP system...")
-    system = HierarchicalNavigationSystem(device=device, subgoal_threshold=config.subgoal_radius)
+    system = HierarchicalNavigationSystem(
+        device=device,
+        subgoal_threshold=config.subgoal_radius,
+        world_file=world_path,
+        global_plan_resolution=config.global_plan_resolution,
+        global_plan_margin=config.global_plan_margin,
+        waypoint_lookahead=config.waypoint_lookahead,
+    )
     replay_buffer = TD3ReplayAdapter(buffer_size=config.buffer_size)
     print("✅ System initialization completed")
 
     # ========== 环境初始化 ==========
     print("🔄 Initializing simulation environment...")
-    sim = SIM(world_file="worlds/env_b_none.yaml", disable_plotting=False)
+    sim = SIM(world_file=world_path_str, disable_plotting=False)
     print("✅ Environment initialization completed")
 
     # ========== 训练统计变量初始化 ==========
@@ -508,6 +574,10 @@ def main(args=None):
         prev_action = [0.0, 0.0]  # 重置动作
         current_subgoal_world: Optional[np.ndarray] = None
 
+        robot_pose = get_robot_pose(sim)
+        episode_goal_pose = get_goal_pose(sim)
+        system.plan_global_route(robot_pose, episode_goal_pose, force=True)
+
         steps = 0
         episode_reward = 0.0
         done = False
@@ -515,6 +585,9 @@ def main(args=None):
         # ========== 单次情节循环 ==========
         while not done and steps < config.max_steps:
             robot_pose = get_robot_pose(sim)
+            system.plan_global_route(robot_pose, episode_goal_pose)
+            active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)
+            waypoint_positions = [wp[1] for wp in active_waypoints]
             goal_info = [distance, cos, sin]
 
             # 检查是否需要重新规划子目标
@@ -528,6 +601,10 @@ def main(args=None):
                     current_step=steps,
                 )
             )
+
+            metadata = {}
+            subgoal_distance = None
+            subgoal_angle = None
 
             if should_replan:
                 # 完成当前子目标并训练
@@ -556,7 +633,7 @@ def main(args=None):
                             )
 
                 # 生成新子目标
-                subgoal_distance, subgoal_angle = system.high_level_planner.generate_subgoal(
+                subgoal_distance, subgoal_angle, metadata = system.high_level_planner.generate_subgoal(
                     latest_scan,
                     distance,
                     cos,
@@ -564,7 +641,9 @@ def main(args=None):
                     prev_action=prev_action,
                     robot_pose=robot_pose,
                     current_step=steps,
+                    waypoints=active_waypoints,
                 )
+                system.update_selected_waypoint(metadata.get("selected_waypoint"))
                 planner_world = system.high_level_planner.current_subgoal_world
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None
                 system.high_level_planner.event_trigger.reset_time(steps)
@@ -578,6 +657,8 @@ def main(args=None):
                     cos,
                     sin,
                     prev_action,
+                    waypoints=waypoint_positions,
+                    robot_pose=robot_pose,
                 )
 
                 # 创建新的子目标上下文
@@ -645,6 +726,7 @@ def main(args=None):
 
             # 更新子目标距离
             next_pose = get_robot_pose(sim)
+            system.plan_global_route(next_pose, episode_goal_pose)
             current_subgoal_distance = None
             if current_subgoal_world is not None:
                 next_pos = np.array(next_pose[:2], dtype=np.float32)
@@ -705,12 +787,16 @@ def main(args=None):
                 current_subgoal_context.subgoal_completed |= just_reached_subgoal
                 current_subgoal_context.last_goal_distance = distance
                 # 构建下一状态向量
+                next_active_waypoints = system.get_active_waypoints(next_pose, include_indices=True)
+                next_waypoint_positions = [wp[1] for wp in next_active_waypoints]
                 next_state_vector = system.high_level_planner.build_state_vector(
                     latest_scan,
                     distance,
                     cos,
                     sin,
                     executed_action,
+                    waypoints=next_waypoint_positions,
+                    robot_pose=next_pose,
                 )
                 current_subgoal_context.last_state = next_state_vector.astype(np.float32, copy=False)
 
