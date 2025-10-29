@@ -15,10 +15,10 @@ class LowLevelRewardConfig:
     safety_weight: float = 2.5             # 惩罚过于靠近障碍物的行为
     efficiency_penalty: float = 0.05       # 每走一步的轻微时间惩罚，鼓励效率
     goal_bonus: float = 50.0               # 到达最终目标的巨大奖励
-    subgoal_bonus: float = 15.0            # 到达当前子目标的奖励
-    collision_penalty: float = -30.0       # 碰撞的巨大惩罚
+    subgoal_bonus: float = 5.0             # 到达当前子目标的奖励（降低重复刷分收益）
+    collision_penalty: float = -20.0       # 碰撞的巨大惩罚
     timeout_penalty: float = -10.0         # 超时的惩罚
-    safe_distance: float = 1             # 安全距离阈值（米），小于此距离将触发安全惩罚
+    safe_distance: float = 1               # 安全距离阈值（米），小于此距离将触发安全惩罚
     progress_clip: float = 0.2             # 每步奖励的进度裁剪值（米），用于稳定训练
 
 
@@ -29,9 +29,9 @@ class HighLevelRewardConfig:
     # 高层规划器奖励函数配置
     global_progress_weight: float = 5.0    # 鼓励朝向全局目标取得进展
     subgoal_completion_bonus: float = 10.0 # 成功完成一个子目标的奖励
-    goal_bonus: float = 100.0               # 到达最终目的地的巨大奖励
-    collision_penalty: float = -50.0       # 导致碰撞的巨大惩罚
-    timeout_penalty: float = -20.0         # 导致超时的惩罚
+    goal_bonus: float = 50.0               # 到达最终目的地的巨大奖励
+    collision_penalty: float = -20.0       # 导致碰撞的巨大惩罚
+    timeout_penalty: float = -10.0         # 导致超时的惩罚
 
 
 def _clip_progress(delta: float, clip: float) -> float:
