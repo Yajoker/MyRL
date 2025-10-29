@@ -74,18 +74,15 @@ class GlobalPlanner:
         """计算从起点到目标点的路径点列表
         
         Args:
-            start: Robot start position ``(x, y)`` in world coordinates.
-                  机器人起始位置，世界坐标系中的``(x, y)``坐标
-            goal: Goal position ``(x, y)`` in world coordinates.
-                  目标位置，世界坐标系中的``(x, y)``坐标
+            start: 机器人起始位置，世界坐标系中的``(x, y)``坐标
+            goal: 目标位置，世界坐标系中的``(x, y)``坐标
 
         Returns:
-            List of waypoint positions (numpy arrays) ordered from start to goal.
+           
             从起点到目标点排序的路径点位置列表（numpy数组）
 
         Raises:
-            RuntimeError: If no traversable path can be found.
-                          如果找不到可行路径
+            RuntimeError: 如果找不到可行路
         """
 
         # 转换起点和目标点为numpy数组
