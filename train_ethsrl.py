@@ -31,7 +31,7 @@ class TrainingConfig:
     batch_size: int = 64  # 训练批次大小
     max_epochs: int = 60  # 最大训练轮数
     episodes_per_epoch: int = 70  # 每轮训练的情节数
-    max_steps: int = 1000  # 每个情节的最大步数
+    max_steps: int = 300  # 每个情节的最大步数
     train_every_n_episodes: int = 2  # 每N个情节训练一次
     training_iterations: int = 80  # 每次训练的迭代次数
     exploration_noise: float = 0.2  # 探索噪声强度
@@ -164,7 +164,7 @@ def maybe_train_high_level(
     dones = np.array([entry[4] for entry in batch], dtype=np.float32)
 
     # 更新规划器
-    metrics = planner.update_planner(states, actions, rewards, next_states, dones, batch_size=batch_size)
+    metrics = planner.update_planner(states, actions, rewards, dones, next_states, batch_size=batch_size)
     return metrics
 
 
@@ -186,7 +186,7 @@ class TD3ReplayAdapter:
     def sample(self, batch_size: int):
         """从缓冲区采样批次数据"""
         states, actions, rewards, dones, next_states = self._buffer.sample_batch(batch_size)
-        return states, actions, rewards, next_states, dones
+        return states, actions, rewards, dones, next_states
 
     def clear(self) -> None:
         """清空缓冲区"""
@@ -348,9 +348,15 @@ def evaluate(
             min_obstacle_distance = float(finite_scan.min()) if finite_scan.size else 8.0
 
             # 检查终止条件
-            reached_subgoal = (
-                current_subgoal_distance is not None and current_subgoal_distance <= config.subgoal_radius
-            )
+            just_reached_subgoal = False
+            if (
+                current_subgoal_distance is not None
+                and current_subgoal_distance <= config.subgoal_radius
+            ):
+                if prev_subgoal_distance is None:
+                    just_reached_subgoal = True
+                elif prev_subgoal_distance > config.subgoal_radius:
+                    just_reached_subgoal = True
             timed_out = steps == config.max_steps - 1 and not (goal or collision)
 
             # 计算低层奖励
@@ -359,7 +365,7 @@ def evaluate(
                 current_subgoal_distance=current_subgoal_distance,
                 min_obstacle_distance=min_obstacle_distance,
                 reached_goal=goal,
-                reached_subgoal=reached_subgoal,
+                reached_subgoal=just_reached_subgoal,
                 collision=collision,
                 timed_out=timed_out,
                 config=low_cfg,
@@ -468,7 +474,7 @@ def main(args=None):
 
     # ========== 环境初始化 ==========
     print("🔄 Initializing simulation environment...")
-    sim = SIM(world_file="worlds/env_a.yaml", disable_plotting=False)
+    sim = SIM(world_file="worlds/env_b_none.yaml", disable_plotting=False)
     print("✅ Environment initialization completed")
 
     # ========== 训练统计变量初始化 ==========
@@ -650,9 +656,20 @@ def main(args=None):
             min_obstacle_distance = float(finite_scan.min()) if finite_scan.size else 8.0
 
             # 检查终止条件
-            reached_subgoal = (
-                current_subgoal_distance is not None and current_subgoal_distance <= config.subgoal_radius
-            )
+            just_reached_subgoal = False
+            if (
+                current_subgoal_distance is not None
+                and current_subgoal_distance <= config.subgoal_radius
+            ):
+                if prev_subgoal_distance is None:
+                    just_reached_subgoal = True
+                elif prev_subgoal_distance > config.subgoal_radius:
+                    just_reached_subgoal = True
+            if (
+                current_subgoal_context is not None
+                and current_subgoal_context.subgoal_completed
+            ):
+                just_reached_subgoal = False
             timed_out = steps == config.max_steps - 1 and not (goal or collision)
 
             # 计算低层奖励
@@ -661,7 +678,7 @@ def main(args=None):
                 current_subgoal_distance=current_subgoal_distance,
                 min_obstacle_distance=min_obstacle_distance,
                 reached_goal=goal,
-                reached_subgoal=reached_subgoal,
+                reached_subgoal=just_reached_subgoal,
                 collision=collision,
                 timed_out=timed_out,
                 config=low_reward_cfg,
@@ -685,7 +702,7 @@ def main(args=None):
             if current_subgoal_context is not None:
                 current_subgoal_context.low_level_return += low_reward
                 current_subgoal_context.steps += 1
-                current_subgoal_context.subgoal_completed |= reached_subgoal
+                current_subgoal_context.subgoal_completed |= just_reached_subgoal
                 current_subgoal_context.last_goal_distance = distance
                 # 构建下一状态向量
                 next_state_vector = system.high_level_planner.build_state_vector(
