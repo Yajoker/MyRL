@@ -1,1 +1,101 @@
 
+world:
+  height: 10  # 世界高度为 10 米
+  width: 10   # 世界宽度为 10 米
+  step_time: 0.3  # 控制器每步更新周期为 0.3 秒
+  sample_time: 0.3  # 渲染与数据提取的采样周期为 0.3 秒
+  offset: [0, 0] # 世界坐标系的原点偏移量为 (0, 0)
+  control_mode: 'auto'  # 'keyboard', 'auto'
+  collision_mode: 'unobstructed_obstacles'  # 'stop', 'unobstructed', 'unobstructed_obstacles'
+  plot:
+    show_title: true
+    figure_pixels: [ 1000, 800 ]
+
+
+robot:
+  - kinematics: {name: 'diff'}  # 差分驱动机器人（左右轮独立控制）
+    shape: {name: 'circle', radius: 0.3}  # 机器人形状为圆形，半径 0.3 米
+    vel_min: [ 0, -1.0 ]  # 最小速度：[线速度，角速度]
+    behavior: {name: 'rvo'}
+    vel_max: [ 1.0, 1.0 ]  # 最大速度：[线速度，角速度]
+    state: [3, 1, 0, 0]  # 初始状态：[x, y, 朝向θ, 初始速度]
+    goal: [7, 9, 0]  # 目标位置：[x, y, 朝向]
+    arrive_mode: position  # 到达条件只看位置是否到达，不看朝向
+    goal_threshold: 0.4  # 到达目标的距离阈值为 0.4 米
+
+    sensors:
+      - type: 'lidar2d'  # 激光雷达类型：2D 激光
+        range_min: 0  # 最小测量距离为 0 米
+        range_max: 6  # 最大测量距离为 6 米
+        angle_range: 3.14  # 雷达覆盖范围为 180 度（弧度）
+        number: 180   # 激光束数量（分辨率）为 180 条
+        noise: True  # 是否添加测量噪声：是
+        std: 0.08  # 距离测量噪声的标准差
+        angle_std: 0.1  # 角度测量噪声的标准差
+        offset: [ 0, 0, 0 ]  # 雷达安装位置相对于机器人中心的偏移：[x, y, 角度]
+        alpha: 0.3  # 激光穿透参数，用于模拟遮挡或弱反射等物理特性
+
+
+    plot:
+      show_trajectory: True  #是否绘制机器人运行轨迹
+      show_title: true    # Show title with time and status
+
+obstacle:
+  - shape:
+      name: 'linestring'
+      vertices:
+        - [ 0, 10 ]
+        - [ 1.5, 10 ]
+        - [ 1.5, 0 ]
+        - [ 0, 0 ]
+    state: [0, 0, 0]
+    kinematics: { name: 'static' }
+
+  - shape:
+      name: 'linestring'
+      vertices:
+        - [ 10, 0 ]
+        - [ 10, 10 ]
+        - [ 8.5, 10 ]
+        - [ 8.5, 0 ]
+    state: [0, 0, 0]
+    kinematics: { name: 'static' }
+
+  - shape:
+      name: 'linestring'
+      vertices:
+        - [ 4.5, 0 ]
+        - [ 4.5, 3.5 ]
+        - [ 5.5, 3.5 ]
+        - [ 5.5, 0 ]
+    state: [0, 0, 0]
+    kinematics: { name: 'static' }
+
+  - shape:
+      name: 'linestring'
+      vertices:
+        - [ 4.5, 10 ]
+        - [ 4.5, 6.5 ]
+        - [ 5.5, 6.5 ]
+        - [ 5.5, 10 ]
+    state: [0, 0, 0]
+    kinematics: { name: 'static' }
+
+  - shape:
+      name: 'linestring'
+      vertices:
+        - [ 1.5, 0 ]
+        - [ 8.5, 0 ]
+    state: [0, 0, 0]
+    kinematics: { name: 'static' }
+
+  - shape:
+      name: 'linestring'
+      vertices:
+        - [ 1.5, 10 ]
+        - [ 8.5, 10 ]
+    state: [0, 0, 0]
+    kinematics: { name: 'static' }
+
+
+
