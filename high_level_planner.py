@@ -100,7 +100,8 @@ class SubgoalNetwork(nn.Module):
         distance = 3 * torch.sigmoid(self.distance_head(x))  # 距离范围[0, 3]米，sigmoid确保非负
         angle = torch.tanh(self.angle_head(x)) * np.pi  # 角度范围[-π, π]，tanh确保在-1到1之间
 
-        return distance, angle
+        # squeeze掉最后一维，保持批量维度，便于后续堆叠或索引
+        return distance.squeeze(-1), angle.squeeze(-1)
 
 
 class EventTrigger:
@@ -752,7 +753,7 @@ class HighLevelPlanner:
         # 生成子目标（网络预测）
         subgoal_distances, subgoal_angles = self.subgoal_network(laser_scans, goal_info, prev_action)
         # 合并距离和角度为完整子目标
-        subgoals = torch.cat([subgoal_distances, subgoal_angles], dim=1)
+        subgoals = torch.stack((subgoal_distances, subgoal_angles), dim=1)
 
         # 基于奖励对回放样本加权，突出表现更好的子目标
         with torch.no_grad():  # 权重计算不参与梯度计算
