@@ -157,6 +157,14 @@ class LowLevelCriticNetwork(nn.Module):
         Returns:
             两个Q值的元组 (Q1, Q2)
         """
+        if s.dim() == 1:
+            s = s.unsqueeze(0)
+        if action.dim() == 1:
+            action = action.unsqueeze(0)
+
+        if action.device != s.device:
+            action = action.to(s.device)
+
         # 分割状态张量的各个部分
         laser = s[:, :-4]  # 激光雷达数据
         subgoal = s[:, -4:-2]  # 子目标信息
