@@ -1,12 +1,12 @@
 from pathlib import Path
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
 # 导入系统内部模块：低层控制器和高层规划器
 from ethsrl.core.control.low_level_controller import LowLevelController
-from ethsrl.core.planning.global_planner import GlobalPlanner
+from ethsrl.core.planning.global_planner import GlobalPlanner, WaypointWindow
 from ethsrl.core.planning.high_level_planner import HighLevelPlanner
 
 
@@ -33,6 +33,7 @@ class HierarchicalNavigationSystem:
         global_plan_resolution: float = 0.25,
         global_plan_margin: float = 0.35,
         waypoint_lookahead: int = 3,
+        window_step_limit: int = 80,
     ) -> None:
         """
         初始化分层导航系统。
@@ -84,6 +85,15 @@ class HierarchicalNavigationSystem:
         self.step_duration = step_duration
         self.subgoal_threshold = subgoal_threshold
         self.waypoint_lookahead = waypoint_lookahead
+        self.window_step_limit = max(1, int(window_step_limit))
+        self.window_step_count = 0
+        self.steps_inside_window = 0
+        self.window_last_index: Optional[int] = None
+        self.last_window_distance: Optional[float] = None
+        self.window_limit_exceeded = False
+        self.window_within = False
+        self.last_window_update_step: int = -1
+        self._cached_window_info: Dict[str, object] = {}
 
         self.global_planner: Optional[GlobalPlanner] = None
         if world_file is not None:
@@ -95,7 +105,7 @@ class HierarchicalNavigationSystem:
                 )
             except FileNotFoundError as exc:
                 print(f"[GlobalPlanner] {exc}. Global planning disabled.")
-        self.global_waypoints: List[np.ndarray] = []
+        self.global_waypoints: List[WaypointWindow] = []
         self.current_waypoint_index: int = 0
         self.global_goal: Optional[np.ndarray] = None
 
@@ -126,6 +136,7 @@ class HierarchicalNavigationSystem:
         waypoint_candidates = self.get_active_waypoints(
             robot_pose, include_indices=True
         )
+        window_metrics = self.update_window_state(robot_pose, waypoint_candidates)
 
         goal_info = [goal_distance, goal_cos, goal_sin]
 
@@ -139,7 +150,10 @@ class HierarchicalNavigationSystem:
                 goal_info,
                 prev_action=self.prev_action,
                 current_step=self.step_count,
+                window_metrics=window_metrics,
             )
+        if window_metrics.get("limit_exceeded", False):
+            should_replan = True
 
         subgoal_distance: Optional[float] = None
         subgoal_angle: Optional[float] = None
@@ -155,7 +169,9 @@ class HierarchicalNavigationSystem:
                 robot_pose=robot_pose,
                 current_step=self.step_count,
                 waypoints=waypoint_candidates,
+                window_metrics=window_metrics,
             )
+            self.reset_window_tracking()
             self.update_selected_waypoint(decision_meta.get("selected_waypoint"))
             planner_world = self.high_level_planner.current_subgoal_world
             self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world, dtype=np.float32)
@@ -240,22 +256,22 @@ class HierarchicalNavigationSystem:
             raw_path = self.global_planner.plan(start_xy, goal_vec)
         except RuntimeError as exc:
             print(f"[GlobalPlanner] {exc}. Using direct segment to goal.")
-            raw_path = [goal_vec]
+            raw_path = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius)]
 
-        filtered: List[np.ndarray] = []
-        for waypoint in raw_path:
-            waypoint_vec = np.asarray(waypoint, dtype=np.float32)
-            if np.linalg.norm(waypoint_vec - start_xy) <= 0.5 * self.global_planner.resolution:
+        filtered: List[WaypointWindow] = []
+        for window in raw_path:
+            centre = np.asarray(window.center, dtype=np.float32)
+            if np.linalg.norm(centre - start_xy) <= 0.5 * self.global_planner.resolution:
                 continue
-            filtered.append(waypoint_vec)
+            filtered.append(WaypointWindow(center=centre.copy(), radius=float(window.radius)))
 
         if not filtered:
-            filtered = [goal_vec.copy()]
+            filtered = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius)]
 
-        goal_dists = [float(np.linalg.norm(goal_vec - wp)) for wp in filtered]
+        goal_dists = [float(np.linalg.norm(goal_vec - wp.center)) for wp in filtered]
         print(f"[GlobalPlanner] Waypoints in world frame ({len(filtered)} total):")
         for idx, (wp, dist) in enumerate(zip(filtered, goal_dists)):
-            print(f"  #{idx:02d} {wp.tolist()} | dist_to_goal={dist:.3f} m")
+            print(f"  #{idx:02d} {wp.center.tolist()} | dist_to_goal={dist:.3f} m | radius={wp.radius:.2f} m")
 
         if len(goal_dists) > 1:
             monotonic = all(goal_dists[i + 1] <= goal_dists[i] + 1e-6 for i in range(len(goal_dists) - 1))
@@ -264,8 +280,19 @@ class HierarchicalNavigationSystem:
 
         self.global_waypoints = filtered
         self.current_waypoint_index = 0
+        self.reset_window_tracking()
         self._advance_waypoints(robot_pose)
         return self.global_waypoints
+
+    def reset_window_tracking(self) -> None:
+        self.window_last_index = None
+        self.window_step_count = 0
+        self.steps_inside_window = 0
+        self.last_window_distance = None
+        self.window_limit_exceeded = False
+        self.window_within = False
+        self.last_window_update_step = -1
+        self._cached_window_info = {}
 
     def _advance_waypoints(self, robot_pose) -> None:
         if not self.global_waypoints:
@@ -274,19 +301,100 @@ class HierarchicalNavigationSystem:
             return
 
         position = np.asarray(robot_pose[:2], dtype=np.float32)
-        threshold = max(0.1, self.subgoal_threshold * 0.8)
+        base_threshold = max(0.1, self.subgoal_threshold * 0.8)
         if self.global_planner is not None:
-            threshold = max(threshold, 0.5 * self.global_planner.resolution)
+            base_threshold = max(base_threshold, 0.5 * self.global_planner.resolution)
 
+        window_changed = False
         while self.current_waypoint_index < len(self.global_waypoints):
-            waypoint = self.global_waypoints[self.current_waypoint_index]
-            if np.linalg.norm(waypoint - position) <= threshold:
-                if self.current_waypoint_index < len(self.global_waypoints) - 1:
-                    self.current_waypoint_index += 1
-                else:
-                    break
-            else:
-                break
+            window = self.global_waypoints[self.current_waypoint_index]
+            centre = np.asarray(window.center, dtype=np.float32)
+            radius = float(window.radius)
+            threshold = max(base_threshold, radius * 0.9)
+            distance = float(np.linalg.norm(centre - position))
+
+            if distance <= threshold and self.current_waypoint_index < len(self.global_waypoints) - 1:
+                self.current_waypoint_index += 1
+                window_changed = True
+                continue
+            break
+
+        if window_changed:
+            self.reset_window_tracking()
+
+    def _update_window_metrics(
+        self,
+        robot_pose,
+        waypoint_candidates: List[Tuple[int, WaypointWindow]],
+    ) -> None:
+        if not waypoint_candidates:
+            self.reset_window_tracking()
+            return
+
+        first = waypoint_candidates[0]
+        if isinstance(first, tuple) and len(first) == 2:
+            index, window = int(first[0]), first[1]
+        else:
+            index = self.current_waypoint_index
+            window = first
+        robot_xy = np.asarray(robot_pose[:2], dtype=np.float32)
+        centre = np.asarray(window.center, dtype=np.float32)
+        distance = float(np.linalg.norm(centre - robot_xy))
+        radius = float(window.radius)
+
+        changed = index != self.window_last_index
+        prev_distance = self.last_window_distance if not changed else None
+        prev_inside = self.window_within if not changed else False
+
+        if changed:
+            self.window_last_index = index
+            self.window_step_count = 0
+            self.steps_inside_window = 0
+            self.window_limit_exceeded = False
+            prev_inside = False
+
+        self.window_step_count += 1
+
+        inside = distance <= radius
+        if inside:
+            self.steps_inside_window += 1
+        else:
+            self.steps_inside_window = 0
+
+        entered = inside and not prev_inside
+
+        self.window_within = inside
+        self.window_limit_exceeded = self.steps_inside_window >= self.window_step_limit
+        self.last_window_distance = distance
+        self.last_window_update_step = self.step_count
+
+        margin = (distance - radius) / max(radius, 1e-3)
+        margin = float(np.clip(margin, -1.0, 1.0))
+
+        self._cached_window_info = {
+            "index": index,
+            "radius": radius,
+            "distance": distance,
+            "prev_distance": prev_distance,
+            "inside": inside,
+            "entered": entered,
+            "steps_inside": self.steps_inside_window,
+            "step_count": self.window_step_count,
+            "step_limit": self.window_step_limit,
+            "limit_exceeded": self.window_limit_exceeded,
+            "margin": margin,
+        }
+
+    def update_window_state(
+        self,
+        robot_pose,
+        waypoint_candidates: List[Tuple[int, WaypointWindow]],
+    ) -> Dict[str, object]:
+        self._update_window_metrics(robot_pose, waypoint_candidates)
+        return self.get_window_metrics()
+
+    def get_window_metrics(self) -> Dict[str, object]:
+        return dict(self._cached_window_info)
 
     def get_active_waypoints(self, robot_pose, lookahead: Optional[int] = None, include_indices: bool = False):
         """Return the waypoint window closest to the robot."""
@@ -302,8 +410,8 @@ class HierarchicalNavigationSystem:
 
         indices = range(start_idx, end_idx)
         if include_indices:
-            return [(idx, self.global_waypoints[idx].copy()) for idx in indices]
-        return [self.global_waypoints[idx].copy() for idx in indices]
+            return [(idx, self.global_waypoints[idx].clone()) for idx in indices]
+        return [self.global_waypoints[idx].clone() for idx in indices]
 
     def update_selected_waypoint(self, selected_index: Optional[int]) -> None:
         """Record the global waypoint chosen by the high-level planner."""
@@ -318,7 +426,11 @@ class HierarchicalNavigationSystem:
             idx = len(self.global_waypoints) - 1
 
         if idx >= self.current_waypoint_index:
-            self.current_waypoint_index = idx
+            if idx != self.current_waypoint_index:
+                self.current_waypoint_index = idx
+                self.reset_window_tracking()
+            else:
+                self.current_waypoint_index = idx
 
     def clear_global_route(self) -> None:
         """Reset stored waypoints and goal information."""
@@ -326,6 +438,7 @@ class HierarchicalNavigationSystem:
         self.global_waypoints = []
         self.current_waypoint_index = 0
         self.global_goal = None
+        self.reset_window_tracking()
 
     def reset(self):
         """
