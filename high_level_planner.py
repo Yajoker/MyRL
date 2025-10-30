@@ -14,6 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
+from ethsrl.core.planning.global_planner import WaypointWindow
+
 
 class SubgoalNetwork(nn.Module):
     """
@@ -296,7 +298,9 @@ class HighLevelPlanner:
 
         # 航点窗口相关参数
         self.waypoint_lookahead = max(1, int(waypoint_lookahead))
-        self.goal_feature_dim = 3 + 2 * self.waypoint_lookahead
+        self.active_window_feature_dim = 6  # [dist, cos, sin, radius, inside, margin]
+        self.per_window_feature_dim = 4  # [dist, cos, sin, radius]
+        self.goal_feature_dim = 3 + self.active_window_feature_dim + self.per_window_feature_dim * self.waypoint_lookahead
 
         # 初始化子目标生成网络
         self.subgoal_network = SubgoalNetwork(
@@ -434,21 +438,46 @@ class HighLevelPlanner:
         return np.array([world_x, world_y], dtype=np.float32)
 
     def build_waypoint_features(self, waypoints, robot_pose) -> List[float]:
-        features: List[float] = []
-        max_count = self.waypoint_lookahead
+        active_features = [0.0] * self.active_window_feature_dim
+        sequence_features: List[float] = []
 
-        for idx in range(max_count):
+        if robot_pose is None:
+            sequence_features.extend([0.0] * self.per_window_feature_dim * self.waypoint_lookahead)
+            return active_features + sequence_features
+
+        for idx in range(self.waypoint_lookahead):
+            window: Optional[WaypointWindow] = None
             if waypoints is not None and idx < len(waypoints):
                 entry = waypoints[idx]
-                waypoint_pos = entry
                 if isinstance(entry, tuple) and len(entry) == 2:
-                    waypoint_pos = entry[1]
-                distance, angle = self._world_to_relative(robot_pose, waypoint_pos)
-                features.extend([distance, angle])
-            else:
-                features.extend([0.0, 0.0])
+                    window = entry[1]
+                elif isinstance(entry, WaypointWindow):
+                    window = entry
+                else:
+                    waypoint_vec = np.asarray(entry, dtype=np.float32)
+                    window = WaypointWindow(center=waypoint_vec, radius=0.0)
 
-        return features
+            if window is not None:
+                centre = np.asarray(window.center, dtype=np.float32)
+                distance, angle = self._world_to_relative(robot_pose, centre)
+                norm_distance = min(distance / 10.0, 1.0)
+                cos_rel = math.cos(angle)
+                sin_rel = math.sin(angle)
+                norm_radius = min(float(window.radius) / 5.0, 1.0)
+                sequence_features.extend([norm_distance, cos_rel, sin_rel, norm_radius])
+                margin = (distance - float(window.radius)) / max(float(window.radius), 1e-3)
+                margin = float(np.clip(margin, -1.0, 1.0))
+                inside_flag = 1.0 if distance <= float(window.radius) else 0.0
+                if idx == 0:
+                    active_features = [norm_distance, cos_rel, sin_rel, norm_radius, inside_flag, margin]
+            else:
+                sequence_features.extend([0.0, 0.0, 0.0, 0.0])
+
+        total_expected = self.per_window_feature_dim * self.waypoint_lookahead
+        if len(sequence_features) < total_expected:
+            sequence_features.extend([0.0] * (total_expected - len(sequence_features)))
+
+        return active_features + sequence_features
 
     def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, prev_action, waypoints=None, robot_pose=None):
         """构造高层规划器训练所需的状态向量"""
@@ -470,6 +499,7 @@ class HighLevelPlanner:
         prev_action=None,
         min_obstacle_dist=None,
         current_step: int = 0,
+        window_metrics: Optional[dict] = None,
     ):
         """
         检查是否有任何事件触发器被激活
@@ -522,6 +552,13 @@ class HighLevelPlanner:
         trigger_new_subgoal = time_ready and (safe_trigger or progress_trigger)
 
         # 如果触发，重置时间计数器
+        if window_metrics:
+            if window_metrics.get("limit_exceeded", False):
+                trigger_new_subgoal = True
+            if window_metrics.get("entered", False):
+                # 新窗口被进入，刷新进度基准以避免重复触发
+                self.event_trigger.reset_progress(goal_distance, current_step)
+
         if trigger_new_subgoal:
             self.event_trigger.reset_time(current_step)
 
@@ -535,8 +572,9 @@ class HighLevelPlanner:
         goal_sin,
         prev_action=None,
         robot_pose=None,
-        current_step: Optional[int] = None,
-        waypoints=None,
+    current_step: Optional[int] = None,
+    waypoints=None,
+    window_metrics: Optional[dict] = None,
     ):
         """
         基于当前状态生成新子目标
@@ -550,6 +588,7 @@ class HighLevelPlanner:
             robot_pose: 机器人位姿 [x, y, theta]（用于计算世界坐标）
             current_step: 当前全局时间步（用于进度重置）
             waypoints: 当前全局规划提供的候选航点
+            window_metrics: 当前目标窗口的状态统计信息
 
         Returns:
             包含(子目标距离, 子目标角度)的元组
@@ -578,23 +617,40 @@ class HighLevelPlanner:
         predicted_angle = float(angle.cpu().numpy().item())
 
         candidate_info = []
+        active_window_index: Optional[int] = None
+        active_window_radius: Optional[float] = None
         if robot_pose is not None and waypoints:
             for entry in waypoints:
                 if isinstance(entry, tuple) and len(entry) == 2:
-                    idx, waypoint = entry
+                    idx = int(entry[0]) if entry[0] is not None else None
+                    window_obj = entry[1]
+                elif isinstance(entry, WaypointWindow):
+                    idx = None
+                    window_obj = entry
                 else:
                     idx = None
-                    waypoint = entry
-                waypoint_vec = np.asarray(waypoint, dtype=np.float32)
-                rel_dist, rel_angle = self._world_to_relative(robot_pose, waypoint_vec)
+                    window_vec = np.asarray(entry, dtype=np.float32)
+                    window_obj = WaypointWindow(center=window_vec, radius=0.0)
+
+                if not isinstance(window_obj, WaypointWindow):
+                    continue
+
+                centre = np.asarray(window_obj.center, dtype=np.float32)
+                rel_dist, rel_angle = self._world_to_relative(robot_pose, centre)
                 candidate_info.append(
                     {
                         "index": idx,
-                        "position": waypoint_vec,
+                        "window": window_obj,
+                        "position": centre,
                         "distance": rel_dist,
                         "angle": rel_angle,
+                        "radius": float(window_obj.radius),
                     }
                 )
+
+            if candidate_info:
+                active_window_index = candidate_info[0]["index"]
+                active_window_radius = candidate_info[0]["radius"]
 
         selected_index = None
         final_distance = predicted_distance
@@ -613,13 +669,20 @@ class HighLevelPlanner:
                     best_idx = idx
 
             chosen = candidate_info[best_idx]
+            window = chosen["window"]
             if chosen["index"] is not None:
                 selected_index = int(chosen["index"])
+            radius = chosen["radius"]
+            base_distance = chosen["distance"]
 
-            distance_adjust = max(-0.75, min(0.75, predicted_distance - chosen["distance"]))
+            distance_adjust = max(-0.75, min(0.75, predicted_distance - base_distance))
             angle_offset = self._wrap_angle(predicted_angle - chosen["angle"])
             angle_adjust = max(-math.pi / 6, min(math.pi / 6, angle_offset))
-            final_distance = max(0.2, chosen["distance"] + distance_adjust)
+
+            final_distance = max(0.2, base_distance + distance_adjust)
+            min_distance = max(0.2, base_distance - radius * 0.8)
+            max_distance = base_distance
+            final_distance = float(np.clip(final_distance, min_distance, max_distance))
             final_angle = self._wrap_angle(chosen["angle"] + angle_adjust)
             world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
         elif robot_pose is not None:
@@ -643,7 +706,19 @@ class HighLevelPlanner:
         progress_step = current_step if current_step is not None else 0
         self.event_trigger.reset_progress(goal_distance, progress_step)
 
-        metadata = {"selected_waypoint": selected_index}
+        if active_window_index is None and window_metrics:
+            active_window_index = window_metrics.get("index")
+            active_window_radius = window_metrics.get("radius")
+
+        metadata = {
+            "selected_waypoint": selected_index,
+            "active_window_index": active_window_index,
+            "active_window_radius": active_window_radius,
+            "window_metrics": dict(window_metrics) if window_metrics else {},
+        }
+
+        if metadata["selected_waypoint"] is None and active_window_index is not None:
+            metadata["selected_waypoint"] = active_window_index
 
         return final_distance, final_angle, metadata
 
