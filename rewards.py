@@ -20,6 +20,12 @@ class LowLevelRewardConfig:
     timeout_penalty: float = -10.0         # 超时的惩罚
     safe_distance: float = 1               # 安全距离阈值（米），小于此距离将触发安全惩罚
     progress_clip: float = 0.2             # 每步奖励的进度裁剪值（米），用于稳定训练
+    window_progress_weight: float = 1.2    # 鼓励逼近目标窗口中心
+    window_progress_clip: float = 0.3      # 窗口进度裁剪
+    window_entry_bonus: float = 3.0        # 第一次进入窗口的奖励
+    window_inside_bonus: float = 0.2       # 保持在窗口内的小奖励
+    window_outside_penalty: float = 0.1    # 不在窗口内的小惩罚
+    window_timeout_penalty: float = -6.0   # 在窗口内逗留过久的惩罚
 
 
 @dataclass
@@ -59,6 +65,13 @@ def compute_low_level_reward(
     collision: bool,
     timed_out: bool,
     config: LowLevelRewardConfig,
+    *,
+    window_entered: bool = False,
+    window_inside: bool = False,
+    window_limit_exceeded: bool = False,
+    prev_window_distance: Optional[float] = None,
+    current_window_distance: Optional[float] = None,
+    window_radius: Optional[float] = None,
 ) -> Tuple[float, Dict[str, float]]:
     """计算简化的、用于低层控制器的塑形奖励。
 
@@ -86,17 +99,35 @@ def compute_low_level_reward(
     progress = _clip_progress(progress_raw, config.progress_clip)
     progress_reward = config.progress_weight * progress
 
-    # 2. 安全惩罚：惩罚离障碍物太近
+    # 2. 窗口进度与奖励项
+    window_progress_raw = 0.0
+    if (
+        prev_window_distance is not None
+        and current_window_distance is not None
+    ):
+        window_progress_raw = prev_window_distance - current_window_distance
+    window_progress = _clip_progress(window_progress_raw, config.window_progress_clip)
+    window_progress_reward = config.window_progress_weight * window_progress
+
+    entry_bonus = config.window_entry_bonus if window_entered else 0.0
+    inside_reward = config.window_inside_bonus if window_inside else -config.window_outside_penalty
+    if window_radius is not None and window_radius > 0:
+        scale = float(np.clip(window_radius / 0.6, 0.5, 1.5))
+        entry_bonus *= scale
+        inside_reward *= scale
+    timeout_penalty = config.window_timeout_penalty if window_limit_exceeded else 0.0
+
+    # 3. 安全惩罚：惩罚离障碍物太近
     safety_penalty = 0.0
     if min_obstacle_distance < config.safe_distance:
         # 当智能体进入安全距离内，惩罚会二次方增长
         violation = (config.safe_distance - min_obstacle_distance) / config.safe_distance
         safety_penalty = -config.safety_weight * (violation ** 2)
 
-    # 3. 效率惩罚：对每一步施加一个小的固定惩罚
+    # 4. 效率惩罚：对每一步施加一个小的固定惩罚
     efficiency_penalty = -config.efficiency_penalty
 
-    # 4. 终止状态奖励/惩罚
+    # 5. 终止状态奖励/惩罚
     terminal_reward = 0.0
     if reached_goal:
         terminal_reward += config.goal_bonus
@@ -110,6 +141,10 @@ def compute_low_level_reward(
     # 计算总奖励
     total_reward = (
         progress_reward
+        + window_progress_reward
+        + entry_bonus
+        + inside_reward
+        + timeout_penalty
         + safety_penalty
         + efficiency_penalty
         + terminal_reward
@@ -118,6 +153,10 @@ def compute_low_level_reward(
     # 用于分析的奖励分量字典
     components = {
         "progress": progress_reward,
+        "window_progress": window_progress_reward,
+        "window_entry": entry_bonus,
+        "window_presence": inside_reward,
+        "window_timeout": timeout_penalty,
         "safety": safety_penalty,
         "efficiency": efficiency_penalty,
         "terminal": terminal_reward,
