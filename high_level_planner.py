@@ -111,7 +111,7 @@ class EventTrigger:
 
     def __init__(
         self,
-        safety_trigger_distance: float = 1.5,
+        safety_trigger_distance: float = 1,
         subgoal_reach_threshold: float = 0.5,
         stagnation_steps: int = 40,
         progress_epsilon: float = 0.1,
