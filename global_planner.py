@@ -30,6 +30,17 @@ class GridCell:
     col: int  # 列索引
 
 
+@dataclass(frozen=True)
+class WaypointWindow:
+    """均匀分布在全局路径上的目标窗口."""
+
+    center: np.ndarray
+    radius: float
+
+    def clone(self) -> "WaypointWindow":
+        return WaypointWindow(center=self.center.copy(), radius=float(self.radius))
+
+
 class GlobalPlanner:
     """基于网格的A*路径规划器，操作IR-Sim世界描述"""
 
@@ -40,6 +51,8 @@ class GlobalPlanner:
         resolution: float = 0.25,
         safety_margin: float = 0.35,
         allow_diagonal: bool = True,
+        window_spacing: float = 2.0,
+        window_radius: float = 0.6,
     ) -> None:
         # 初始化全局路径规划器
         self.world_file = Path(world_file)
@@ -59,6 +72,10 @@ class GlobalPlanner:
         # 是否允许对角线移动
         self.allow_diagonal = bool(allow_diagonal)
 
+        # 均匀目标窗口的间距与半径
+        self.window_spacing = max(0.1, float(window_spacing))
+        self.window_radius = max(0.05, float(window_radius))
+
         # 动态障碍物存储: 列表格式为 (中心点, 半径)
         self.dynamic_obstacles: List[Tuple[np.ndarray, float]] = []
 
@@ -69,9 +86,9 @@ class GlobalPlanner:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def plan(self, start: Sequence[float], goal: Sequence[float]) -> List[np.ndarray]:
-        
-        """计算从起点到目标点的路径点列表
+    def plan(self, start: Sequence[float], goal: Sequence[float]) -> List[WaypointWindow]:
+
+        """计算从起点到目标点的目标窗口序列
         
         Args:
             start: 机器人起始位置，世界坐标系中的``(x, y)``坐标
@@ -79,7 +96,7 @@ class GlobalPlanner:
 
         Returns:
            
-            从起点到目标点排序的路径点位置列表（numpy数组）
+            从起点到目标点排序的目标窗口列表
 
         Raises:
             RuntimeError: 如果找不到可行路
@@ -128,7 +145,8 @@ class GlobalPlanner:
                 # 找到目标，重建路径
                 path_cells = self._reconstruct_path(came_from, current)
                 waypoints = [self._cell_center(cell) for cell in path_cells]
-                return self._post_process_path(waypoints)
+                simplified = self._post_process_path(waypoints)
+                return self._discretise_into_windows(start_xy, goal_xy, simplified)
 
             closed.add(current)
 
@@ -403,6 +421,61 @@ class GlobalPlanner:
             if not deduped or np.linalg.norm(waypoint - deduped[-1]) > 1e-6:
                 deduped.append(waypoint)
         return [np.asarray(w, dtype=np.float32) for w in deduped]
+
+    def _discretise_into_windows(
+        self,
+        start_xy: np.ndarray,
+        goal_xy: np.ndarray,
+        path_points: List[np.ndarray],
+    ) -> List[WaypointWindow]:
+        """将路径离散化为等间距的目标窗口序列。"""
+
+        if not path_points:
+            return [WaypointWindow(center=goal_xy.copy(), radius=self.window_radius)]
+
+        points: List[np.ndarray] = [np.asarray(start_xy, dtype=np.float32)]
+        points.extend(np.asarray(p, dtype=np.float32) for p in path_points)
+        if not np.allclose(points[-1], goal_xy):
+            points.append(np.asarray(goal_xy, dtype=np.float32))
+
+        windows: List[WaypointWindow] = []
+        spacing = self.window_spacing
+        radius = self.window_radius
+
+        cursor = points[0].copy()
+        distance_acc = 0.0
+        point_idx = 1
+
+        while point_idx < len(points):
+            segment_end = points[point_idx]
+            segment_vec = segment_end - cursor
+            segment_len = float(np.linalg.norm(segment_vec))
+
+            if segment_len < 1e-6:
+                cursor = segment_end.copy()
+                point_idx += 1
+                continue
+
+            direction = segment_vec / segment_len
+            remaining = spacing - distance_acc
+
+            if segment_len + distance_acc < spacing - 1e-6:
+                distance_acc += segment_len
+                cursor = segment_end.copy()
+                point_idx += 1
+                continue
+
+            sample_point = cursor + direction * remaining
+            windows.append(WaypointWindow(center=sample_point.astype(np.float32), radius=radius))
+            cursor = sample_point
+            distance_acc = 0.0
+
+        if not windows:
+            windows.append(WaypointWindow(center=goal_xy.copy(), radius=radius))
+        elif np.linalg.norm(goal_xy - windows[-1].center) > 1e-3:
+            windows.append(WaypointWindow(center=goal_xy.copy(), radius=radius))
+
+        return windows
 
     def _line_is_free(self, start: np.ndarray, end: np.ndarray) -> bool:
         """Check if straight line between two points is obstacle-free"""
