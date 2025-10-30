@@ -216,7 +216,7 @@ class LowLevelController:
             action_dim,
             max_action,
             device,
-            lr=1e-4,
+            lr=1e-5,
             save_every=0,
             load_model=False,
             save_directory=Path("ethsrl/models/low_level1"),
