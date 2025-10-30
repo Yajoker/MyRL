@@ -28,7 +28,7 @@ from robot_nav.replay_buffer import ReplayBuffer
 class TrainingConfig:
     """训练超参数配置容器"""
 
-    buffer_size: int = 100_000  # 经验回放缓冲区大小
+    buffer_size: int = 50000  # 经验回放缓冲区大小
     batch_size: int = 64  # 训练批次大小
     max_epochs: int = 60  # 最大训练轮数
     episodes_per_epoch: int = 70  # 每轮训练的情节数
@@ -276,6 +276,7 @@ def evaluate(
             robot_pose = get_robot_pose(sim)
             system.plan_global_route(robot_pose, eval_goal_pose)
             active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)
+            window_metrics = system.update_window_state(robot_pose, active_waypoints)
             goal_info = [distance, cos, sin]
 
             # 检查是否需要重新规划
@@ -287,8 +288,11 @@ def evaluate(
                     goal_info,
                     prev_action=prev_action,
                     current_step=steps,
+                    window_metrics=window_metrics,
                 )
             )
+            if window_metrics.get("limit_exceeded", False):
+                should_replan = True
 
             subgoal_distance: Optional[float] = None
             subgoal_angle: Optional[float] = None
@@ -305,7 +309,9 @@ def evaluate(
                     robot_pose=robot_pose,
                     current_step=steps,
                     waypoints=active_waypoints,
+                    window_metrics=window_metrics,
                 )
+                system.reset_window_tracking()
                 system.update_selected_waypoint(metadata.get("selected_waypoint"))
                 planner_world = system.high_level_planner.current_subgoal_world
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None
@@ -359,7 +365,8 @@ def evaluate(
             # 更新子目标距离
             next_pose = get_robot_pose(sim)
             system.plan_global_route(next_pose, eval_goal_pose)
-            _ = system.get_active_waypoints(next_pose, include_indices=True)
+            next_waypoints = system.get_active_waypoints(next_pose, include_indices=True)
+            post_window_metrics = system.update_window_state(next_pose, next_waypoints)
             current_subgoal_distance = None
             if current_subgoal_world is not None:
                 next_pos = np.array(next_pose[:2], dtype=np.float32)
@@ -391,6 +398,12 @@ def evaluate(
                 reached_subgoal=just_reached_subgoal,
                 collision=collision,
                 timed_out=timed_out,
+                window_entered=post_window_metrics.get("entered", False),
+                window_inside=post_window_metrics.get("inside", False),
+                window_limit_exceeded=post_window_metrics.get("limit_exceeded", False),
+                prev_window_distance=post_window_metrics.get("prev_distance"),
+                current_window_distance=post_window_metrics.get("distance"),
+                window_radius=post_window_metrics.get("radius"),
                 config=low_cfg,
             )
 
@@ -587,7 +600,8 @@ def main(args=None):
             robot_pose = get_robot_pose(sim)
             system.plan_global_route(robot_pose, episode_goal_pose)
             active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)
-            waypoint_positions = [wp[1] for wp in active_waypoints]
+            window_metrics = system.update_window_state(robot_pose, active_waypoints)
+            waypoint_sequence = active_waypoints
             goal_info = [distance, cos, sin]
 
             # 检查是否需要重新规划子目标
@@ -599,8 +613,11 @@ def main(args=None):
                     goal_info,
                     prev_action=prev_action,
                     current_step=steps,
+                    window_metrics=window_metrics,
                 )
             )
+            if window_metrics.get("limit_exceeded", False):
+                should_replan = True
 
             metadata = {}
             subgoal_distance = None
@@ -642,7 +659,9 @@ def main(args=None):
                     robot_pose=robot_pose,
                     current_step=steps,
                     waypoints=active_waypoints,
+                    window_metrics=window_metrics,
                 )
+                system.reset_window_tracking()
                 system.update_selected_waypoint(metadata.get("selected_waypoint"))
                 planner_world = system.high_level_planner.current_subgoal_world
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None
@@ -657,7 +676,7 @@ def main(args=None):
                     cos,
                     sin,
                     prev_action,
-                    waypoints=waypoint_positions,
+                    waypoints=waypoint_sequence,
                     robot_pose=robot_pose,
                 )
 
@@ -727,6 +746,8 @@ def main(args=None):
             # 更新子目标距离
             next_pose = get_robot_pose(sim)
             system.plan_global_route(next_pose, episode_goal_pose)
+            next_active_waypoints = system.get_active_waypoints(next_pose, include_indices=True)
+            post_window_metrics = system.update_window_state(next_pose, next_active_waypoints)
             current_subgoal_distance = None
             if current_subgoal_world is not None:
                 next_pos = np.array(next_pose[:2], dtype=np.float32)
@@ -763,6 +784,12 @@ def main(args=None):
                 reached_subgoal=just_reached_subgoal,
                 collision=collision,
                 timed_out=timed_out,
+                window_entered=post_window_metrics.get("entered", False),
+                window_inside=post_window_metrics.get("inside", False),
+                window_limit_exceeded=post_window_metrics.get("limit_exceeded", False),
+                prev_window_distance=post_window_metrics.get("prev_distance"),
+                current_window_distance=post_window_metrics.get("distance"),
+                window_radius=post_window_metrics.get("radius"),
                 config=low_reward_cfg,
             )
 
@@ -788,14 +815,13 @@ def main(args=None):
                 current_subgoal_context.last_goal_distance = distance
                 # 构建下一状态向量
                 next_active_waypoints = system.get_active_waypoints(next_pose, include_indices=True)
-                next_waypoint_positions = [wp[1] for wp in next_active_waypoints]
                 next_state_vector = system.high_level_planner.build_state_vector(
                     latest_scan,
                     distance,
                     cos,
                     sin,
                     executed_action,
-                    waypoints=next_waypoint_positions,
+                    waypoints=next_active_waypoints,
                     robot_pose=next_pose,
                 )
                 current_subgoal_context.last_state = next_state_vector.astype(np.float32, copy=False)
