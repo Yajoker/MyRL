@@ -53,6 +53,8 @@ class GlobalPlanner:
         allow_diagonal: bool = True,
         window_spacing: float = 2.0,
         window_radius: float = 0.6,
+        enable_smoothing: bool = True,
+        bezier_step: float = 0.2,
     ) -> None:
         # 初始化全局路径规划器
         self.world_file = Path(world_file)
@@ -76,8 +78,13 @@ class GlobalPlanner:
         self.window_spacing = max(0.1, float(window_spacing))
         self.window_radius = max(0.05, float(window_radius))
 
+        # 二次近似平滑设置
+        self.enable_smoothing = bool(enable_smoothing)
+        self.bezier_step = max(0.05, float(bezier_step))
+
         # 动态障碍物存储: 列表格式为 (中心点, 半径)
         self.dynamic_obstacles: List[Tuple[np.ndarray, float]] = []
+        self._printed_route_summary = False
 
         # 加载世界配置和栅格化静态障碍物
         self._load_world()
@@ -107,9 +114,11 @@ class GlobalPlanner:
         goal_xy = np.asarray(goal, dtype=np.float32)[:2]
 
         # 打印一次世界坐标的起点与终点，便于调试验证
-        print(
-            f"[GlobalPlanner] world start={start_xy.tolist()} -> goal={goal_xy.tolist()}"
-        )
+        if not self._printed_route_summary:
+            print(
+                f"[GlobalPlanner] world start={start_xy.tolist()} -> goal={goal_xy.tolist()}"
+            )
+            self._printed_route_summary = True
 
         # 将世界坐标转换为网格坐标
         start_cell = self._world_to_cell(start_xy)
@@ -146,7 +155,8 @@ class GlobalPlanner:
                 path_cells = self._reconstruct_path(came_from, current)
                 waypoints = [self._cell_center(cell) for cell in path_cells]
                 simplified = self._post_process_path(waypoints)
-                return self._discretise_into_windows(start_xy, goal_xy, simplified)
+                smoothed = self._smooth_path_quadratic(simplified)
+                return self._discretise_into_windows(start_xy, goal_xy, smoothed)
 
             closed.add(current)
 
@@ -421,6 +431,85 @@ class GlobalPlanner:
             if not deduped or np.linalg.norm(waypoint - deduped[-1]) > 1e-6:
                 deduped.append(waypoint)
         return [np.asarray(w, dtype=np.float32) for w in deduped]
+
+    def _smooth_path_quadratic(self, path_points: List[np.ndarray]) -> List[np.ndarray]:
+        """使用二次贝塞尔近似对路径进行平滑，同时保持避障约束。"""
+
+        if not self.enable_smoothing or len(path_points) < 3:
+            return [np.asarray(p, dtype=np.float32) for p in path_points]
+
+        processed: List[np.ndarray] = [np.asarray(path_points[0], dtype=np.float32)]
+        idx = 0
+        last_index = len(path_points) - 1
+
+        while idx < last_index - 1:
+            p0 = path_points[idx]
+            p1 = path_points[idx + 1]
+            p2 = path_points[idx + 2]
+
+            bezier_samples = self._sample_quadratic_bezier(p0, p1, p2)
+            if self._curve_is_free(bezier_samples):
+                # 跳过首个样本防止重复
+                for sample in bezier_samples[1:]:
+                    if np.linalg.norm(sample - processed[-1]) > 1e-4:
+                        processed.append(sample.astype(np.float32))
+                idx += 2
+            else:
+                midpoint = np.asarray(p1, dtype=np.float32)
+                if np.linalg.norm(midpoint - processed[-1]) > 1e-4:
+                    processed.append(midpoint)
+                idx += 1
+
+        # 追加剩余未处理的点
+        for tail in path_points[idx + 1 :]:
+            tail_np = np.asarray(tail, dtype=np.float32)
+            if np.linalg.norm(tail_np - processed[-1]) > 1e-4:
+                processed.append(tail_np)
+
+        return self._deduplicate_points(processed)
+
+    def _sample_quadratic_bezier(
+        self, p0: np.ndarray, p1: np.ndarray, p2: np.ndarray
+    ) -> List[np.ndarray]:
+        chord = float(np.linalg.norm(np.asarray(p2) - np.asarray(p0)))
+        steps = 3 if chord < 1e-6 else max(3, int(math.ceil(chord / self.bezier_step)))
+        ts = np.linspace(0.0, 1.0, steps, endpoint=True)
+        samples: List[np.ndarray] = []
+        for t in ts:
+            inv = 1.0 - t
+            point = (inv * inv) * p0 + 2.0 * inv * t * p1 + (t * t) * p2
+            samples.append(np.asarray(point, dtype=np.float32))
+        return samples
+
+    def _curve_is_free(self, samples: Sequence[np.ndarray]) -> bool:
+        for pt in samples:
+            if self._point_blocked(pt):
+                return False
+        # 加密采样以减少穿障风险
+        if len(samples) >= 2:
+            dense: List[np.ndarray] = []
+            for start, end in zip(samples[:-1], samples[1:]):
+                seg_len = float(np.linalg.norm(end - start))
+                if seg_len <= self.bezier_step:
+                    continue
+                extra_count = max(1, int(math.ceil(seg_len / self.bezier_step)) - 1)
+                direction = (end - start) / seg_len
+                for step in range(1, extra_count + 1):
+                    point = start + direction * (seg_len * step / (extra_count + 1))
+                    dense.append(point.astype(np.float32))
+            for pt in dense:
+                if self._point_blocked(pt):
+                    return False
+        return True
+
+    @staticmethod
+    def _deduplicate_points(points: Sequence[np.ndarray], tol: float = 1e-4) -> List[np.ndarray]:
+        deduped: List[np.ndarray] = []
+        for point in points:
+            point_np = np.asarray(point, dtype=np.float32)
+            if not deduped or np.linalg.norm(point_np - deduped[-1]) > tol:
+                deduped.append(point_np)
+        return deduped
 
     def _discretise_into_windows(
         self,
