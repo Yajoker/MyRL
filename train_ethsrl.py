@@ -29,14 +29,14 @@ class TrainingConfig:
     """训练超参数配置容器"""
 
     buffer_size: int = 50000  # 经验回放缓冲区大小
-    batch_size: int = 64  # 训练批次大小
+    batch_size: int = 128  # 训练批次大小  64->128
     max_epochs: int = 60  # 最大训练轮数
     episodes_per_epoch: int = 70  # 每轮训练的情节数
     max_steps: int = 300  # 每个情节的最大步数
-    train_every_n_episodes: int = 2  # 每N个情节训练一次
-    training_iterations: int = 80  # 每次训练的迭代次数
-    exploration_noise: float = 0.2  # 探索噪声强度
-    min_buffer_size: int = 1_000  # 开始训练的最小缓冲区大小
+    train_every_n_episodes: int = 1  # 每N个情节训练一次   2->1
+    training_iterations: int = 100  # 每次训练的迭代次数   80->100
+    exploration_noise: float = 0.2  # 探索噪声强度 
+    min_buffer_size: int = 1500  # 开始训练的最小缓冲区大小  500->1500
     max_lin_velocity: float = 0.5  # 最大线速度
     max_ang_velocity: float = 1.0  # 最大角速度
     eval_episodes: int = 10  # 评估时使用的情节数
@@ -61,6 +61,15 @@ class SubgoalContext:
     steps: int = 0  # 子目标执行的步数
     subgoal_completed: bool = False  # 子目标是否完成
     last_state: Optional[np.ndarray] = None  # 最后的状态
+    start_window_index: Optional[int] = None  # 子目标开始时的活动窗口索引
+    target_window_index: Optional[int] = None  # 高层选择的目标窗口索引
+    start_window_distance: Optional[float] = None  # 初始窗口中心距离
+    last_window_index: Optional[int] = None  # 最近一次记录的窗口索引
+    last_window_distance: Optional[float] = None  # 最近一次记录的窗口距离
+    best_window_distance: Optional[float] = None  # 子目标执行期间达到的最小窗口距离
+    window_entered: bool = False  # 是否首次进入目标窗口
+    window_inside_steps: int = 0  # 在目标窗口内累计的步数
+    target_window_reached: bool = False  # 是否稳定到达目标窗口
 
 
 def compute_subgoal_world(robot_pose: Tuple[float, float, float], distance: float, angle: float) -> np.ndarray:
@@ -121,6 +130,16 @@ def finalize_subgoal_transition(
         collision=collision,
         timed_out=timed_out,
         config=high_cfg,
+        start_window_index=context.start_window_index,
+        end_window_index=context.last_window_index,
+        start_window_distance=context.start_window_distance,
+        best_window_distance=context.best_window_distance,
+        end_window_distance=context.last_window_distance,
+        window_entered=context.window_entered,
+        window_inside_steps=context.window_inside_steps,
+        target_window_index=context.target_window_index,
+        target_window_reached=context.target_window_reached,
+        low_level_return=context.low_level_return,
     )
 
     # 将经验添加到缓冲区
@@ -182,7 +201,12 @@ class TD3ReplayAdapter:
 
     def add(self, state, action, reward, done, next_state) -> None:
         """向缓冲区添加经验"""
-        self._buffer.add(state, action, reward, done, next_state)
+        state_arr = np.asarray(state, dtype=np.float32)
+        action_arr = np.asarray(action, dtype=np.float32)
+        next_state_arr = np.asarray(next_state, dtype=np.float32)
+        reward_val = float(reward)
+        done_val = float(done)
+        self._buffer.add(state_arr, action_arr, reward_val, done_val, next_state_arr)
 
     def size(self) -> int:
         """返回缓冲区当前大小"""
@@ -372,6 +396,19 @@ def evaluate(
                 next_pos = np.array(next_pose[:2], dtype=np.float32)
                 current_subgoal_distance = float(np.linalg.norm(next_pos - current_subgoal_world))
 
+            relative_after = system.high_level_planner.get_relative_subgoal(next_pose)
+            subgoal_alignment_angle: Optional[float] = None
+            if relative_after[0] is not None:
+                subgoal_alignment_angle = float(relative_after[1])
+                if current_subgoal_distance is None:
+                    current_subgoal_distance = float(relative_after[0])
+
+            action_delta: Optional[List[float]] = None
+            if prev_action is not None:
+                delta_lin = float(lin_cmd - prev_action[0])
+                delta_ang = float(ang_cmd - prev_action[1])
+                action_delta = [delta_lin, delta_ang]
+
             # 计算最小障碍物距离
             scan_arr = np.asarray(latest_scan, dtype=np.float32)
             finite_scan = scan_arr[np.isfinite(scan_arr)]
@@ -404,6 +441,8 @@ def evaluate(
                 prev_window_distance=post_window_metrics.get("prev_distance"),
                 current_window_distance=post_window_metrics.get("distance"),
                 window_radius=post_window_metrics.get("radius"),
+                current_subgoal_angle=subgoal_alignment_angle,
+                action_delta=action_delta,
                 config=low_cfg,
             )
 
@@ -681,6 +720,11 @@ def main(args=None):
                 )
 
                 # 创建新的子目标上下文
+                meta_metrics = metadata.get("window_metrics", {}) if metadata else {}
+                start_window_index = meta_metrics.get("index")
+                start_window_distance = meta_metrics.get("distance")
+                target_window_index = metadata.get("selected_waypoint")
+
                 current_subgoal_context = SubgoalContext(
                     start_state=start_state.astype(np.float32, copy=False),
                     action=np.array([subgoal_distance, subgoal_angle], dtype=np.float32),
@@ -691,6 +735,12 @@ def main(args=None):
                     steps=0,
                     subgoal_completed=False,
                     last_state=start_state.astype(np.float32, copy=False),
+                    start_window_index=int(start_window_index) if start_window_index is not None else None,
+                    target_window_index=int(target_window_index) if target_window_index is not None else None,
+                    start_window_distance=float(start_window_distance) if start_window_distance is not None else None,
+                    last_window_index=int(start_window_index) if start_window_index is not None else None,
+                    last_window_distance=float(start_window_distance) if start_window_distance is not None else None,
+                    best_window_distance=float(start_window_distance) if start_window_distance is not None else None,
                 )
             else:
                 planner_world = system.high_level_planner.current_subgoal_world
@@ -753,6 +803,19 @@ def main(args=None):
                 next_pos = np.array(next_pose[:2], dtype=np.float32)
                 current_subgoal_distance = float(np.linalg.norm(next_pos - current_subgoal_world))
 
+            relative_after = system.high_level_planner.get_relative_subgoal(next_pose)
+            subgoal_alignment_angle: Optional[float] = None
+            if relative_after[0] is not None:
+                subgoal_alignment_angle = float(relative_after[1])
+                if current_subgoal_distance is None:
+                    current_subgoal_distance = float(relative_after[0])
+
+            action_delta: Optional[List[float]] = None
+            if executed_action is not None and prev_action is not None:
+                delta_lin = float(executed_action[0] - prev_action[0])
+                delta_ang = float(executed_action[1] - prev_action[1])
+                action_delta = [delta_lin, delta_ang]
+
             # 计算最小障碍物距离
             scan_arr = np.asarray(latest_scan, dtype=np.float32)
             finite_scan = scan_arr[np.isfinite(scan_arr)]
@@ -790,6 +853,8 @@ def main(args=None):
                 prev_window_distance=post_window_metrics.get("prev_distance"),
                 current_window_distance=post_window_metrics.get("distance"),
                 window_radius=post_window_metrics.get("radius"),
+                current_subgoal_angle=subgoal_alignment_angle,
+                action_delta=action_delta,
                 config=low_reward_cfg,
             )
 
@@ -797,15 +862,6 @@ def main(args=None):
             episode_reward += low_reward
             epoch_total_reward += low_reward
             epoch_total_steps += 1
-
-            # 定期输出训练进度
-            if steps % 50 == 0:
-                print(
-                    f"🏃 Training | Epoch {epoch:2d}/{config.max_epochs} | "
-                    f"Episode {episode:3d}/{config.episodes_per_epoch} | "
-                    f"Step {steps:3d}/{config.max_steps} | "
-                    f"Reward: {low_reward:7.2f}"
-                )
 
             # 更新子目标上下文
             if current_subgoal_context is not None:
@@ -825,6 +881,30 @@ def main(args=None):
                     robot_pose=next_pose,
                 )
                 current_subgoal_context.last_state = next_state_vector.astype(np.float32, copy=False)
+                idx_metric = post_window_metrics.get("index") if post_window_metrics else None
+                dist_metric = post_window_metrics.get("distance") if post_window_metrics else None
+                if idx_metric is not None:
+                    idx_val = int(idx_metric)
+                    current_subgoal_context.last_window_index = idx_val
+                    if current_subgoal_context.start_window_index is None:
+                        current_subgoal_context.start_window_index = idx_val
+                    target_idx = current_subgoal_context.target_window_index
+                    if (
+                        target_idx is not None
+                        and idx_val >= target_idx
+                        and post_window_metrics.get("inside", False)
+                    ):
+                        current_subgoal_context.target_window_reached = True
+                if dist_metric is not None:
+                    dist_val = float(dist_metric)
+                    current_subgoal_context.last_window_distance = dist_val
+                    best = current_subgoal_context.best_window_distance
+                    if best is None or dist_val < best:
+                        current_subgoal_context.best_window_distance = dist_val
+                if post_window_metrics.get("entered", False):
+                    current_subgoal_context.window_entered = True
+                if post_window_metrics.get("inside", False):
+                    current_subgoal_context.window_inside_steps += 1
 
             # 准备下一状态
             next_prev_action = [executed_action[0], executed_action[1]]
@@ -840,6 +920,16 @@ def main(args=None):
 
             # 添加经验到回放缓冲区
             replay_buffer.add(state, action, low_reward, float(done), next_state)
+
+            # 定期输出回放缓冲区大小与奖励
+            if steps % 50 == 0:
+                buffer_size = replay_buffer.size()
+                print(
+                    f"🏃 Training | Epoch {epoch:2d}/{config.max_epochs} | "
+                    f"Episode {episode:3d}/{config.episodes_per_epoch} | "
+                    f"Step {steps:3d}/{config.max_steps} | "
+                    f"Reward: {low_reward:7.2f} | Buffer: {buffer_size:6d}"
+                )
 
             prev_action = next_prev_action
             steps += 1
