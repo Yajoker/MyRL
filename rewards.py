@@ -1,4 +1,7 @@
-"""Reward shaping utilities for the ETHSRL+GP navigation stack."""
+"""
+奖励塑造工具函数，用于ETHSRL+GP导航栈。
+提供高层规划器和低层控制器的奖励计算功能。
+"""
 
 from dataclasses import dataclass
 from typing import Dict, Optional, Sequence, Tuple
@@ -8,39 +11,39 @@ import numpy as np
 
 @dataclass
 class LowLevelRewardConfig:
-    """Configuration container for the low-level (controller) reward."""
+    """低层控制器奖励配置容器类"""
     
     # 奖励函数各项权重参数配置
-    progress_weight: float = 2.8           # 鼓励朝向子目标移动
-    safety_weight: float = 3.0             # 惩罚过于靠近障碍物的行为
-    efficiency_penalty: float = 0.04       # 每走一步的轻微时间惩罚，鼓励效率
-    goal_bonus: float = 50.0               # 到达最终目标的巨大奖励
-    subgoal_bonus: float = 6.0             # 到达当前子目标的奖励（降低重复刷分收益）
-    collision_penalty: float = -25.0       # 碰撞的巨大惩罚
-    timeout_penalty: float = -12.0         # 超时的惩罚
-    safe_distance: float = 1               # 安全距离阈值（米），小于此距离将触发安全惩罚
+    progress_weight: float = 4.0           # [增加] 鼓励朝向子目标移动的权重
+    safety_weight: float = 2.5             # [降低] 惩罚过于靠近障碍物行为的权重
+    efficiency_penalty: float = 0.05       # [微调] 每走一步的轻微时间惩罚，鼓励效率
+    goal_bonus: float = 30.0               # [降低] 到达最终目标的巨大奖励
+    subgoal_bonus: float = 8.0             # [增加] 到达当前子目标的奖励
+    collision_penalty: float = -15.0       # [降低惩罚幅度] 碰撞的巨大惩罚
+    timeout_penalty: float = -8.0          # [降低惩罚幅度] 超时的惩罚
+    safe_distance: float = 0.8             # [降低] 安全距离阈值（米），小于此距离将触发安全惩罚
     progress_clip: float = 0.2             # 每步奖励的进度裁剪值（米），用于稳定训练
-    window_progress_weight: float = 1.2    # 鼓励逼近目标窗口中心
-    window_progress_clip: float = 0.3      # 窗口进度裁剪
-    window_entry_bonus: float = 3.5        # 第一次进入窗口的奖励
-    window_inside_bonus: float = 0.25      # 保持在窗口内的小奖励
-    window_outside_penalty: float = 0.12   # 不在窗口内的小惩罚
-    window_timeout_penalty: float = -6.0   # 在窗口内逗留过久的惩罚
-    heading_alignment_weight: float = 0.35 # 鼓励保持与子目标方向对齐
+    window_progress_weight: float = 2.0    # [增加] 鼓励逼近目标窗口中心的权重
+    window_progress_clip: float = 0.3      # 窗口进度裁剪阈值
+    window_entry_bonus: float = 4.0        # [增加] 第一次进入窗口的奖励
+    window_inside_bonus: float = 0.4       # [增加] 保持在窗口内的小奖励
+    window_outside_penalty: float = 0.2    # [增加] 不在窗口内的小惩罚
+    window_timeout_penalty: float = -4.0   # [降低惩罚幅度] 在窗口内逗留过久的惩罚
+    heading_alignment_weight: float = 0.5  # [增加] 鼓励保持与子目标方向对齐的权重
     heading_alignment_clip: float = 0.5    # 方向奖励裁剪范围
-    smoothness_weight: float = 0.08        # 惩罚剧烈控制变化
-    smoothness_clip: float = 0.6           # 控制变化惩罚裁剪
+    smoothness_weight: float = 0.1         # [增加] 惩罚剧烈控制变化的权重
+    smoothness_clip: float = 0.6           # 控制变化惩罚裁剪阈值
 
 
 @dataclass
 class HighLevelRewardConfig:
-    """Configuration container for the high-level (planner) reward."""
+    """高层规划器奖励配置容器类"""
     
     # 高层规划器奖励函数配置
-    global_progress_weight: float = 3.5    # 鼓励朝向全局目标取得进展
-    path_progress_weight: float = 4.0      # 奖励沿全局路径推进的窗口索引
+    global_progress_weight: float = 3.5    # 鼓励朝向全局目标取得进展的权重
+    path_progress_weight: float = 4.0      # 奖励沿全局路径推进的窗口索引权重
     path_regression_penalty: float = -6.0  # 倒退至先前窗口的惩罚
-    window_convergence_weight: float = 3.0 # 奖励逼近当前目标窗口中心
+    window_convergence_weight: float = 3.0 # 奖励逼近当前目标窗口中心的权重
     window_convergence_clip: float = 1.5   # 距离改进裁剪阈值
     window_entry_bonus: float = 4.0        # 进入目标窗口的奖励
     window_persistence_bonus: float = 0.2  # 在窗口内保持的奖励系数
@@ -55,7 +58,7 @@ class HighLevelRewardConfig:
 
 
 def _clip_progress(delta: float, clip: float) -> float:
-    """Clamp the progress term to keep rewards numerically stable.
+    """将进度项裁剪到指定范围，保持奖励数值稳定
     
     Args:
         delta: 原始进度值
@@ -89,7 +92,7 @@ def compute_low_level_reward(
     current_subgoal_angle: Optional[float] = None,
     action_delta: Optional[Sequence[float]] = None,
 ) -> Tuple[float, Dict[str, float]]:
-    """计算简化的、用于低层控制器的塑形奖励。
+    """计算简化的、用于低层控制器的塑形奖励
 
     Args:
         prev_subgoal_distance: 动作执行前到当前子目标的距离
@@ -100,10 +103,18 @@ def compute_low_level_reward(
         collision: 是否发生碰撞
         timed_out: 是否因步数耗尽而终止
         config: 奖励塑造超参数
+        window_entered: 是否刚进入窗口
+        window_inside: 是否在窗口内
+        window_limit_exceeded: 是否超过窗口停留时间限制
+        prev_window_distance: 之前到窗口中心的距离
+        current_window_distance: 当前到窗口中心的距离
+        window_radius: 窗口半径
+        current_subgoal_angle: 当前子目标角度
+        action_delta: 动作变化量
 
     Returns:
         一个元组 ``(reward, components)``，其中 ``reward`` 是标量总奖励，
-        ``components`` 提供了用于日志/调试的命名分解项。
+        ``components`` 提供了用于日志/调试的命名分解项
     """
 
     # 处理可能的空距离值
@@ -111,35 +122,44 @@ def compute_low_level_reward(
     curr_distance = float(current_subgoal_distance) if current_subgoal_distance is not None else prev_distance
 
     # 1. 进度奖励：奖励接近当前子目标
-    progress_raw = prev_distance - curr_distance
-    progress = _clip_progress(progress_raw, config.progress_clip)
-    progress_reward = config.progress_weight * progress
+    progress_raw = prev_distance - curr_distance  # 计算距离减少量
+    progress = _clip_progress(progress_raw, config.progress_clip)  # 裁剪进度值
+    progress_reward = config.progress_weight * progress  # 计算进度奖励
 
     # 2. 窗口进度与奖励项
     window_progress_raw = 0.0
+    # 如果有窗口距离信息，计算窗口进度
     if (
         prev_window_distance is not None
         and current_window_distance is not None
     ):
         window_progress_raw = prev_window_distance - current_window_distance
-    window_progress = _clip_progress(window_progress_raw, config.window_progress_clip)
-    window_progress_reward = config.window_progress_weight * window_progress
+    window_progress = _clip_progress(window_progress_raw, config.window_progress_clip)  # 裁剪窗口进度
+    window_progress_reward = config.window_progress_weight * window_progress  # 计算窗口进度奖励
 
+    # 窗口进入奖励
     entry_bonus = config.window_entry_bonus if window_entered else 0.0
+    # 窗口内/外奖励/惩罚
     inside_reward = config.window_inside_bonus if window_inside else -config.window_outside_penalty
+    # 根据窗口半径缩放奖励
     if window_radius is not None and window_radius > 0:
         scale = float(np.clip(window_radius / 0.6, 0.5, 1.5))
         entry_bonus *= scale
         inside_reward *= scale
+    # 窗口超时惩罚
     timeout_penalty = config.window_timeout_penalty if window_limit_exceeded else 0.0
 
+    # 航向对齐奖励
     heading_reward = 0.0
     if current_subgoal_angle is not None:
+        # 计算与子目标方向的对齐程度
         alignment = 1.0 - min(abs(current_subgoal_angle) / np.pi, 1.0)
         heading_reward = config.heading_alignment_weight * _clip_progress(alignment, config.heading_alignment_clip)
 
+    # 平滑性惩罚
     smoothness_penalty = 0.0
     if action_delta is not None:
+        # 计算动作变化幅度
         delta = np.asarray(action_delta, dtype=np.float32)
         magnitude = float(np.linalg.norm(delta))
         smoothness_penalty = -config.smoothness_weight * _clip_progress(magnitude, config.smoothness_clip)
@@ -157,13 +177,13 @@ def compute_low_level_reward(
     # 5. 终止状态奖励/惩罚
     terminal_reward = 0.0
     if reached_goal:
-        terminal_reward += config.goal_bonus
+        terminal_reward += config.goal_bonus  # 到达目标奖励
     elif reached_subgoal:
-        terminal_reward += config.subgoal_bonus
+        terminal_reward += config.subgoal_bonus  # 到达子目标奖励
     elif collision:
-        terminal_reward += config.collision_penalty
+        terminal_reward += config.collision_penalty  # 碰撞惩罚
     elif timed_out:
-        terminal_reward += config.timeout_penalty
+        terminal_reward += config.timeout_penalty  # 超时惩罚
 
     # 计算总奖励
     total_reward = (
@@ -172,8 +192,8 @@ def compute_low_level_reward(
         + entry_bonus
         + inside_reward
         + timeout_penalty
-    + heading_reward
-    + smoothness_penalty
+        + heading_reward
+        + smoothness_penalty
         + safety_penalty
         + efficiency_penalty
         + terminal_reward
@@ -216,7 +236,7 @@ def compute_high_level_reward(
     target_window_reached: bool = False,
     low_level_return: float = 0.0,
 ) -> Tuple[float, Dict[str, float]]:
-    """计算简化的、用于高层规划器的奖励。
+    """计算简化的、用于高层规划器的奖励
 
     Args:
         start_goal_distance: 发出子目标时，机器人到全局目标的距离
@@ -226,6 +246,16 @@ def compute_high_level_reward(
         collision: 回合是否因碰撞而结束
         timed_out: 回合是否超时
         config: 规划器的奖励塑造超参数
+        start_window_index: 开始时的窗口索引
+        end_window_index: 结束时的窗口索引
+        start_window_distance: 开始时的窗口距离
+        best_window_distance: 最佳窗口距离
+        end_window_distance: 结束时的窗口距离
+        window_entered: 是否进入窗口
+        window_inside_steps: 在窗口内的步数
+        target_window_index: 目标窗口索引
+        target_window_reached: 是否到达目标窗口
+        low_level_return: 低层累积奖励
 
     Returns:
         与 :func:`compute_low_level_reward` 类似的元组 ``(reward, components)``
@@ -239,11 +269,11 @@ def compute_high_level_reward(
     path_progress_reward = 0.0
     path_regression = 0.0
     if start_window_index is not None and end_window_index is not None:
-        index_delta = end_window_index - start_window_index
+        index_delta = end_window_index - start_window_index  # 计算窗口索引变化
         if index_delta > 0:
-            path_progress_reward = config.path_progress_weight * index_delta
+            path_progress_reward = config.path_progress_weight * index_delta  # 前进奖励
         elif index_delta < 0:
-            path_regression = config.path_regression_penalty * abs(index_delta)
+            path_regression = config.path_regression_penalty * abs(index_delta)  # 倒退惩罚
 
     # 3. 逼近窗口中心：度量子目标选择质量
     window_convergence_reward = 0.0
@@ -253,15 +283,15 @@ def compute_high_level_reward(
         if candidate is None:
             candidate = end_window_distance
         if candidate is not None:
-            distance_gain = baseline - candidate
-            distance_gain = _clip_progress(distance_gain, config.window_convergence_clip)
+            distance_gain = baseline - candidate  # 计算距离改进
+            distance_gain = _clip_progress(distance_gain, config.window_convergence_clip)  # 裁剪改进值
             window_convergence_reward = config.window_convergence_weight * distance_gain
 
     # 4. 进入与停留奖励
-    entry_bonus = config.window_entry_bonus if window_entered else 0.0
-    persistence_steps = min(window_inside_steps, config.window_persistence_cap)
-    persistence_bonus = config.window_persistence_bonus * float(max(persistence_steps, 0))
-    target_bonus = config.target_window_bonus if target_window_reached else 0.0
+    entry_bonus = config.window_entry_bonus if window_entered else 0.0  # 进入窗口奖励
+    persistence_steps = min(window_inside_steps, config.window_persistence_cap)  # 限制最大持续步数
+    persistence_bonus = config.window_persistence_bonus * float(max(persistence_steps, 0))  # 持续停留奖励
+    target_bonus = config.target_window_bonus if target_window_reached else 0.0  # 目标窗口奖励
 
     # 5. 子目标完成奖励
     completion_bonus = config.subgoal_completion_bonus if subgoal_completed else 0.0
@@ -272,19 +302,20 @@ def compute_high_level_reward(
     # 7. 终止状态奖励/惩罚
     terminal_reward = 0.0
     if reached_goal:
-        terminal_reward += config.goal_bonus
+        terminal_reward += config.goal_bonus  # 到达目标奖励
     elif collision:
-        terminal_reward += config.collision_penalty
+        terminal_reward += config.collision_penalty  # 碰撞惩罚
     elif timed_out:
-        terminal_reward += config.timeout_penalty
+        terminal_reward += config.timeout_penalty  # 超时惩罚
 
     # 8. 未能到达目标窗口的惩罚
     failure_penalty = 0.0
     if target_window_index is not None:
+        # 检查是否未能到达目标窗口
         if end_window_index is None or end_window_index < target_window_index:
-            failure_penalty += config.window_failure_penalty
+            failure_penalty += config.window_failure_penalty  # 完全失败惩罚
         elif not target_window_reached:
-            failure_penalty += 0.5 * config.window_failure_penalty
+            failure_penalty += 0.5 * config.window_failure_penalty  # 部分失败惩罚
 
     # 计算高层总奖励
     total_reward = (
@@ -321,8 +352,8 @@ def compute_high_level_reward(
 
 # 模块导出列表
 __all__ = [
-    "LowLevelRewardConfig",
-    "HighLevelRewardConfig",
-    "compute_low_level_reward",
-    "compute_high_level_reward",
+    "LowLevelRewardConfig",      # 低层奖励配置类
+    "HighLevelRewardConfig",     # 高层奖励配置类
+    "compute_low_level_reward",  # 低层奖励计算函数
+    "compute_high_level_reward", # 高层奖励计算函数
 ]
