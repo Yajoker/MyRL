@@ -111,11 +111,11 @@ class EventTrigger:
 
     def __init__(
         self,
-        safety_trigger_distance: float = 1,
-        subgoal_reach_threshold: float = 0.5,
-        stagnation_steps: int = 40,
+        safety_trigger_distance: float = 0.7,  # [修改] 从 1.0 降至 0.7
+        subgoal_reach_threshold: float = 0.4,  # [修改] 从 0.5 降至 0.4
+        stagnation_steps: int = 30,            # [修改] 从 40 降至 30
         progress_epsilon: float = 0.1,
-        min_interval: float = 1.0,
+        min_interval: float = 1.2,             # [修改] 从 1.0 增至 1.2
         step_duration: float = 0.1,
     ) -> None:
         """
@@ -270,7 +270,7 @@ class HighLevelPlanner:
         self,
         belief_dim=90,
         device=None,
-        save_directory=Path("ethsrl/models/high_level1"),
+        save_directory=Path("ethsrl/models/high_level"),
         model_name="high_level_planner",
         load_model=False,
         load_directory=None,
