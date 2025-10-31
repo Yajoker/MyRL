@@ -28,19 +28,19 @@ from robot_nav.replay_buffer import ReplayBuffer
 class TrainingConfig:
     """训练超参数配置容器"""
 
-    buffer_size: int = 50000  # 经验回放缓冲区大小
+    buffer_size: int = 80000  # 经验回放缓冲区大小
     batch_size: int = 128  # 训练批次大小  64->128
     max_epochs: int = 60  # 最大训练轮数
     episodes_per_epoch: int = 70  # 每轮训练的情节数
-    max_steps: int = 300  # 每个情节的最大步数
+    max_steps: int = 350  # 每个情节的最大步数  300->350
     train_every_n_episodes: int = 1  # 每N个情节训练一次   2->1
     training_iterations: int = 100  # 每次训练的迭代次数   80->100
-    exploration_noise: float = 0.2  # 探索噪声强度 
-    min_buffer_size: int = 1500  # 开始训练的最小缓冲区大小  500->1500
-    max_lin_velocity: float = 0.5  # 最大线速度
+    exploration_noise: float = 0.15  # 探索噪声强度    0.2->0.15
+    min_buffer_size: int = 2500  # 开始训练的最小缓冲区大小  500->2500
+    max_lin_velocity: float = 1.0  # 最大线速度
     max_ang_velocity: float = 1.0  # 最大角速度
     eval_episodes: int = 10  # 评估时使用的情节数
-    subgoal_radius: float = 0.5  # 判定子目标达成的距离阈值
+    subgoal_radius: float = 0.4  # 判定子目标达成的距离阈值  0.5->0.4
     save_every: int = 5  # 每隔多少个情节保存一次模型（<=0 表示仅最终保存）
     world_file: str = "env_b.yaml"  # 使用的世界配置文件（位于ethsrl/worlds）
     waypoint_lookahead: int = 3  # 全局规划提供给高层的航点数量
