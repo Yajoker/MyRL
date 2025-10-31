@@ -94,6 +94,7 @@ class HierarchicalNavigationSystem:
         self.window_within = False
         self.last_window_update_step: int = -1
         self._cached_window_info: Dict[str, object] = {}
+        self._printed_plan_overview = False
 
         self.global_planner: Optional[GlobalPlanner] = None
         if world_file is not None:
@@ -268,15 +269,18 @@ class HierarchicalNavigationSystem:
         if not filtered:
             filtered = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius)]
 
-        goal_dists = [float(np.linalg.norm(goal_vec - wp.center)) for wp in filtered]
-        print(f"[GlobalPlanner] Waypoints in world frame ({len(filtered)} total):")
-        for idx, (wp, dist) in enumerate(zip(filtered, goal_dists)):
-            print(f"  #{idx:02d} {wp.center.tolist()} | dist_to_goal={dist:.3f} m | radius={wp.radius:.2f} m")
+        if not self._printed_plan_overview:
+            goal_dists = [float(np.linalg.norm(goal_vec - wp.center)) for wp in filtered]
+            print(f"[GlobalPlanner] Waypoints in world frame ({len(filtered)} total):")
+            for idx, (wp, dist) in enumerate(zip(filtered, goal_dists)):
+                print(f"  #{idx:02d} {wp.center.tolist()} | dist_to_goal={dist:.3f} m | radius={wp.radius:.2f} m")
 
-        if len(goal_dists) > 1:
-            monotonic = all(goal_dists[i + 1] <= goal_dists[i] + 1e-6 for i in range(len(goal_dists) - 1))
-            if not monotonic:
-                print("[GlobalPlanner] Warning: waypoint distance does not consistently decrease toward the goal.")
+            if len(goal_dists) > 1:
+                monotonic = all(goal_dists[i + 1] <= goal_dists[i] + 1e-6 for i in range(len(goal_dists) - 1))
+                if not monotonic:
+                    print("[GlobalPlanner] Warning: waypoint distance does not consistently decrease toward the goal.")
+
+            self._printed_plan_overview = True
 
         self.global_waypoints = filtered
         self.current_waypoint_index = 0
