@@ -219,7 +219,7 @@ class LowLevelController:
             lr=1e-5,
             save_every=0,
             load_model=False,
-            save_directory=Path("ethsrl/models/low_level1"),
+            save_directory=Path("ethsrl/models/low_level"),
             model_name="low_level_controller",
             load_directory=None,
     ):
@@ -247,7 +247,7 @@ class LowLevelController:
         self.actor = LowLevelActorNetwork(action_dim).to(device)
         self.actor_target = LowLevelActorNetwork(action_dim).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())  # 复制初始权重
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr*0.5)
 
         # 初始化Critic网络和目标网络
         self.critic = LowLevelCriticNetwork(action_dim).to(device)
