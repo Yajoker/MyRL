@@ -278,6 +278,10 @@ class HighLevelPlanner:
         min_interval=1.0,
         subgoal_reach_threshold: float = 0.5,
         waypoint_lookahead: int = 3,
+        *,
+        rwr_temperature: float = 2.0,
+        rwr_min_temperature: float = 0.4,
+        rwr_temperature_decay: float = 0.999,
     ):
         """
         初始化高层规划器
@@ -322,6 +326,11 @@ class HighLevelPlanner:
         self.iter_count = 0  # 迭代计数器，记录训练步数
         self.model_name = model_name  # 模型名称
         self.save_directory = save_directory  # 保存目录
+
+        # RWR温度调度参数，用于软最大化权重
+        self.rwr_temperature = float(max(rwr_temperature, 1e-6))
+        self.rwr_min_temperature = float(max(rwr_min_temperature, 1e-6))
+        self.rwr_temperature_decay = float(max(min(rwr_temperature_decay, 1.0), 0.0))
 
         # 当前状态跟踪
         self.current_subgoal = None  # 当前子目标（相对坐标：距离，角度）
@@ -830,12 +839,11 @@ class HighLevelPlanner:
         # 合并距离和角度为完整子目标
         subgoals = torch.stack((subgoal_distances, subgoal_angles), dim=1)
 
-        # 基于奖励对回放样本加权，突出表现更好的子目标
-        with torch.no_grad():  # 权重计算不参与梯度计算
-            reward_centered = rewards - rewards.mean()  # 中心化奖励（减去均值）
-            weights = torch.relu(reward_centered)  # 仅保留高于平均回报的样本（ReLU过滤负值）
-            if torch.count_nonzero(weights) == 0:  # 如果所有权重都为0
-                weights = torch.ones_like(reward_centered)  # 使用均匀权重避免除零错误
+        # 基于软最大化的奖励加权，温度参数控制集中度
+        with torch.no_grad():
+            temperature = max(self.rwr_temperature, 1e-6)
+            scaled = (rewards - rewards.max()) / temperature
+            weights = torch.softmax(scaled.squeeze(1), dim=0).unsqueeze(1)
 
         # 计算每个样本的MSE损失
         per_sample_loss = F.mse_loss(subgoals, actions, reduction='none').mean(dim=1, keepdim=True)
@@ -850,16 +858,26 @@ class HighLevelPlanner:
         # 更新训练计数器
         self.iter_count += 1
 
+        # 按调度退火温度，避免学习后期过于平滑
+        if self.rwr_temperature > self.rwr_min_temperature:
+            updated_temp = self.rwr_temperature * self.rwr_temperature_decay
+            self.rwr_temperature = max(updated_temp, self.rwr_min_temperature)
+
         # 记录指标到TensorBoard
         self.writer.add_scalar('planner/loss', loss.item(), self.iter_count)  # 损失值
         self.writer.add_scalar('planner/reward_weight_mean', weights.mean().item(), self.iter_count)  # 平均权重
+        self.writer.add_scalar('planner/rwr_temperature', self.rwr_temperature, self.iter_count)
 
         # 返回训练指标
+        weight_entropy = float(-(weights * (weights.clamp_min(1e-8).log())).sum().item())
+
         return {
             'loss': loss.item(),  # 损失值
             'avg_distance': subgoal_distances.mean().item(),  # 平均子目标距离
             'avg_angle': subgoal_angles.mean().item(),  # 平均子目标角度
             'weight_mean': weights.mean().item(),  # 平均权重
+            'weight_entropy': weight_entropy,
+            'temperature': self.rwr_temperature,
         }
 
     def save_model(self, filename, directory):
