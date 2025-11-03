@@ -14,24 +14,24 @@ class LowLevelRewardConfig:
     """低层控制器奖励配置容器类"""
     
     # 奖励函数各项权重参数配置
-    progress_weight: float = 3.0           # [增加] 鼓励朝向子目标移动的权重
+    progress_weight: float = 5.0           # [增加] 鼓励朝向子目标移动的权重
     safety_weight: float = 3.0             # [降低] 惩罚过于靠近障碍物行为的权重
-    efficiency_penalty: float = 0.05       # [微调] 每走一步的轻微时间惩罚，鼓励效率
-    goal_bonus: float = 30.0               # [降低] 到达最终目标的巨大奖励
-    subgoal_bonus: float = 8.0             # [增加] 到达当前子目标的奖励
-    collision_penalty: float = -15.0       # [降低惩罚幅度] 碰撞的巨大惩罚
-    timeout_penalty: float = -8.0          # [降低惩罚幅度] 超时的惩罚
-    safe_distance: float = 0.8             # [降低] 安全距离阈值（米），小于此距离将触发安全惩罚
+    efficiency_penalty: float = 0.1       # [微调] 每走一步的轻微时间惩罚，鼓励效率
+    goal_bonus: float = 50.0               # [降低] 到达最终目标的巨大奖励
+    subgoal_bonus: float = 15.0             # [增加] 到达当前子目标的奖励
+    collision_penalty: float = -40.0       # [降低惩罚幅度] 碰撞的巨大惩罚
+    timeout_penalty: float = -25.0          # [降低惩罚幅度] 超时的惩罚
+    safe_distance: float = 0.7             # [降低] 安全距离阈值（米），小于此距离将触发安全惩罚
     progress_clip: float = 0.2             # 每步奖励的进度裁剪值（米），用于稳定训练
-    window_progress_weight: float = 2.0    # [增加] 鼓励逼近目标窗口中心的权重
+    window_progress_weight: float = 1.5    # [增加] 鼓励逼近目标窗口中心的权重
     window_progress_clip: float = 0.3      # 窗口进度裁剪阈值
-    window_entry_bonus: float = 4.0        # [增加] 第一次进入窗口的奖励
-    window_inside_bonus: float = 0.4       # [增加] 保持在窗口内的小奖励
-    window_outside_penalty: float = 0.2    # [增加] 不在窗口内的小惩罚
-    window_timeout_penalty: float = -4.0   # [降低惩罚幅度] 在窗口内逗留过久的惩罚
-    heading_alignment_weight: float = 2.0  # [增加] 鼓励保持与子目标方向对齐的权重
+    window_entry_bonus: float = 2.0        # [增加] 第一次进入窗口的奖励
+    window_inside_bonus: float = 0.1       # [增加] 保持在窗口内的小奖励
+    window_outside_penalty: float = 0.3    # [增加] 不在窗口内的小惩罚
+    window_timeout_penalty: float = -10.0   # [降低惩罚幅度] 在窗口内逗留过久的惩罚
+    heading_alignment_weight: float = 0.5  # [增加] 鼓励保持与子目标方向对齐的权重
     heading_alignment_clip: float = 0.5    # 方向奖励裁剪范围
-    smoothness_weight: float = 0.3         # [增加] 惩罚剧烈控制变化的权重
+    smoothness_weight: float = 0.2         # [增加] 惩罚剧烈控制变化的权重
     smoothness_clip: float = 0.6           # 控制变化惩罚裁剪阈值
 
 
