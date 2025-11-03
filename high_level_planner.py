@@ -321,7 +321,7 @@ class HighLevelPlanner:
         self.step_duration = step_duration
 
         # 训练设置
-        self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=1e-5)  # Adam优化器
+        self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=1e-4)  # Adam优化器
         self.writer = SummaryWriter(comment=model_name)  # TensorBoard记录器，用于可视化训练过程
         self.iter_count = 0  # 迭代计数器，记录训练步数
         self.model_name = model_name  # 模型名称
