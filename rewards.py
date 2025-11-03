@@ -14,8 +14,8 @@ class LowLevelRewardConfig:
     """低层控制器奖励配置容器类"""
     
     # 奖励函数各项权重参数配置
-    progress_weight: float = 4.0           # [增加] 鼓励朝向子目标移动的权重
-    safety_weight: float = 2.5             # [降低] 惩罚过于靠近障碍物行为的权重
+    progress_weight: float = 3.0           # [增加] 鼓励朝向子目标移动的权重
+    safety_weight: float = 3.0             # [降低] 惩罚过于靠近障碍物行为的权重
     efficiency_penalty: float = 0.05       # [微调] 每走一步的轻微时间惩罚，鼓励效率
     goal_bonus: float = 30.0               # [降低] 到达最终目标的巨大奖励
     subgoal_bonus: float = 8.0             # [增加] 到达当前子目标的奖励
@@ -29,9 +29,9 @@ class LowLevelRewardConfig:
     window_inside_bonus: float = 0.4       # [增加] 保持在窗口内的小奖励
     window_outside_penalty: float = 0.2    # [增加] 不在窗口内的小惩罚
     window_timeout_penalty: float = -4.0   # [降低惩罚幅度] 在窗口内逗留过久的惩罚
-    heading_alignment_weight: float = 0.5  # [增加] 鼓励保持与子目标方向对齐的权重
+    heading_alignment_weight: float = 2.0  # [增加] 鼓励保持与子目标方向对齐的权重
     heading_alignment_clip: float = 0.5    # 方向奖励裁剪范围
-    smoothness_weight: float = 0.1         # [增加] 惩罚剧烈控制变化的权重
+    smoothness_weight: float = 0.3         # [增加] 惩罚剧烈控制变化的权重
     smoothness_clip: float = 0.6           # 控制变化惩罚裁剪阈值
 
 
