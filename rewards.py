@@ -21,16 +21,17 @@ class LowLevelRewardConfig:
     根据用户方案：R_low = R_progress + R_safety + R_terminal
     """
     # 进展奖励 (R_progress)
-    progress_weight: float = 10.0         # w_p: 进展权重
-    efficiency_penalty: float = 0.5       # w_eff: 每步的效率惩罚
+    progress_weight: float = 12.0         # w_p: 进展权重
+    efficiency_penalty: float = 0.12      # w_eff: 每步的效率惩罚（按0.3s步长缩放）
 
     # 安全惩罚 (R_safety)
-    safety_weight: float = 3.0            # w_s: 安全权重
+    safety_weight: float = 1.8            # w_s: 安全权重
     safety_sensitivity: float = 2.0       # σ: 指数惩罚的敏感度参数
+    safety_clearance: float = 1.0         # 清晰距离阈值，超过该距离不再惩罚
 
     # 终局奖励 (R_terminal)
-    goal_bonus: float = 50.0              # 到达最终目标的奖励
-    subgoal_bonus: float = 10.0           # 到达子目标的奖励
+    goal_bonus: float = 80.0              # 到达最终目标的奖励
+    subgoal_bonus: float = 18.0           # 到达子目标的奖励
     collision_penalty: float = -25.0      # 碰撞惩罚
     timeout_penalty: float = -15.0        # 超时惩罚
 
@@ -79,12 +80,15 @@ def compute_low_level_reward(
     # 1. 进展奖励 (R_progress)
     # 公式: R_progress = w_p * (d_prev - d_current) - w_eff
     progress_reward = 0.0
+    step_penalty = 0.0 if reached_goal else config.efficiency_penalty
+    if reached_subgoal and not reached_goal:
+        step_penalty *= 0.5  # 达到子目标时仅保留一半效率惩罚
     if prev_subgoal_distance is not None and current_subgoal_distance is not None:
         progress_delta = prev_subgoal_distance - current_subgoal_distance
-        progress_reward = config.progress_weight * progress_delta - config.efficiency_penalty
+        progress_reward = config.progress_weight * progress_delta - step_penalty
     else:
         # 如果没有有效的距离信息，只施加效率惩罚
-        progress_reward = -config.efficiency_penalty
+        progress_reward = -step_penalty
     components["progress"] = progress_reward
 
     # 2. 安全惩罚 (R_safety)
@@ -92,7 +96,10 @@ def compute_low_level_reward(
     # 使用 math.exp 来精确实现指数形式
     # 为了防止 d_min 过大导致 exp 结果为0，或 d_min 过小导致 exp 溢出，可以做适当处理
     # 但在典型机器人场景下，d_min 通常在合理范围内
-    safety_penalty = -config.safety_weight * math.exp(-config.safety_sensitivity * min_obstacle_distance)
+    if min_obstacle_distance >= config.safety_clearance:
+        safety_penalty = 0.0
+    else:
+        safety_penalty = -config.safety_weight * math.exp(-config.safety_sensitivity * min_obstacle_distance)
     components["safety"] = safety_penalty
 
     # 3. 终局奖励/惩罚 (R_terminal)
