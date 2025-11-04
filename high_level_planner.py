@@ -274,7 +274,7 @@ class HighLevelPlanner:
         model_name="high_level_planner",
         load_model=False,
         load_directory=None,
-        step_duration=0.1,
+        step_duration=0.3,
         min_interval=1.0,
         subgoal_reach_threshold: float = 0.5,
         waypoint_lookahead: int = 3,
