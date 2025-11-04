@@ -29,14 +29,14 @@ class TrainingConfig:
     """训练超参数配置容器"""
 
     buffer_size: int = 80000  # 经验回放缓冲区大小
-    batch_size: int = 128  # 训练批次大小  64->128
+    batch_size: int = 64  # 训练批次大小  64->128
     max_epochs: int = 60  # 最大训练轮数
     episodes_per_epoch: int = 70  # 每轮训练的情节数
     max_steps: int = 350  # 每个情节的最大步数  300->350
     train_every_n_episodes: int = 1  # 每N个情节训练一次   2->1
     training_iterations: int = 100  # 每次训练的迭代次数   80->100
     exploration_noise: float = 0.15  # 探索噪声强度    0.2->0.15
-    min_buffer_size: int = 2500  # 开始训练的最小缓冲区大小  500->2500
+    min_buffer_size: int = 1000  # 开始训练的最小缓冲区大小  500->2500->1000
     max_lin_velocity: float = 1.0  # 最大线速度
     max_ang_velocity: float = 1.0  # 最大角速度
     eval_episodes: int = 10  # 评估时使用的情节数
@@ -294,6 +294,7 @@ def evaluate(
         done = False
         steps = 0
         episode_reward = 0.0
+        current_subgoal_completed = False
 
         # 单次评估情节循环
         while not done and steps < config.max_steps:
@@ -342,6 +343,7 @@ def evaluate(
                 system.high_level_planner.event_trigger.reset_time(steps)
                 if current_subgoal_world is None:
                     current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)
+                current_subgoal_completed = False
             else:
                 planner_world = system.high_level_planner.current_subgoal_world
                 if planner_world is not None:
@@ -416,14 +418,19 @@ def evaluate(
 
             # 检查终止条件
             just_reached_subgoal = False
-            if (
-                current_subgoal_distance is not None
-                and current_subgoal_distance <= config.subgoal_radius
-            ):
-                if prev_subgoal_distance is None:
-                    just_reached_subgoal = True
-                elif prev_subgoal_distance > config.subgoal_radius:
-                    just_reached_subgoal = True
+            if not current_subgoal_completed:
+                if (
+                    current_subgoal_distance is not None
+                    and current_subgoal_distance <= config.subgoal_radius
+                ):
+                    if prev_subgoal_distance is None:
+                        just_reached_subgoal = True
+                    elif prev_subgoal_distance > config.subgoal_radius:
+                        just_reached_subgoal = True
+            else:
+                just_reached_subgoal = False
+            if just_reached_subgoal:
+                current_subgoal_completed = True
             timed_out = steps == config.max_steps - 1 and not (goal or collision)
 
             # 计算低层奖励
@@ -633,6 +640,7 @@ def main(args=None):
         steps = 0
         episode_reward = 0.0
         done = False
+        current_subgoal_completed = False
 
         # ========== 单次情节循环 ==========
         while not done and steps < config.max_steps:
@@ -742,6 +750,7 @@ def main(args=None):
                     last_window_distance=float(start_window_distance) if start_window_distance is not None else None,
                     best_window_distance=float(start_window_distance) if start_window_distance is not None else None,
                 )
+                current_subgoal_completed = False
             else:
                 planner_world = system.high_level_planner.current_subgoal_world
                 if planner_world is not None:
@@ -823,19 +832,19 @@ def main(args=None):
 
             # 检查终止条件
             just_reached_subgoal = False
-            if (
-                current_subgoal_distance is not None
-                and current_subgoal_distance <= config.subgoal_radius
-            ):
-                if prev_subgoal_distance is None:
-                    just_reached_subgoal = True
-                elif prev_subgoal_distance > config.subgoal_radius:
-                    just_reached_subgoal = True
-            if (
-                current_subgoal_context is not None
-                and current_subgoal_context.subgoal_completed
-            ):
+            if not current_subgoal_completed:
+                if (
+                    current_subgoal_distance is not None
+                    and current_subgoal_distance <= config.subgoal_radius
+                ):
+                    if prev_subgoal_distance is None:
+                        just_reached_subgoal = True
+                    elif prev_subgoal_distance > config.subgoal_radius:
+                        just_reached_subgoal = True
+            else:
                 just_reached_subgoal = False
+            if just_reached_subgoal:
+                current_subgoal_completed = True
             timed_out = steps == config.max_steps - 1 and not (goal or collision)
 
             # 计算低层奖励
@@ -996,10 +1005,10 @@ def main(args=None):
                     replay_buffer,
                     batch_size=config.batch_size,
                     discount=0.99,
-                    tau=0.001,    #0.005->0.001
+                    tau=0.005,    #0.005->0.001->0.005
                     policy_noise=0.2,
                     noise_clip=0.5,
-                    policy_freq=4,   #2->4
+                    policy_freq=2,   #2->4
                 )
             print("   ✅ Training completed")
 
