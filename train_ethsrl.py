@@ -53,7 +53,7 @@ class SubgoalContext:
     """高层子目标生命周期内的统计上下文"""
 
     start_state: np.ndarray  # 子目标开始时的状态
-    action: np.ndarray  # 选择的子目标动作 [距离, 角度]
+    action: np.ndarray  # 选择的子目标调整量 [距离系数, 角度偏移]
     world_target: np.ndarray  # 子目标的全局坐标
     start_goal_distance: float  # 开始时的目标距离
     last_goal_distance: float  # 最后的目标距离
@@ -732,10 +732,12 @@ def main(args=None):
                 start_window_index = meta_metrics.get("index")
                 start_window_distance = meta_metrics.get("distance")
                 target_window_index = metadata.get("selected_waypoint")
+                distance_adjust_action = float(metadata.get("distance_adjust_applied", 0.0)) if metadata else 0.0
+                angle_offset_action = float(metadata.get("angle_offset_applied", 0.0)) if metadata else 0.0
 
                 current_subgoal_context = SubgoalContext(
                     start_state=start_state.astype(np.float32, copy=False),
-                    action=np.array([subgoal_distance, subgoal_angle], dtype=np.float32),
+                    action=np.array([distance_adjust_action, angle_offset_action], dtype=np.float32),
                     world_target=current_subgoal_world,
                     start_goal_distance=distance,
                     last_goal_distance=distance,
