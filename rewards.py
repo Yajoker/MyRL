@@ -16,8 +16,8 @@ class LowLevelRewardConfig:
     """低层控制器奖励配置容器类 - 【调试简化版】"""
     
     # === 核心驱动力 ===
-    progress_weight: float = 5.0           # [保持] 唯一的核心正向奖励：鼓励朝向子目标移动。
-    subgoal_bonus: float = 20.0            # [增加] 到达子目标是重要的阶段性成功，给予强信号。
+    progress_weight: float = 3.0           # [保持] 唯一的核心正向奖励：鼓励朝向子目标移动。
+    subgoal_bonus: float =  5.0            # [增加] 到达子目标是重要的阶段性成功，给予强信号。
     
     # === 绝对底线 ===
     collision_penalty: float = -40.0       # [保持] 碰撞是不可接受的。
@@ -25,17 +25,19 @@ class LowLevelRewardConfig:
     goal_bonus: float = 50.0               # [保持] 到达最终目标是巨大成功。
 
     # === 行为素质 ===
-    smoothness_weight: float = 1.0         # [核心-增加] 显著提高平滑度权重，鼓励稳定控制。
-    
+    smoothness_weight: float = 0.5        # [核心-增加] 显著提高平滑度权重，鼓励稳定控制。
+    safety_weight: float = 2.0
+    heading_alignment_weight: float = 1.0
+    efficiency_penalty: float = 0.4
+
     # ===【调试期间禁用】以下为暂时关闭的参数 ===
-    safety_weight: float = 0.0             # [禁用] 暂时关闭。碰撞惩罚已足够强大。
-    efficiency_penalty: float = 0.0        # [禁用] 暂时不考虑细微的时间惩罚。
+    
     window_progress_weight: float = 0.0    # [禁用] 暂时不让低层关心“窗口”，只关心子目标。
     window_entry_bonus: float = 0.0        # [禁用]
     window_inside_bonus: float = 0.0       # [禁用]
     window_outside_penalty: float = 0.0    # [禁用]
     window_timeout_penalty: float = 0.0    # [禁用]
-    heading_alignment_weight: float = 0.0  # [禁用] progress_weight 已隐式包含航向对齐。
+    
     
     # === 裁剪值 (保持不变) ===
     progress_clip: float = 0.2
