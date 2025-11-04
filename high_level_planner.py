@@ -52,10 +52,9 @@ class SubgoalNetwork(nn.Module):
         self.fc1 = nn.Linear(cnn_output_dim + 64 + 16, hidden_dim)
         # 第二层全连接：输入=隐藏层维度，输出=隐藏层维度的一半
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
-
-        # 输出层：子目标距离和角度
-        self.distance_head = nn.Linear(hidden_dim // 2, 1)  # 距离输出头：输出1维距离值
-        self.angle_head = nn.Linear(hidden_dim // 2, 1)  # 角度输出头：输出1维角度值
+        # 输出层：距离调整系数与角度偏移量
+        self.distance_head = nn.Linear(hidden_dim // 2, 1)  # 距离调整输出头
+        self.angle_head = nn.Linear(hidden_dim // 2, 1)  # 角度偏移输出头
 
     def _get_cnn_output_dim(self, belief_dim):
         """计算CNN层展平后的输出维度"""
@@ -76,7 +75,7 @@ class SubgoalNetwork(nn.Module):
             prev_action: 包含[线速度, 角速度]历史动作的张量，形状[batch_size, 2]
 
         Returns:
-            包含(子目标距离, 子目标角度)的元组
+            包含(距离调整系数, 角度偏移量)的元组
         """
         # 处理激光雷达数据
         laser = belief_state.unsqueeze(1)  # 增加通道维度：[batch_size, 1, belief_dim]
@@ -98,12 +97,12 @@ class SubgoalNetwork(nn.Module):
         x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU：[batch_size, hidden_dim]
         x = F.relu(self.fc2(x))  # 第二层全连接 + ReLU：[batch_size, hidden_dim//2]
 
-        # 生成子目标参数
-        distance = 3 * torch.sigmoid(self.distance_head(x))  # 距离范围[0, 3]米，sigmoid确保非负
-        angle = torch.tanh(self.angle_head(x)) * np.pi  # 角度范围[-π, π]，tanh确保在-1到1之间
+        # 生成子目标调整量
+        distance_adjust = torch.tanh(self.distance_head(x))  # 距离调整系数∈[-1, 1]
+        angle_offset = torch.tanh(self.angle_head(x)) * (np.pi / 4)  # 角度偏移量∈[-π/4, π/4]
 
         # squeeze掉最后一维，保持批量维度，便于后续堆叠或索引
-        return distance.squeeze(-1), angle.squeeze(-1)
+        return distance_adjust.squeeze(-1), angle_offset.squeeze(-1)
 
 
 class EventTrigger:
@@ -616,14 +615,14 @@ class HighLevelPlanner:
 
         # 使用网络生成子目标（不计算梯度）
         with torch.no_grad():  # 推理模式，不计算梯度
-            distance, angle = self.subgoal_network(
+            distance_adjust_tensor, angle_offset_tensor = self.subgoal_network(
                 laser_tensor.unsqueeze(0),  # 增加批次维度：[1, belief_dim] -> [1, 1, belief_dim]
                 goal_tensor.unsqueeze(0),  # 增加批次维度：[3] -> [1, 3]
                 action_tensor.unsqueeze(0),  # 增加批次维度：[2] -> [1, 2]
             )
 
-        predicted_distance = float(distance.cpu().numpy().item())
-        predicted_angle = float(angle.cpu().numpy().item())
+        distance_adjust = float(distance_adjust_tensor.cpu().numpy().item())
+        angle_offset = float(angle_offset_tensor.cpu().numpy().item())
 
         candidate_info = []
         active_window_index: Optional[int] = None
@@ -662,39 +661,42 @@ class HighLevelPlanner:
                 active_window_radius = candidate_info[0]["radius"]
 
         selected_index = None
-        final_distance = predicted_distance
-        final_angle = predicted_angle
+        final_distance: float
+        final_angle: float
         world_target = None
 
-        if candidate_info and robot_pose is not None:
-            best_idx = 0
-            best_score = math.inf
-            for idx, info in enumerate(candidate_info):
-                distance_delta = abs(predicted_distance - info["distance"])
-                angle_delta = abs(self._wrap_angle(predicted_angle - info["angle"]))
-                score = distance_delta + 0.5 * angle_delta
-                if score < best_score:
-                    best_score = score
-                    best_idx = idx
+        anchor_info = candidate_info[0] if candidate_info else None
 
-            chosen = candidate_info[best_idx]
-            window = chosen["window"]
-            if chosen["index"] is not None:
-                selected_index = int(chosen["index"])
-            radius = chosen["radius"]
-            base_distance = chosen["distance"]
+        if anchor_info is not None:
+            if anchor_info["index"] is not None:
+                selected_index = int(anchor_info["index"])
+            base_distance = anchor_info["distance"]
+            base_angle = anchor_info["angle"]
+            anchor_radius = max(anchor_info["radius"], 0.3)
+            active_window_radius = anchor_radius
+        else:
+            base_angle = math.atan2(goal_sin, goal_cos)
+            base_distance = max(0.5, min(float(goal_distance), 3.0))
+            anchor_radius = max(0.5, min(float(goal_distance), 2.0) * 0.5)
+            if active_window_radius is None:
+                active_window_radius = anchor_radius
 
-            distance_adjust = max(-0.75, min(0.75, predicted_distance - base_distance))
-            angle_offset = self._wrap_angle(predicted_angle - chosen["angle"])
-            angle_adjust = max(-math.pi / 6, min(math.pi / 6, angle_offset))
+        # 根据网络输出的调整量生成最终子目标
+        min_distance = max(0.2, base_distance - anchor_radius)
+        max_distance = base_distance + anchor_radius
+        candidate_distance = base_distance + distance_adjust * anchor_radius
+        final_distance = float(np.clip(candidate_distance, min_distance, max_distance))
+        final_angle = self._wrap_angle(base_angle + angle_offset)
 
-            final_distance = max(0.2, base_distance + distance_adjust)
-            min_distance = max(0.2, base_distance - radius * 0.8)
-            max_distance = base_distance
-            final_distance = float(np.clip(final_distance, min_distance, max_distance))
-            final_angle = self._wrap_angle(chosen["angle"] + angle_adjust)
-            world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
-        elif robot_pose is not None:
+        # 记录实际应用的调整量（考虑裁剪后的效果）
+        applied_distance_adjust = 0.0
+        if anchor_radius > 1e-3:
+            applied_distance_adjust = float(np.clip((final_distance - base_distance) / anchor_radius, -1.0, 1.0))
+        applied_angle_offset = float(
+            np.clip(self._wrap_angle(final_angle - base_angle), -math.pi / 4, math.pi / 4)
+        )
+
+        if robot_pose is not None:
             world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
 
         # 存储供将来参考
@@ -724,6 +726,13 @@ class HighLevelPlanner:
             "active_window_index": active_window_index,
             "active_window_radius": active_window_radius,
             "window_metrics": dict(window_metrics) if window_metrics else {},
+            "anchor_distance": base_distance,
+            "anchor_angle": base_angle,
+            "anchor_radius": anchor_radius,
+            "raw_distance_adjust": distance_adjust,
+            "raw_angle_offset": angle_offset,
+            "distance_adjust_applied": applied_distance_adjust,
+            "angle_offset_applied": applied_angle_offset,
         }
 
         if metadata["selected_waypoint"] is None and active_window_index is not None:
@@ -835,9 +844,9 @@ class HighLevelPlanner:
         prev_action = states[:, -action_feature_dim:]
 
         # 生成子目标（网络预测）
-        subgoal_distances, subgoal_angles = self.subgoal_network(laser_scans, goal_info, prev_action)
-        # 合并距离和角度为完整子目标
-        subgoals = torch.stack((subgoal_distances, subgoal_angles), dim=1)
+        distance_adjusts, angle_offsets = self.subgoal_network(laser_scans, goal_info, prev_action)
+        # 合并调整量为完整动作 [distance_coeff, angle_offset]
+        subgoals = torch.stack((distance_adjusts, angle_offsets), dim=1)
 
         # 基于软最大化的奖励加权，温度参数控制集中度
         with torch.no_grad():
@@ -873,8 +882,8 @@ class HighLevelPlanner:
 
         return {
             'loss': loss.item(),  # 损失值
-            'avg_distance': subgoal_distances.mean().item(),  # 平均子目标距离
-            'avg_angle': subgoal_angles.mean().item(),  # 平均子目标角度
+            'avg_distance_adjust': distance_adjusts.mean().item(),  # 平均距离调整量
+            'avg_angle_offset': angle_offsets.mean().item(),  # 平均角度偏移量
             'weight_mean': weights.mean().item(),  # 平均权重
             'weight_entropy': weight_entropy,
             'temperature': self.rwr_temperature,
