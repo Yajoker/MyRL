@@ -13,8 +13,8 @@ import numpy as np
 import torch
 
 # 导入自定义模块
-from ethsrl.core.integration import HierarchicalNavigationSystem
-from ethsrl.core.rewards import (
+from ethsrl.integration import HierarchicalNavigationSystem
+from ethsrl.rewards import (
     HighLevelRewardConfig,
     LowLevelRewardConfig,
     compute_high_level_reward,
@@ -956,7 +956,7 @@ def main(args=None):
                 buffer_size = replay_buffer.size()
                 print(
                     f"🏃 Training | Epoch {epoch:2d}/{config.max_epochs} | "
-                    f"Episode {episode:3d}/{config.max_epochs*episodes_per_epoch} | "
+                    f"Episode {episode:3d}/{config.max_epochs*config.episodes_per_epoch} | "
                     f"Step {steps:3d}/{config.max_steps} | "
                     f"Reward: {low_reward:7.2f} | Buffer: {buffer_size:6d}"
                 )
