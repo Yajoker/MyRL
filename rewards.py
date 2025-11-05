@@ -117,6 +117,10 @@ def compute_low_level_reward(
     # 计算总奖励: R_low = R_progress + R_safety + R_terminal
     total_reward = sum(components.values())
 
+    # 碰撞时强制奖励为负值（避免进展项抵消惩罚）
+    if collision and not reached_goal:
+        total_reward = min(total_reward, config.collision_penalty)
+
     return float(total_reward), components
 
 
@@ -188,6 +192,10 @@ def compute_high_level_reward(
 
     # 计算总奖励: R_high = R_strategic + R_decision + R_terminal
     total_reward = sum(components.values())
+
+    # 碰撞时强制奖励为负，防止进展带来正值
+    if collision and not reached_goal:
+        total_reward = min(total_reward, config.collision_penalty)
     
     return float(total_reward), components
 
