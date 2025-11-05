@@ -8,6 +8,7 @@ import torch
 from ethsrl.low_level_controller import LowLevelController
 from ethsrl.global_planner import GlobalPlanner, WaypointWindow
 from ethsrl.high_level_planner import HighLevelPlanner
+from ethsrl.config_center import IntegrationConfig
 
 
 class HierarchicalNavigationSystem:
@@ -20,20 +21,15 @@ class HierarchicalNavigationSystem:
 
     def __init__(
         self,
+        *,
         laser_dim: int = 180,
         action_dim: int = 2,
         max_action: float = 1.0,
         device=None,
         load_models: bool = False,
         models_directory: Path = Path("ethsrl/models"),
-        step_duration: float = 0.3,  #与yaml中的保持一致
-        trigger_min_interval: float = 1.0,
-        subgoal_threshold: float = 0.5,
         world_file: Optional[Path] = None,
-        global_plan_resolution: float = 0.25,
-        global_plan_margin: float = 0.35,
-        waypoint_lookahead: int = 3,
-        window_step_limit: int = 80,
+        config: Optional[IntegrationConfig] = None,
     ) -> None:
         """
         初始化分层导航系统。
@@ -49,6 +45,10 @@ class HierarchicalNavigationSystem:
         # 设置计算设备：若未指定则自动检测 GPU，否则使用 CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        # 统一读取系统配置
+        self.config = config or IntegrationConfig()
+        self.motion_limits = self.config.motion
+
         # 计算状态维度
         low_level_state_dim = laser_dim + 4
 
@@ -59,10 +59,9 @@ class HierarchicalNavigationSystem:
             save_directory=models_directory / "high_level",  # 模型保存路径
             model_name="high_level_planner",  # 模型名称
             load_model=load_models,  # 是否加载已有模型
-            step_duration=step_duration,
-            min_interval=trigger_min_interval,
-            subgoal_reach_threshold=subgoal_threshold,
-            waypoint_lookahead=waypoint_lookahead,
+            waypoint_lookahead=self.config.planner.waypoint_lookahead,
+            trigger_config=self.config.trigger,
+            motion_config=self.motion_limits,
         )
 
         # 初始化低层控制器（负责执行动作）
@@ -82,10 +81,10 @@ class HierarchicalNavigationSystem:
         self.prev_action = [0.0, 0.0]  # 上一步执行的动作 [线速度, 角速度]
         self.step_count = 0  # 总步数计数
         self.last_replanning_step = 0  # 上次重新规划的步数（用于事件触发判断）
-        self.step_duration = step_duration
-        self.subgoal_threshold = subgoal_threshold
-        self.waypoint_lookahead = waypoint_lookahead
-        self.window_step_limit = max(1, int(window_step_limit))
+        self.step_duration = self.motion_limits.dt
+        self.subgoal_threshold = self.config.trigger.subgoal_reach_threshold
+        self.waypoint_lookahead = self.config.planner.waypoint_lookahead
+        self.window_step_limit = max(1, int(self.config.window.step_limit))
         self.window_step_count = 0
         self.steps_inside_window = 0
         self.window_last_index: Optional[int] = None
@@ -101,8 +100,10 @@ class HierarchicalNavigationSystem:
             try:
                 self.global_planner = GlobalPlanner(
                     world_file=world_file,
-                    resolution=global_plan_resolution,
-                    safety_margin=global_plan_margin,
+                    resolution=self.config.planner.resolution,
+                    safety_margin=self.config.planner.safety_margin,
+                    window_spacing=self.config.planner.window_spacing,
+                    window_radius=self.config.planner.window_radius,
                 )
             except FileNotFoundError as exc:
                 print(f"[GlobalPlanner] {exc}. Global planning disabled.")
@@ -222,10 +223,10 @@ class HierarchicalNavigationSystem:
         action = self.low_level_controller.predict_action(low_level_state)
 
         # 将网络输出映射为实际机器人可执行的速度命令
-        # 将线速度从 [-1,1] 映射为 [0,0.5]
-        linear_velocity = (action[0] + 1) / 4
-        # 保持角速度在 [-1,1] 范围内
-        angular_velocity = action[1]
+        # 将线速度从 [-1,1] 映射为 [0, v_max]
+        linear_velocity = 0.5 * (action[0] + 1.0) * self.motion_limits.v_max
+        # 将角速度映射到 [-omega_max, omega_max]
+        angular_velocity = action[1] * self.motion_limits.omega_max
 
         # 记录当前动作（用于下一次输入）
         self.prev_action = [linear_velocity, angular_velocity]
@@ -463,12 +464,10 @@ class HierarchicalNavigationSystem:
 
 
 def create_navigation_system(
+    *,
     load_models: bool = False,
-    subgoal_threshold: float = 0.5,
     world_file: Optional[Path] = None,
-    global_plan_resolution: float = 0.25,
-    global_plan_margin: float = 0.35,
-    waypoint_lookahead: int = 3,
+    config: Optional[IntegrationConfig] = None,
 ):
     """
     工厂函数：创建一个完整的分层导航系统实例。
@@ -484,9 +483,6 @@ def create_navigation_system(
         action_dim=2,  # 动作维度
         max_action=1.0,  # 最大动作幅值
         load_models=load_models,  # 是否加载模型
-        subgoal_threshold=subgoal_threshold,
         world_file=world_file,
-        global_plan_resolution=global_plan_resolution,
-        global_plan_margin=global_plan_margin,
-        waypoint_lookahead=waypoint_lookahead,
+        config=config,
     )

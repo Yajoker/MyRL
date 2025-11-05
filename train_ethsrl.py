@@ -14,6 +14,12 @@ import torch
 
 # 导入自定义模块
 from ethsrl.integration import HierarchicalNavigationSystem
+from ethsrl.config_center import (
+    IntegrationConfig,
+    MotionConfig,
+    PlannerConfig,
+    TriggerConfig,
+)
 from ethsrl.rewards import (
     HighLevelRewardConfig,
     LowLevelRewardConfig,
@@ -586,13 +592,27 @@ def main(args=None):
 
     # ========== 系统初始化 ==========
     print("🔄 Initializing ETHSRL+GP system...")
+    motion_cfg = MotionConfig(
+        v_max=config.max_lin_velocity,
+        omega_max=config.max_ang_velocity,
+    )
+    planner_cfg = PlannerConfig(
+        resolution=config.global_plan_resolution,
+        safety_margin=config.global_plan_margin,
+        waypoint_lookahead=config.waypoint_lookahead,
+    )
+    trigger_cfg = TriggerConfig(
+        subgoal_reach_threshold=config.subgoal_radius,
+    )
+    system_config = IntegrationConfig(
+        motion=motion_cfg,
+        planner=planner_cfg,
+        trigger=trigger_cfg,
+    )
     system = HierarchicalNavigationSystem(
         device=device,
-        subgoal_threshold=config.subgoal_radius,
         world_file=world_path,
-        global_plan_resolution=config.global_plan_resolution,
-        global_plan_margin=config.global_plan_margin,
-        waypoint_lookahead=config.waypoint_lookahead,
+        config=system_config,
     )
     replay_buffer = TD3ReplayAdapter(buffer_size=config.buffer_size)
     print("✅ System initialization completed")

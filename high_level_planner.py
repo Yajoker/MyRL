@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from ethsrl.global_planner import WaypointWindow
+from ethsrl.config_center import MotionConfig, TriggerConfig
 
 
 class SubgoalNetwork(nn.Module):
@@ -110,33 +111,32 @@ class EventTrigger:
 
     def __init__(
         self,
-        safety_trigger_distance: float = 0.7,  # [修改] 从 1.0 降至 0.7
-        subgoal_reach_threshold: float = 0.4,  # [修改] 从 0.5 降至 0.4
-        stagnation_steps: int = 30,            # [修改] 从 40 降至 30
-        progress_epsilon: float = 0.1,
-        min_interval: float = 1.2,             # [修改] 从 1.0 增至 1.2
-        step_duration: float = 0.1,
+        *,
+        trigger_config: TriggerConfig,
+        motion_config: MotionConfig,
     ) -> None:
         """
         初始化事件触发器
 
         Args:
-            safety_trigger_distance: 安全触发距离阈值（米）
-            subgoal_reach_threshold: 子目标到达阈值（米）
-            stagnation_steps: 停滞步数阈值
-            progress_epsilon: 进度容差（米）
-            min_interval: 最小触发间隔（秒）
-            step_duration: 步长持续时间（秒）
+            trigger_config: 高层触发相关阈值配置
+            motion_config: 运动学与时间步配置
         """
         # 触发参数设置
-        self.safety_trigger_distance = safety_trigger_distance
-        self.subgoal_reach_threshold = subgoal_reach_threshold
-        self.stagnation_steps = max(1, int(stagnation_steps))  # 确保至少1步
-        self.progress_epsilon = progress_epsilon
-        self.min_interval = min_interval
-        self.step_duration = step_duration
+        self.config = trigger_config
+        self.motion = motion_config
+        self.safety_trigger_distance = trigger_config.safety_trigger_distance
+        self.subgoal_reach_threshold = trigger_config.subgoal_reach_threshold
+        self.stagnation_steps = max(1, int(trigger_config.stagnation_steps))  # 确保至少1步
+        self.progress_epsilon = trigger_config.progress_epsilon
+        self.step_duration = motion_config.dt
+        self.min_interval = trigger_config.min_interval
         # 计算最小步数间隔：将时间间隔转换为步数间隔
-        self.min_step_interval = max(1, int(math.ceil(min_interval / step_duration))) if step_duration > 0 else 1
+        if self.step_duration > 0:
+            ratio = trigger_config.min_interval / self.step_duration if trigger_config.min_interval > 0 else 0
+            self.min_step_interval = max(1, int(math.ceil(ratio)))
+        else:
+            self.min_step_interval = 1
 
         # 状态变量初始化
         self.last_trigger_step = -self.min_step_interval  # 上次触发时间步，初始化为负值确保第一次可触发
@@ -273,11 +273,10 @@ class HighLevelPlanner:
         model_name="high_level_planner",
         load_model=False,
         load_directory=None,
-        step_duration=0.3,
-        min_interval=1.0,
-        subgoal_reach_threshold: float = 0.5,
         waypoint_lookahead: int = 3,
         *,
+        trigger_config: Optional[TriggerConfig] = None,
+        motion_config: Optional[MotionConfig] = None,
         rwr_temperature: float = 2.0,
         rwr_min_temperature: float = 0.4,
         rwr_temperature_decay: float = 0.999,
@@ -292,14 +291,16 @@ class HighLevelPlanner:
             model_name: 模型文件名
             load_model: 是否加载预训练模型
             load_directory: 模型加载目录（如果为None则使用save_directory）
-            step_duration: 步长持续时间（秒）
-            min_interval: 最小触发间隔（秒）
+            trigger_config: 高层触发阈值配置
+            motion_config: 运动学与时间步配置
         """
         self.belief_dim = belief_dim
         # 设置计算设备，默认为GPU（如果可用）否则CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # 航点窗口相关参数
+        self.motion_config = motion_config or MotionConfig()
+        self.trigger_config = trigger_config or TriggerConfig()
         self.waypoint_lookahead = max(1, int(waypoint_lookahead))
         self.active_window_feature_dim = 6  # [dist, cos, sin, radius, inside, margin]
         self.per_window_feature_dim = 4  # [dist, cos, sin, radius]
@@ -313,11 +314,10 @@ class HighLevelPlanner:
 
         # 初始化事件触发器
         self.event_trigger = EventTrigger(
-            min_interval=min_interval,
-            step_duration=step_duration,
-            subgoal_reach_threshold=subgoal_reach_threshold,
+            trigger_config=self.trigger_config,
+            motion_config=self.motion_config,
         )
-        self.step_duration = step_duration
+        self.step_duration = self.motion_config.dt
 
         # 训练设置
         self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=3e-4)  # Adam优化器
@@ -415,8 +415,10 @@ class HighLevelPlanner:
             处理后的动作信息张量
         """
         # 简单归一化处理
-        lin_vel = float(prev_action[0]) * 2  # 假设线速度范围在[0, 0.5]，缩放到[0,1]
-        ang_vel = float(prev_action[1])  # 假设角速度范围在[-1, 1]，保持不变
+        max_lin = max(self.motion_config.v_max, 1e-6)
+        max_ang = max(self.motion_config.omega_max, 1e-6)
+        lin_vel = float(np.clip(prev_action[0] / max_lin, -1.0, 1.0))
+        ang_vel = float(np.clip(prev_action[1] / max_ang, -1.0, 1.0))
 
         # 组合成张量：[线速度, 角速度]
         action_info = torch.FloatTensor([lin_vel, ang_vel]).to(self.device)
