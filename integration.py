@@ -5,9 +5,9 @@ import numpy as np
 import torch
 
 # 导入系统内部模块：低层控制器和高层规划器
-from ethsrl.core.control.low_level_controller import LowLevelController
-from ethsrl.core.planning.global_planner import GlobalPlanner, WaypointWindow
-from ethsrl.core.planning.high_level_planner import HighLevelPlanner
+from ethsrl.low_level_controller import LowLevelController
+from ethsrl.global_planner import GlobalPlanner, WaypointWindow
+from ethsrl.high_level_planner import HighLevelPlanner
 
 
 class HierarchicalNavigationSystem:
