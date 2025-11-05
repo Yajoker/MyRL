@@ -821,6 +821,25 @@ def main(args=None):
                 if current_subgoal_distance is None:
                     current_subgoal_distance = float(relative_after[0])
 
+            # Refresh subgoal geometry using post-step pose so replay stores t+1 state.
+            if system.current_subgoal is not None:
+                post_subgoal_distance = float(system.current_subgoal[0])
+                post_subgoal_angle = float(system.current_subgoal[1])
+            else:
+                post_subgoal_distance = float(subgoal_distance) if subgoal_distance is not None else 0.0
+                post_subgoal_angle = float(subgoal_angle) if subgoal_angle is not None else 0.0
+
+            if relative_after[0] is not None:
+                post_subgoal_distance = float(relative_after[0])
+                post_subgoal_angle = float(relative_after[1])
+            else:
+                if current_subgoal_distance is not None:
+                    post_subgoal_distance = float(current_subgoal_distance)
+                if subgoal_alignment_angle is not None:
+                    post_subgoal_angle = float(subgoal_alignment_angle)
+
+            system.current_subgoal = (post_subgoal_distance, post_subgoal_angle)
+
             action_delta: Optional[List[float]] = None
             if executed_action is not None and prev_action is not None:
                 delta_lin = float(executed_action[0] - prev_action[0])
@@ -921,8 +940,8 @@ def main(args=None):
             next_prev_action = [executed_action[0], executed_action[1]]
             next_state = system.low_level_controller.process_observation(
                 latest_scan,
-                system.current_subgoal[0] if system.current_subgoal else subgoal_distance,
-                system.current_subgoal[1] if system.current_subgoal else subgoal_angle,
+                post_subgoal_distance,
+                post_subgoal_angle,
                 next_prev_action,
             )
 
@@ -937,7 +956,7 @@ def main(args=None):
                 buffer_size = replay_buffer.size()
                 print(
                     f"🏃 Training | Epoch {epoch:2d}/{config.max_epochs} | "
-                    f"Episode {episode:3d}/{config.episodes_per_epoch} | "
+                    f"Episode {episode:3d}/{config.max_epochs*episodes_per_epoch} | "
                     f"Step {steps:3d}/{config.max_steps} | "
                     f"Reward: {low_reward:7.2f} | Buffer: {buffer_size:6d}"
                 )
