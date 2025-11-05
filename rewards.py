@@ -30,9 +30,9 @@ class LowLevelRewardConfig:
     safety_clearance: float = 1.0         # 清晰距离阈值，超过该距离不再惩罚
 
     # 终局奖励 (R_terminal)
-    goal_bonus: float = 80.0              # 到达最终目标的奖励
+    goal_bonus: float = 60.0              # 到达最终目标的奖励
     subgoal_bonus: float = 18.0           # 到达子目标的奖励
-    collision_penalty: float = -25.0      # 碰撞惩罚
+    collision_penalty: float = -50.0      # 碰撞惩罚
     timeout_penalty: float = -15.0        # 超时惩罚
 
 
@@ -53,9 +53,9 @@ class HighLevelRewardConfig:
     low_level_failure_penalty: float = -10.0 # w_fail: 低层执行失败的惩罚
 
     # 终局奖励 (R_terminal)
-    goal_bonus: float = 50.0             # 到达最终目标的巨大奖励
-    collision_penalty: float = -25.0     # 导致碰撞的决策的巨大惩罚
-    timeout_penalty: float = -15.0        # 导致超时的决策的惩罚
+    goal_bonus: float = 60.0             # 到达最终目标的巨大奖励
+    collision_penalty: float = -50.0     # 导致碰撞的决策的巨大惩罚
+    timeout_penalty: float = -25.0        # 导致超时的决策的惩罚
 
 
 def compute_low_level_reward(
