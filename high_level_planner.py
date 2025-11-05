@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from ethsrl.core.planning.global_planner import WaypointWindow
+from ethsrl.global_planner import WaypointWindow
 
 
 class SubgoalNetwork(nn.Module):
