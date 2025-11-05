@@ -1007,10 +1007,10 @@ def main(args=None):
                     replay_buffer,
                     batch_size=config.batch_size,
                     discount=0.99,
-                    tau=0.005,    #0.005->0.001->0.005
+                    tau=0.001,    # 0.001
                     policy_noise=0.2,
                     noise_clip=0.5,
-                    policy_freq=2,   #2->4
+                    policy_freq=2,   #2
                 )
             print("   ✅ Training completed")
 
