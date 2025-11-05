@@ -216,7 +216,7 @@ class LowLevelController:
             action_dim,
             max_action,
             device,
-            lr=1e-4,
+            lr=3e-4,
             save_every=0,
             load_model=False,
             save_directory=Path("ethsrl/models/low_level"),
@@ -247,7 +247,7 @@ class LowLevelController:
         self.actor = LowLevelActorNetwork(action_dim).to(device)
         self.actor_target = LowLevelActorNetwork(action_dim).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())  # 复制初始权重
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr*0.5)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
         # 初始化Critic网络和目标网络
         self.critic = LowLevelCriticNetwork(action_dim).to(device)
@@ -354,16 +354,18 @@ class LowLevelController:
         next_state = torch.FloatTensor(next_state).to(self.device)
         done = torch.FloatTensor(done).to(self.device).reshape(-1, 1)
 
-        # 获取带噪声的下一个动作（TD3技术）
-        next_action = self.actor_target(next_state)
-        noise = torch.FloatTensor(np.random.normal(0, policy_noise, size=(batch_size, self.action_dim))).to(self.device)
-        noise = noise.clamp(-noise_clip, noise_clip)  # 裁剪噪声
-        next_action = (next_action + noise).clamp(-self.max_action, self.max_action)  # 添加噪声并裁剪
+        # 获取带噪声的下一个动作并计算目标Q值（TD3技术）
+        with torch.no_grad():
+            next_action = self.actor_target(next_state)
+            noise = torch.FloatTensor(
+                np.random.normal(0, policy_noise, size=(batch_size, self.action_dim))
+            ).to(self.device)
+            noise = noise.clamp(-noise_clip, noise_clip)  # 裁剪噪声
+            next_action = (next_action + noise).clamp(-self.max_action, self.max_action)  # 添加噪声并裁剪
 
-        # 计算目标Q值
-        target_q1, target_q2 = self.critic_target(next_state, next_action)
-        target_q = torch.min(target_q1, target_q2)  # 取两个Q值的最小值（双Q学习）
-        target_q = reward + (1 - done) * discount * target_q  # 贝尔曼方程
+            target_q1, target_q2 = self.critic_target(next_state, next_action)
+            target_q = torch.min(target_q1, target_q2)  # 取两个Q值的最小值（双Q学习）
+            target_q = reward + (1 - done) * discount * target_q  # 贝尔曼方程
 
         # 计算当前Q值
         current_q1, current_q2 = self.critic(state, action)
