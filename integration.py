@@ -1,14 +1,93 @@
 from pathlib import Path
+import logging
+import math
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 
 # 导入系统内部模块：低层控制器和高层规划器
+from ethsrl.config import IntegrationConfig, MotionConfig
 from ethsrl.low_level_controller import LowLevelController
 from ethsrl.global_planner import GlobalPlanner, WaypointWindow
 from ethsrl.high_level_planner import HighLevelPlanner
-from ethsrl.config_center import IntegrationConfig
+
+
+logger = logging.getLogger(__name__)
+
+
+def _clip_unit_interval(value: float) -> float:
+    """Clamp a scalar to the closed interval [-1, 1]."""
+
+    return max(-1.0, min(1.0, float(value)))
+
+
+def _wrap_angle(angle: float) -> float:
+    """Wrap angle to (-π, π]."""
+
+    wrapped = (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
+    if wrapped <= -math.pi:
+        wrapped += 2.0 * math.pi
+    return wrapped
+
+
+def map_linear_speed(actor_linear: float, motion: MotionConfig) -> float:
+    """Scale low-level actor linear output to the configured velocity range."""
+
+    clipped = _clip_unit_interval(actor_linear)
+    return 0.5 * (clipped + 1.0) * motion.v_max
+
+
+def map_angular_speed(actor_angular: float, motion: MotionConfig) -> float:
+    """Scale low-level actor angular output to the configured rotational range."""
+
+    clipped = _clip_unit_interval(actor_angular)
+    return clipped * motion.omega_max
+
+
+def map_actor_to_commands(action: Sequence[float], motion: MotionConfig) -> Tuple[float, float]:
+    """Convert actor outputs in [-1, 1]² to executable (v, ω) commands."""
+
+    if len(action) < 2:
+        raise ValueError("Expected at least two elements for (a_lin, a_ang).")
+
+    raw_lin = float(action[0])
+    raw_ang = float(action[1])
+
+    linear_velocity = map_linear_speed(raw_lin, motion)
+    angular_velocity = map_angular_speed(raw_ang, motion)
+
+    if logger.isEnabledFor(logging.DEBUG):
+        clipped_lin = _clip_unit_interval(raw_lin)
+        clipped_ang = _clip_unit_interval(raw_ang)
+        logger.debug(
+            "Actor scaling: raw=(%.3f, %.3f) clipped=(%.3f, %.3f) -> command=(%.3f, %.3f); limits=(v_max=%.3f, ω_max=%.3f)",
+            raw_lin,
+            raw_ang,
+            clipped_lin,
+            clipped_ang,
+            linear_velocity,
+            angular_velocity,
+            motion.v_max,
+            motion.omega_max,
+        )
+
+    return linear_velocity, angular_velocity
+
+
+def map_commands_to_actor(linear_velocity: float, angular_velocity: float, motion: MotionConfig) -> Tuple[float, float]:
+    """Project executed (v, ω) commands back into the actor's normalized space."""
+
+    v_max = max(motion.v_max, 1e-6)
+    omega_max = max(motion.omega_max, 1e-6)
+
+    lin_clamped = float(np.clip(linear_velocity, 0.0, motion.v_max))
+    ang_clamped = float(np.clip(angular_velocity, -motion.omega_max, motion.omega_max))
+
+    norm_lin = (lin_clamped / v_max) * 2.0 - 1.0
+    norm_ang = ang_clamped / omega_max
+
+    return _clip_unit_interval(norm_lin), _clip_unit_interval(norm_ang)
 
 
 class HierarchicalNavigationSystem:
@@ -28,8 +107,9 @@ class HierarchicalNavigationSystem:
         device=None,
         load_models: bool = False,
         models_directory: Path = Path("ethsrl/models"),
+       
         world_file: Optional[Path] = None,
-        config: Optional[IntegrationConfig] = None,
+        config: Optional[IntegrationConfig] = None,        
     ) -> None:
         """
         初始化分层导航系统。
@@ -78,13 +158,18 @@ class HierarchicalNavigationSystem:
         # 系统运行状态变量
         self.current_subgoal = None  # 当前子目标（距离、角度）
         self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标在世界坐标系中的位置
-        self.prev_action = [0.0, 0.0]  # 上一步执行的动作 [线速度, 角速度]
+        self.prev_action = [0.0, 0.0]  # 上一步执行的归一化动作值
+        self.prev_command = [0.0, 0.0]  # 上一步执行的实际控制命令 [线速度, 角速度]
         self.step_count = 0  # 总步数计数
-        self.last_replanning_step = 0  # 上次重新规划的步数（用于事件触发判断）
+        min_step_interval = getattr(self.high_level_planner.event_trigger, "min_step_interval", 1)
+        self.trigger_step_interval = max(1, int(min_step_interval))
+        self.last_replanning_step = -self.trigger_step_interval  # 上次重新规划的步数（用于节流）
+
         self.step_duration = self.motion_limits.dt
         self.subgoal_threshold = self.config.trigger.subgoal_reach_threshold
         self.waypoint_lookahead = self.config.planner.waypoint_lookahead
         self.window_step_limit = max(1, int(self.config.window.step_limit))
+
         self.window_step_count = 0
         self.steps_inside_window = 0
         self.window_last_index: Optional[int] = None
@@ -110,6 +195,144 @@ class HierarchicalNavigationSystem:
         self.global_waypoints: List[WaypointWindow] = []
         self.current_waypoint_index: int = 0
         self.global_goal: Optional[np.ndarray] = None
+
+    def _resolve_anchor_window(
+        self,
+        robot_pose: Sequence[float],
+        waypoint_candidates: List[Tuple[int, WaypointWindow]],
+        goal_distance: float,
+        goal_cos: float,
+        goal_sin: float,
+    ) -> Dict[str, object]:
+        """Determine reference window geometry for subgoal synthesis."""
+
+        robot_xy = np.asarray(robot_pose[:2], dtype=np.float32)
+        yaw = float(robot_pose[2])
+
+        anchor_window: Optional[WaypointWindow] = None
+        anchor_index: Optional[int] = None
+
+        if waypoint_candidates:
+            entry = waypoint_candidates[0]
+            if isinstance(entry, tuple) and len(entry) == 2:
+                anchor_index = int(entry[0]) if entry[0] is not None else None
+                anchor_window = entry[1]
+            elif isinstance(entry, WaypointWindow):
+                anchor_window = entry
+            if anchor_window is not None and not isinstance(anchor_window, WaypointWindow):
+                anchor_window = None
+
+        if anchor_window is not None:
+            centre = np.asarray(anchor_window.center, dtype=np.float32)
+            offset = centre - robot_xy
+            base_distance = float(np.linalg.norm(offset))
+            world_heading = math.atan2(float(offset[1]), float(offset[0])) if base_distance > 1e-6 else yaw
+            base_angle = _wrap_angle(world_heading - yaw)
+            radius = float(anchor_window.radius)
+            return {
+                "index": anchor_index,
+                "centre": centre,
+                "radius": radius,
+                "base_distance": base_distance,
+                "base_angle": base_angle,
+                "world_heading": world_heading,
+            }
+
+        base_angle_rel = _wrap_angle(math.atan2(goal_sin, goal_cos))
+        world_heading = _wrap_angle(base_angle_rel + yaw)
+        base_distance = float(max(goal_distance, 0.0))
+
+        return {
+            "index": None,
+            "centre": None,
+            "radius": None,
+            "base_distance": base_distance,
+            "base_angle": base_angle_rel,
+            "world_heading": world_heading,
+        }
+
+    def _synthesise_subgoal(
+        self,
+        *,
+        distance_scale: float,
+        angle_offset: float,
+        robot_pose: Sequence[float],
+        goal_distance: float,
+        goal_cos: float,
+        goal_sin: float,
+        waypoint_candidates: List[Tuple[int, WaypointWindow]],
+        window_metrics: Optional[Dict[str, object]],
+        metadata: Optional[Dict[str, object]] = None,
+    ) -> Tuple[float, float, Dict[str, object], np.ndarray]:
+        """Combine high-level outputs with geometry to produce executable subgoals."""
+
+        decision_meta: Dict[str, object] = dict(metadata or {})
+
+        anchor = self._resolve_anchor_window(
+            robot_pose,
+            waypoint_candidates,
+            goal_distance,
+            goal_cos,
+            goal_sin,
+        )
+
+        base_distance = float(anchor.get("base_distance", 0.0))
+        base_angle = float(anchor.get("base_angle", 0.0))
+        window_radius = anchor.get("radius")
+        anchor_index = anchor.get("index")
+
+        distance_scale = float(np.clip(distance_scale, 0.0, 1.0))
+        scaled_distance = distance_scale * base_distance
+
+        margin = float(self.config.window.margin)
+        clip_limit = None
+        if window_radius is not None:
+            clip_limit = max(0.0, float(window_radius) - margin)
+
+        if clip_limit is not None:
+            final_distance = float(min(scaled_distance, clip_limit))
+        else:
+            final_distance = float(scaled_distance)
+        final_distance = max(0.0, final_distance)
+
+        final_angle = _wrap_angle(base_angle + angle_offset)
+
+        world_target = np.array(
+            [
+                robot_pose[0] + final_distance * math.cos(robot_pose[2] + final_angle),
+                robot_pose[1] + final_distance * math.sin(robot_pose[2] + final_angle),
+            ],
+            dtype=np.float32,
+        )
+
+        applied_scale = distance_scale
+        if base_distance > 1e-6:
+            applied_scale = float(np.clip(final_distance / base_distance, 0.0, 1.0))
+
+        decision_meta.update(
+            {
+                "anchor_index": anchor_index,
+                "anchor_base_distance": base_distance,
+                "anchor_base_angle": base_angle,
+                "distance_scale": distance_scale,
+                "distance_scale_applied": applied_scale,
+                "angle_offset_applied": _wrap_angle(final_angle - base_angle),
+                "final_distance": final_distance,
+                "final_angle": final_angle,
+                "distance_clip_limit": clip_limit,
+                "window_margin": margin if clip_limit is not None else None,
+            }
+        )
+
+        if decision_meta.get("selected_waypoint") is None and anchor_index is not None:
+            decision_meta["selected_waypoint"] = anchor_index
+
+        if decision_meta.get("active_window_index") is None and window_metrics:
+            window_idx = window_metrics.get("index")
+            if window_idx is not None:
+                decision_meta["active_window_index"] = window_idx
+
+        return final_distance, final_angle, decision_meta, world_target
 
     def step(self, laser_scan, goal_distance, goal_cos, goal_sin, robot_pose, goal_position=None):
         """
@@ -142,10 +365,14 @@ class HierarchicalNavigationSystem:
 
         goal_info = [goal_distance, goal_cos, goal_sin]
 
+        throttle_ready = (self.step_count - self.last_replanning_step) >= self.trigger_step_interval
+        force_trigger = window_metrics.get("limit_exceeded", False)
+        effective_throttle = throttle_ready or force_trigger
+
         # 标志位：是否需要重新生成子目标
         if self.current_subgoal_world is None:
             should_replan = True
-        else:
+        elif effective_throttle:
             should_replan = self.high_level_planner.check_triggers(
                 laser_scan,
                 robot_pose,
@@ -153,8 +380,12 @@ class HierarchicalNavigationSystem:
                 prev_action=self.prev_action,
                 current_step=self.step_count,
                 window_metrics=window_metrics,
+                throttle_ready=effective_throttle,
             )
-        if window_metrics.get("limit_exceeded", False):
+        else:
+            should_replan = False
+
+        if force_trigger:
             should_replan = True
 
         subgoal_distance: Optional[float] = None
@@ -162,7 +393,7 @@ class HierarchicalNavigationSystem:
         decision_meta: dict = {}
 
         if should_replan:
-            subgoal_distance, subgoal_angle, decision_meta = self.high_level_planner.generate_subgoal(
+            distance_scale, angle_offset, decision_meta = self.high_level_planner.generate_subgoal(
                 laser_scan,
                 goal_distance,
                 goal_cos,
@@ -175,10 +406,39 @@ class HierarchicalNavigationSystem:
             )
             self.reset_window_tracking()
             self.update_selected_waypoint(decision_meta.get("selected_waypoint"))
-            planner_world = self.high_level_planner.current_subgoal_world
-            self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world, dtype=np.float32)
+
+            final_distance, final_angle, decision_meta, world_target = self._synthesise_subgoal(
+                distance_scale=distance_scale,
+                angle_offset=angle_offset,
+                robot_pose=robot_pose,
+                goal_distance=goal_distance,
+                goal_cos=goal_cos,
+                goal_sin=goal_sin,
+                waypoint_candidates=waypoint_candidates,
+                window_metrics=window_metrics,
+                metadata=decision_meta,
+            )
+
+            goal_direction_rel = math.atan2(goal_sin, goal_cos)
+            self.high_level_planner.commit_subgoal(
+                distance=final_distance,
+                angle=final_angle,
+                world_target=world_target,
+                goal_distance=goal_distance,
+                goal_direction=goal_direction_rel,
+                prev_action=self.prev_action,
+                current_step=self.step_count,
+            )
+
+            self.current_subgoal_world = world_target
             self.last_replanning_step = self.step_count
             self.high_level_planner.event_trigger.reset_time(self.step_count)
+
+            self.current_subgoal = (final_distance, final_angle)
+
+            subgoal_distance = final_distance
+            subgoal_angle = final_angle
+            planner_world = world_target
         else:
             planner_world = self.high_level_planner.current_subgoal_world
             if planner_world is not None:
@@ -216,20 +476,19 @@ class HierarchicalNavigationSystem:
             laser_scan,
             self.current_subgoal[0],  # 子目标距离
             self.current_subgoal[1],  # 子目标角度
-            self.prev_action  # 上一步的动作（用于平滑控制）
+            self.prev_action  # 上一步的归一化动作（用于平滑控制）
         )
 
         # 通过低层控制器预测下一步动作（网络输出）
         action = self.low_level_controller.predict_action(low_level_state)
 
         # 将网络输出映射为实际机器人可执行的速度命令
-        # 将线速度从 [-1,1] 映射为 [0, v_max]
-        linear_velocity = 0.5 * (action[0] + 1.0) * self.motion_limits.v_max
-        # 将角速度映射到 [-omega_max, omega_max]
-        angular_velocity = action[1] * self.motion_limits.omega_max
+        linear_velocity, angular_velocity = map_actor_to_commands(action, self.motion_limits)
 
         # 记录当前动作（用于下一次输入）
-        self.prev_action = [linear_velocity, angular_velocity]
+        norm_lin, norm_ang = map_commands_to_actor(linear_velocity, angular_velocity, self.motion_limits)
+        self.prev_action = [norm_lin, norm_ang]
+        self.prev_command = [linear_velocity, angular_velocity]
 
         # 返回控制命令
         return [linear_velocity, angular_velocity]
@@ -453,8 +712,9 @@ class HierarchicalNavigationSystem:
         self.current_subgoal = None  # 清空子目标
         self.current_subgoal_world = None
         self.prev_action = [0.0, 0.0]  # 重置上一步动作
+        self.prev_command = [0.0, 0.0]
         self.step_count = 0  # 步数归零
-        self.last_replanning_step = 0  # 清除上次规划记录
+        self.last_replanning_step = -self.trigger_step_interval  # 清除上次规划记录
         self.high_level_planner.current_subgoal = None
         self.high_level_planner.current_subgoal_world = None
         self.high_level_planner.prev_action = [0.0, 0.0]
@@ -466,6 +726,7 @@ class HierarchicalNavigationSystem:
 def create_navigation_system(
     *,
     load_models: bool = False,
+
     world_file: Optional[Path] = None,
     config: Optional[IntegrationConfig] = None,
 ):
@@ -483,6 +744,7 @@ def create_navigation_system(
         action_dim=2,  # 动作维度
         max_action=1.0,  # 最大动作幅值
         load_models=load_models,  # 是否加载模型
+
         world_file=world_file,
         config=config,
     )
