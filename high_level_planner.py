@@ -17,6 +17,18 @@ from torch.utils.tensorboard import SummaryWriter
 from ethsrl.global_planner import WaypointWindow
 from ethsrl.config import MotionConfig, TriggerConfig
 
+
+def _logit(value: torch.Tensor) -> torch.Tensor:
+    """Compute element-wise logit for values in (0, 1)."""
+
+    return torch.log(value) - torch.log1p(-value)
+
+
+def _artanh(value: torch.Tensor) -> torch.Tensor:
+    """Compute element-wise inverse tanh for values in (-1, 1)."""
+
+    return 0.5 * (torch.log1p(value) - torch.log1p(-value))
+
 class SubgoalNetwork(nn.Module):
     """
     子目标生成神经网络
@@ -97,12 +109,22 @@ class SubgoalNetwork(nn.Module):
         x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU：[batch_size, hidden_dim]
         x = F.relu(self.fc2(x))  # 第二层全连接 + ReLU：[batch_size, hidden_dim//2]
 
-        # 生成子目标调整量
-        distance_scale = torch.sigmoid(self.distance_head(x))  # 距离缩放系数∈(0, 1)
-        angle_offset = torch.tanh(self.angle_head(x)) * (np.pi / 4)  # 角度偏移量∈[-π/4, π/4]
+        # 生成未约束的距离与角度表示
+        distance_logits = self.distance_head(x)
+        angle_logits = self.angle_head(x)
+
+        # 在推理阶段再压回合法区间，并在距离上保留 ε 以避免饱和
+        eps = 1e-3
+        distance_scale = torch.sigmoid(distance_logits) * (1 - 2 * eps) + eps
+        angle_offset = torch.tanh(angle_logits) * (np.pi / 4)
 
         # squeeze掉最后一维，保持批量维度，便于后续堆叠或索引
-        return distance_scale.squeeze(-1), angle_offset.squeeze(-1)
+        return (
+            distance_scale.squeeze(-1),
+            angle_offset.squeeze(-1),
+            distance_logits.squeeze(-1),
+            angle_logits.squeeze(-1),
+        )
 
 
 class EventTrigger:
@@ -616,7 +638,12 @@ class HighLevelPlanner:
 
         # 使用网络生成子目标（不计算梯度）
         with torch.no_grad():  # 推理模式，不计算梯度
-            distance_scale_tensor, angle_offset_tensor = self.subgoal_network(
+            (
+                distance_scale_tensor,
+                angle_offset_tensor,
+                _,
+                _,
+            ) = self.subgoal_network(
                 laser_tensor.unsqueeze(0),  # 增加批次维度：[1, belief_dim] -> [1, 1, belief_dim]
                 goal_tensor.unsqueeze(0),  # 增加批次维度：[3] -> [1, 3]
                 action_tensor.unsqueeze(0),  # 增加批次维度：[2] -> [1, 2]
@@ -831,9 +858,30 @@ class HighLevelPlanner:
         prev_action = states[:, -action_feature_dim:]
 
         # 生成子目标（网络预测）
-        distance_scales, angle_offsets = self.subgoal_network(laser_scans, goal_info, prev_action)
+        (
+            distance_scales,
+            angle_offsets,
+            distance_logits,
+            angle_logits,
+        ) = self.subgoal_network(laser_scans, goal_info, prev_action)
+
         # 合并调整量为完整动作 [distance_scale, angle_offset]
         subgoals = torch.stack((distance_scales, angle_offsets), dim=1)
+
+        # 将监督信号反变换到未约束空间
+        eps = 1e-3
+        target_distance = actions[:, 0:1]
+        target_angle = actions[:, 1:2]
+
+        clamped_distance = target_distance.clamp(eps, 1.0 - eps)
+        distance_targets = _logit(clamped_distance)
+
+        angle_scale = np.pi / 4
+        normalized_angle = (target_angle / angle_scale).clamp(-1.0 + eps, 1.0 - eps)
+        angle_targets = _artanh(normalized_angle)
+
+        distance_logits = distance_logits.unsqueeze(1)
+        angle_logits = angle_logits.unsqueeze(1)
 
         # 基于软最大化的奖励加权，温度参数控制集中度
         with torch.no_grad():
@@ -841,8 +889,10 @@ class HighLevelPlanner:
             scaled = (rewards - rewards.max()) / temperature
             weights = torch.softmax(scaled.squeeze(1), dim=0).unsqueeze(1)
 
-        # 计算每个样本的MSE损失
-        per_sample_loss = F.mse_loss(subgoals, actions, reduction='none').mean(dim=1, keepdim=True)
+        # 计算每个样本的Huber损失
+        distance_loss = F.smooth_l1_loss(distance_logits, distance_targets, reduction='none')
+        angle_loss = F.smooth_l1_loss(angle_logits, angle_targets, reduction='none')
+        per_sample_loss = distance_loss + angle_loss
         # 加权损失：突出高回报样本的重要性
         loss = (per_sample_loss * weights).sum() / weights.sum()
 
