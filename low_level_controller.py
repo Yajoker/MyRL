@@ -275,7 +275,7 @@ class LowLevelController:
             laser_scan: 原始激光雷达扫描数据
             subgoal_distance: 到子目标的距离
             subgoal_angle: 到子目标的角度
-            prev_action: 历史动作 [线速度, 角速度]
+            prev_action: 历史动作（归一化）[a_lin, a_ang]，范围[-1, 1]
 
         Returns:
             处理后的状态向量
@@ -290,9 +290,12 @@ class LowLevelController:
         norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
         norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
 
-        # 处理历史动作
-        lin_vel = prev_action[0] * 2  # 缩放到适当范围
-        ang_vel = (prev_action[1] + 1) / 2  # 缩放到[0, 1]范围
+        # 处理历史动作（直接使用归一化后的值）
+        prev_arr = np.asarray(prev_action, dtype=np.float32).flatten()
+        if prev_arr.size < 2:
+            raise ValueError("prev_action must contain at least two elements (a_lin, a_ang).")
+        lin_vel = float(np.clip(prev_arr[0], -1.0, 1.0))
+        ang_vel = float(np.clip(prev_arr[1], -1.0, 1.0))
 
         # 组合所有组件
         state = laser_scan.tolist() + [norm_distance, norm_angle] + [lin_vel, ang_vel]
