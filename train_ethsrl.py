@@ -339,13 +339,23 @@ def evaluate(
                     goal_direction=goal_direction_rel,
                     prev_action=prev_action,
                     current_step=steps,
+                    robot_pose=robot_pose,
                 )
-                system.current_subgoal_world = np.asarray(world_target, dtype=np.float32)
-                current_subgoal_world = system.current_subgoal_world.copy()
+                planner_target = system.high_level_planner.current_subgoal_world
+                if planner_target is not None:
+                    system.current_subgoal_world = np.asarray(planner_target, dtype=np.float32)
+                    current_subgoal_world = system.current_subgoal_world.copy()
+                else:
+                    system.current_subgoal_world = None
+                    current_subgoal_world = None
                 system.high_level_planner.event_trigger.reset_time(steps)
                 system.last_replanning_step = steps
                 current_subgoal_completed = False
-                subgoal_distance, subgoal_angle = final_distance, final_angle
+                if system.high_level_planner.current_subgoal is not None:
+                    smoothed_distance, smoothed_angle = system.high_level_planner.current_subgoal
+                    subgoal_distance, subgoal_angle = smoothed_distance, smoothed_angle
+                else:
+                    subgoal_distance, subgoal_angle = final_distance, final_angle
             else:
                 planner_world = system.high_level_planner.current_subgoal_world
                 if planner_world is not None:
@@ -752,12 +762,22 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                     goal_direction=goal_direction_rel,
                     prev_action=prev_action,
                     current_step=steps,
+                    robot_pose=robot_pose,
                 )
-                system.current_subgoal_world = np.asarray(world_target, dtype=np.float32)
-                current_subgoal_world = system.current_subgoal_world.copy()
+                planner_target = system.high_level_planner.current_subgoal_world
+                if planner_target is not None:
+                    system.current_subgoal_world = np.asarray(planner_target, dtype=np.float32)
+                    current_subgoal_world = system.current_subgoal_world.copy()
+                else:
+                    system.current_subgoal_world = None
+                    current_subgoal_world = None
                 system.high_level_planner.event_trigger.reset_time(steps)
                 system.last_replanning_step = steps
-                subgoal_distance, subgoal_angle = final_distance, final_angle
+                if system.high_level_planner.current_subgoal is not None:
+                    smoothed_distance, smoothed_angle = system.high_level_planner.current_subgoal
+                    subgoal_distance, subgoal_angle = smoothed_distance, smoothed_angle
+                else:
+                    subgoal_distance, subgoal_angle = final_distance, final_angle
 
                 # 构建高层状态向量
                 start_state = system.high_level_planner.build_state_vector(
