@@ -211,17 +211,18 @@ class LowLevelController:
     """
 
     def __init__(
-            self,
-            state_dim,
-            action_dim,
-            max_action,
-            device,
-            lr=3e-4,
-            save_every=0,
-            load_model=False,
-            save_directory=Path("ethsrl/models/low_level"),
-            model_name="low_level_controller",
-            load_directory=None,
+        self,
+        state_dim,
+        action_dim,
+        max_action,
+        device,
+        lr=3e-4,
+        save_every=0,
+        load_model=False,
+        save_directory=Path("ethsrl/models/low_level"),
+        model_name="low_level_controller",
+        load_directory=None,
+        distance_normalizer: float = 1.0,
     ):
         """
         初始化低层控制器
@@ -237,11 +238,13 @@ class LowLevelController:
             save_directory: 模型保存目录
             model_name: 模型文件名
             load_directory: 模型加载目录（如果为None则使用save_directory）
+            distance_normalizer: 子目标距离归一化尺度
         """
         self.device = device
         self.action_dim = action_dim
         self.max_action = max_action
         self.state_dim = state_dim
+        self.distance_normalizer = max(1e-6, float(distance_normalizer))
 
         # 初始化Actor网络和目标网络
         self.actor = LowLevelActorNetwork(action_dim).to(device)
@@ -287,7 +290,7 @@ class LowLevelController:
         laser_scan /= 7.0  # 归一化到[0, 1]范围
 
         # 归一化子目标距离和角度
-        norm_distance = min(subgoal_distance / 1.0, 1.0)  # 归一化到[0, 1]，把子目标 0~0.45 m 映到 0~0.45（量级与 LiDAR 相近）
+        norm_distance = min(subgoal_distance / self.distance_normalizer, 1.0)
         norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
 
         # 处理历史动作（直接使用归一化后的值）
