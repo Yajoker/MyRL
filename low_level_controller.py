@@ -287,7 +287,7 @@ class LowLevelController:
         laser_scan /= 7.0  # 归一化到[0, 1]范围
 
         # 归一化子目标距离和角度
-        norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
+        norm_distance = min(subgoal_distance / 1.0, 1.0)  # 归一化到[0, 1]，把子目标 0~0.45 m 映到 0~0.45（量级与 LiDAR 相近）
         norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
 
         # 处理历史动作（直接使用归一化后的值）
