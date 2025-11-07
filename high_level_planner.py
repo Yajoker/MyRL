@@ -811,6 +811,7 @@ class HighLevelPlanner:
                         "distance": rel_dist,
                         "angle": rel_angle,
                         "radius": float(window_obj.radius),
+                        "tangent_heading": float(getattr(window_obj, "tangent_heading", 0.0)),
                     }
                 )
 
