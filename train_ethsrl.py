@@ -796,7 +796,13 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                 start_window_distance = meta_metrics.get("distance")
                 target_window_index = metadata.get("selected_waypoint")
                 raw_distance_scale = float(metadata.get("distance_scale", distance_scale)) if metadata else float(distance_scale)
-                applied_distance_scale = float(metadata.get("distance_scale_applied", raw_distance_scale)) if metadata else raw_distance_scale
+                window_distance_scale = None
+                if metadata is not None:
+                    window_distance_scale = metadata.get("distance_scale_window_applied")
+                if window_distance_scale is None:
+                    applied_distance_scale = float(metadata.get("distance_scale_applied", raw_distance_scale)) if metadata else raw_distance_scale
+                else:
+                    applied_distance_scale = float(window_distance_scale)
                 angle_offset_action = float(metadata.get("angle_offset_applied", angle_offset)) if metadata else float(angle_offset)
 
                 current_subgoal_context = SubgoalContext(
