@@ -21,9 +21,9 @@ class LowLevelRewardConfig:
     safety_weight: float = 0.8                       # 安全性奖励权重
     safety_sensitivity: float = 2.0                  # 安全敏感性系数（影响安全奖励计算）
     safety_clearance: float = 1.0                    # 安全距离阈值
-    goal_bonus: float = 60.0                         # 到达最终目标的奖励
-    subgoal_bonus: float = 18.0                      # 到达子目标的奖励
-    collision_penalty: float = -50.0                 # 碰撞惩罚
+    goal_bonus: float = 35.0                         # 到达最终目标的奖励
+    subgoal_bonus: float = 12.0                      # 到达子目标的奖励
+    collision_penalty: float = -30.0                 # 碰撞惩罚
     timeout_penalty: float = -15.0                   # 超时惩罚
 
     def __post_init__(self) -> None:  # type: ignore[override]
@@ -41,11 +41,11 @@ class HighLevelRewardConfig:
     path_progress_weight: float = 5.0                # 路径进度奖励权重
     global_progress_weight: float = 2.0              # 全局进度奖励权重
     low_level_return_scale: float = 0.02             # 低层控制器回报的缩放因子
-    subgoal_completion_bonus: float = 4.0            # 子目标完成奖励
+    subgoal_completion_bonus: float = 10.0            # 子目标完成奖励
     low_level_failure_penalty: float = -10.0         # 低层控制器失败的惩罚
-    goal_bonus: float = 60.0                         # 到达最终目标的奖励
-    collision_penalty: float = -50.0                 # 碰撞惩罚
-    timeout_penalty: float = -25.0                   # 超时惩罚
+    goal_bonus: float = 35.0                         # 到达最终目标的奖励
+    collision_penalty: float = -30.0                 # 碰撞惩罚
+    timeout_penalty: float = -15.0                   # 超时惩罚
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,7 @@ class TriggerConfig:
     """High-level trigger thresholds and timing rules."""
 
     safety_trigger_distance: float = 0.7             # 安全触发距离阈值
-    subgoal_reach_threshold: float = 0.5             # 子目标到达判定阈值
+    subgoal_reach_threshold: float = 0.3             # 子目标到达判定阈值
     stagnation_steps: int = 60                       # 停滞步数阈值（检测是否卡住）
     stagnation_turn_threshold: float = 3.5           # 累计转向阈值（弧度）
     progress_epsilon: float = 0.05                   # 进度变化最小阈值下限（采用窗口比例时的兜底值）
@@ -114,6 +114,8 @@ class PlannerConfig:
     waypoint_lookahead: int = 3                      # 前瞻路径点的数量
     window_spacing: float = 2.0                      # 路径点窗口间距
     window_radius: float = 0.6                       # 路径点窗口半径
+    subgoal_distance_normalizer: float = 1.5         # 低层观测中的子目标距离归一化尺度
+    use_path_tangent: bool = True                    # 是否使用窗口切线作为子目标基准方向
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -127,6 +129,8 @@ class PlannerConfig:
             raise ValueError("window_spacing must be positive")
         if self.window_radius <= 0:
             raise ValueError("window_radius must be positive")
+        if self.subgoal_distance_normalizer <= 0:
+            raise ValueError("subgoal_distance_normalizer must be positive")
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,7 @@ class WindowRuntimeConfig:
 
     margin: float = 0.15                             # 窗口边界裕度
     step_limit: int = 80                             # 步数限制（在窗口内的最大步数）
+    clip_to_window: bool = False                     # 是否强制将子目标裁剪到窗口半径内
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -148,15 +153,15 @@ class WindowRuntimeConfig:
 class TrainingConfig:
     """End-to-end training and evaluation hyper-parameters."""
 
-    buffer_size: int = 80_000                        # 经验回放缓冲区大小
-    batch_size: int = 64                             # 训练批次大小
+    buffer_size: int = 100_000                        # 经验回放缓冲区大小
+    batch_size: int = 128                             # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
     max_steps: int = 350                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 100                   # 每次训练的迭代次数
     exploration_noise: float = 0.15                  # 探索噪声系数
-    min_buffer_size: int = 1_000                     # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 5_000                     # 开始训练的最小缓冲区大小
     eval_episodes: int = 10                          # 评估回合数
     save_every: int = 5                              # 保存模型的频率（每N个周期）
     world_file: str = "env_b.yaml"                   # 环境配置文件
