@@ -16,9 +16,9 @@ from typing import Optional
 class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
-    progress_weight: float = 12.0                    # 前进进度奖励权重
-    efficiency_penalty: float = 0.12                 # 效率惩罚系数（惩罚不必要的动作）
-    safety_weight: float = 1.8                       # 安全性奖励权重
+    progress_weight: float = 5.0                    # 前进进度奖励权重
+    efficiency_penalty: float = 0.07                 # 效率惩罚系数（惩罚不必要的动作）
+    safety_weight: float = 0.8                       # 安全性奖励权重
     safety_sensitivity: float = 2.0                  # 安全敏感性系数（影响安全奖励计算）
     safety_clearance: float = 1.0                    # 安全距离阈值
     goal_bonus: float = 60.0                         # 到达最终目标的奖励
@@ -72,9 +72,14 @@ class TriggerConfig:
 
     safety_trigger_distance: float = 0.7             # 安全触发距离阈值
     subgoal_reach_threshold: float = 0.5             # 子目标到达判定阈值
-    stagnation_steps: int = 30                       # 停滞步数阈值（检测是否卡住）
-    progress_epsilon: float = 0.1                    # 进度变化最小阈值（小于此值视为无进展）
-    min_interval: float = 1.0                        # 最小触发间隔时间
+    stagnation_steps: int = 60                       # 停滞步数阈值（检测是否卡住）
+    stagnation_turn_threshold: float = 3.5           # 累计转向阈值（弧度）
+    progress_epsilon: float = 0.05                   # 进度变化最小阈值下限（采用窗口比例时的兜底值）
+    progress_epsilon_ratio: float = 0.02             # 进度阈值相对于窗口半径的比例
+    min_interval: float = 0.0                        # 最小触发间隔时间（秒，优先使用步数配置）
+    min_step_interval: int = 10                      # 最小触发间隔步数
+    window_inside_hold: int = 3                      # 进入窗口后至少驻留的步数
+    subgoal_smoothing_alpha: float = 0.7             # 子目标EMA平滑系数
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -84,10 +89,20 @@ class TriggerConfig:
             raise ValueError("subgoal_reach_threshold must be positive")
         if self.stagnation_steps <= 0:
             raise ValueError("stagnation_steps must be positive")
+        if self.stagnation_turn_threshold < 0:
+            raise ValueError("stagnation_turn_threshold must be non-negative")
         if self.progress_epsilon < 0:
             raise ValueError("progress_epsilon must be non-negative")
+        if self.progress_epsilon_ratio < 0:
+            raise ValueError("progress_epsilon_ratio must be non-negative")
         if self.min_interval < 0:
             raise ValueError("min_interval must be non-negative")
+        if self.min_step_interval <= 0:
+            raise ValueError("min_step_interval must be positive")
+        if self.window_inside_hold < 0:
+            raise ValueError("window_inside_hold must be non-negative")
+        if not 0.0 <= self.subgoal_smoothing_alpha < 1.0:
+            raise ValueError("subgoal_smoothing_alpha must be in [0, 1)")
 
 
 @dataclass(frozen=True)
