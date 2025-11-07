@@ -36,9 +36,14 @@ class WaypointWindow:
 
     center: np.ndarray
     radius: float
+    tangent_heading: float = 0.0
 
     def clone(self) -> "WaypointWindow":
-        return WaypointWindow(center=self.center.copy(), radius=float(self.radius))
+        return WaypointWindow(
+            center=self.center.copy(),
+            radius=float(self.radius),
+            tangent_heading=float(self.tangent_heading),
+        )
 
 
 class GlobalPlanner:
@@ -520,7 +525,9 @@ class GlobalPlanner:
         """将路径离散化为等间距的目标窗口序列。"""
 
         if not path_points:
-            return [WaypointWindow(center=goal_xy.copy(), radius=self.window_radius)]
+            delta = goal_xy - start_xy
+            heading = math.atan2(float(delta[1]), float(delta[0])) if np.linalg.norm(delta) > 1e-6 else 0.0
+            return [WaypointWindow(center=goal_xy.copy(), radius=self.window_radius, tangent_heading=heading)]
 
         points: List[np.ndarray] = [np.asarray(start_xy, dtype=np.float32)]
         points.extend(np.asarray(p, dtype=np.float32) for p in path_points)
@@ -534,6 +541,7 @@ class GlobalPlanner:
         cursor = points[0].copy()
         distance_acc = 0.0
         point_idx = 1
+        last_heading: Optional[float] = None
 
         while point_idx < len(points):
             segment_end = points[point_idx]
@@ -546,23 +554,65 @@ class GlobalPlanner:
                 continue
 
             direction = segment_vec / segment_len
+            heading = math.atan2(float(direction[1]), float(direction[0]))
             remaining = spacing - distance_acc
 
             if segment_len + distance_acc < spacing - 1e-6:
                 distance_acc += segment_len
                 cursor = segment_end.copy()
+                last_heading = heading
                 point_idx += 1
                 continue
 
             sample_point = cursor + direction * remaining
-            windows.append(WaypointWindow(center=sample_point.astype(np.float32), radius=radius))
+            windows.append(
+                WaypointWindow(
+                    center=sample_point.astype(np.float32),
+                    radius=radius,
+                    tangent_heading=heading,
+                )
+            )
             cursor = sample_point
             distance_acc = 0.0
+            last_heading = heading
+
+        # 追加终点窗口，以最后一段方向为切线
+        goal_delta = goal_xy - cursor
+        goal_distance = float(np.linalg.norm(goal_delta))
+        if goal_distance > 1e-6:
+            goal_heading = math.atan2(float(goal_delta[1]), float(goal_delta[0]))
+        else:
+            goal_heading = last_heading if last_heading is not None else 0.0
 
         if not windows:
-            windows.append(WaypointWindow(center=goal_xy.copy(), radius=radius))
+            start_delta = goal_xy - start_xy
+            start_heading = math.atan2(float(start_delta[1]), float(start_delta[0])) if np.linalg.norm(start_delta) > 1e-6 else 0.0
+            windows.append(
+                WaypointWindow(
+                    center=goal_xy.copy(),
+                    radius=radius,
+                    tangent_heading=start_heading,
+                )
+            )
         elif np.linalg.norm(goal_xy - windows[-1].center) > 1e-3:
-            windows.append(WaypointWindow(center=goal_xy.copy(), radius=radius))
+            heading = goal_heading if last_heading is None else last_heading
+            if goal_distance > 1e-6:
+                heading = goal_heading
+            windows.append(
+                WaypointWindow(
+                    center=goal_xy.copy(),
+                    radius=radius,
+                    tangent_heading=heading if heading is not None else 0.0,
+                )
+            )
+        elif last_heading is not None:
+            # 确保最后一个窗口携带最新切线
+            tail_window = windows[-1]
+            windows[-1] = WaypointWindow(
+                center=tail_window.center.copy(),
+                radius=tail_window.radius,
+                tangent_heading=last_heading,
+            )
 
         return windows
 
@@ -581,3 +631,10 @@ class GlobalPlanner:
             if self._point_blocked(point):
                 return False
         return True
+
+    def has_line_of_sight(self, start: Sequence[float], end: Sequence[float]) -> bool:
+        """Public helper: determine if the straight path between two world points is free."""
+
+        start_xy = np.asarray(start, dtype=np.float32)[:2]
+        end_xy = np.asarray(end, dtype=np.float32)[:2]
+        return self._line_is_free(start_xy, end_xy)
