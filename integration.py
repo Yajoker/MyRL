@@ -152,7 +152,8 @@ class HierarchicalNavigationSystem:
             device=self.device,  # 计算设备
             save_directory=models_directory / "low_level",  # 模型保存路径
             model_name="low_level_controller",  # 模型名称
-            load_model=load_models  # 是否加载已有模型
+            load_model=load_models,  # 是否加载已有模型
+            distance_normalizer=self.config.planner.subgoal_distance_normalizer,
         )
 
         # 系统运行状态变量
@@ -169,6 +170,9 @@ class HierarchicalNavigationSystem:
         self.subgoal_threshold = self.config.trigger.subgoal_reach_threshold
         self.waypoint_lookahead = self.config.planner.waypoint_lookahead
         self.window_step_limit = max(1, int(self.config.window.step_limit))
+        self.clip_to_window = bool(getattr(self.config.window, "clip_to_window", False))
+        self.use_path_tangent = bool(getattr(self.config.planner, "use_path_tangent", True))
+        self.window_margin = float(self.config.window.margin)
 
         self.window_step_count = 0
         self.steps_inside_window = 0
@@ -229,12 +233,17 @@ class HierarchicalNavigationSystem:
             world_heading = math.atan2(float(offset[1]), float(offset[0])) if base_distance > 1e-6 else yaw
             base_angle = _wrap_angle(world_heading - yaw)
             radius = float(anchor_window.radius)
+            tangent_raw = getattr(anchor_window, "tangent_heading", None)
+            tangent_heading = float(tangent_raw) if tangent_raw is not None else None
             return {
                 "index": anchor_index,
                 "centre": centre,
                 "radius": radius,
+                "tangent_heading": tangent_heading,
                 "base_distance": base_distance,
                 "base_angle": base_angle,
+                "robot_distance": base_distance,
+                "robot_bearing": base_angle,
                 "world_heading": world_heading,
             }
 
@@ -248,6 +257,9 @@ class HierarchicalNavigationSystem:
             "radius": None,
             "base_distance": base_distance,
             "base_angle": base_angle_rel,
+            "tangent_heading": None,
+            "robot_distance": base_distance,
+            "robot_bearing": base_angle_rel,
             "world_heading": world_heading,
         }
 
@@ -276,53 +288,228 @@ class HierarchicalNavigationSystem:
             goal_sin,
         )
 
-        base_distance = float(anchor.get("base_distance", 0.0))
-        base_angle = float(anchor.get("base_angle", 0.0))
-        window_radius = anchor.get("radius")
         anchor_index = anchor.get("index")
+        window_radius = anchor.get("radius")
+        anchor_centre = anchor.get("centre")
+        anchor_tangent = anchor.get("tangent_heading")
+        robot_base_distance = float(anchor.get("robot_distance", anchor.get("base_distance", 0.0)))
+        robot_base_angle = float(anchor.get("robot_bearing", anchor.get("base_angle", 0.0)))
+        world_heading = float(anchor.get("world_heading", robot_pose[2]))
 
         distance_scale = float(np.clip(distance_scale, 0.0, 1.0))
-        scaled_distance = distance_scale * base_distance
+        margin = self.window_margin
 
-        margin = float(self.config.window.margin)
-        clip_limit = None
-        if window_radius is not None:
-            clip_limit = max(0.0, float(window_radius) - margin)
+        robot_xy = np.asarray(robot_pose[:2], dtype=np.float32)
+        yaw = float(robot_pose[2])
 
-        if clip_limit is not None:
-            final_distance = float(min(scaled_distance, clip_limit))
+        los_attempted = False
+        los_applied = False
+        los_checks = 0
+        los_success: Optional[bool] = None
+        los_backoff_step = 0.1
+        los_min_distance = 0.1
+
+        final_distance: float
+        final_angle: float
+        world_target: np.ndarray
+        distance_scale_window_applied: Optional[float] = None
+        window_retreat: Optional[float] = None
+        angle_offset_applied: float
+        phi_base: Optional[float] = None
+        phi: float = 0.0
+        window_distance: Optional[float] = None
+        window_radius_limit: Optional[float] = None
+        target_radius: Optional[float] = None
+
+        if anchor_centre is not None and window_radius is not None and float(window_radius) > 0.0:
+            centre = np.asarray(anchor_centre, dtype=np.float32)
+            radius_val = float(window_radius)
+            window_radius_limit = max(0.0, radius_val - margin)
+            window_epsilon = 1e-3
+            span = max(0.0, window_radius_limit - window_epsilon)
+
+            if window_radius_limit <= window_epsilon:
+                target_radius = window_radius_limit
+            else:
+                target_radius = window_epsilon + distance_scale * span
+
+            phi_base = float(anchor_tangent) if (self.use_path_tangent and anchor_tangent is not None) else None
+            if phi_base is not None and not math.isfinite(phi_base):
+                phi_base = None
+
+            if phi_base is None:
+                centre_to_robot = robot_xy - centre
+                if np.linalg.norm(centre_to_robot) > 1e-6:
+                    phi_base = math.atan2(float(centre_to_robot[1]), float(centre_to_robot[0])) + math.pi
+                else:
+                    phi_base = world_heading
+
+            phi = _wrap_angle(phi_base + angle_offset)
+
+            initial_radius = target_radius
+
+            planner = None if self.clip_to_window else self.global_planner
+            if planner is not None and target_radius > 1e-6:
+                los_attempted = True
+                r_floor = max(0.0, min(window_radius_limit, los_min_distance))
+                if window_radius_limit <= window_epsilon:
+                    r_floor = window_radius_limit
+                r_floor = max(window_epsilon if window_radius_limit > window_epsilon else 0.0, r_floor)
+
+                current_radius = target_radius
+
+                def build_target(radius_val: float) -> np.ndarray:
+                    return np.array(
+                        [
+                            centre[0] + radius_val * math.cos(phi),
+                            centre[1] + radius_val * math.sin(phi),
+                        ],
+                        dtype=np.float32,
+                    )
+
+                while current_radius > 1e-6:
+                    candidate_target = build_target(current_radius)
+                    los_checks += 1
+                    if planner.has_line_of_sight(robot_xy, candidate_target):
+                        los_success = True
+                        target_radius = current_radius
+                        break
+
+                    los_applied = True
+                    next_radius = max(r_floor, current_radius - los_backoff_step)
+                    if next_radius >= current_radius - 1e-6:
+                        los_success = False
+                        target_radius = next_radius
+                        break
+
+                    current_radius = next_radius
+
+                if los_success is None:
+                    los_success = False
+
+                if los_applied and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "LoS retreat (window) applied: r=%.3f -> %.3f (checks=%d, success=%s)",
+                        initial_radius,
+                        target_radius,
+                        los_checks,
+                        los_success,
+                    )
+
+            world_target = np.array(
+                [
+                    centre[0] + target_radius * math.cos(phi),
+                    centre[1] + target_radius * math.sin(phi),
+                ],
+                dtype=np.float32,
+            )
+
+            delta = world_target - robot_xy
+            final_distance = float(np.linalg.norm(delta))
+            final_angle = _wrap_angle(math.atan2(float(delta[1]), float(delta[0])) - yaw)
+
+            window_distance = float(np.linalg.norm(world_target - centre))
+            if window_radius_limit is not None and window_radius_limit > 1e-6:
+                distance_scale_window_applied = float(np.clip(target_radius / window_radius_limit, 0.0, 1.0))
+            elif window_radius_limit is not None:
+                distance_scale_window_applied = 0.0
+            window_retreat = float(max(0.0, initial_radius - target_radius))
+            angle_offset_applied = _wrap_angle(phi - (phi_base if phi_base is not None else 0.0))
+
         else:
-            final_distance = float(scaled_distance)
-        final_distance = max(0.0, final_distance)
+            # 回退到机器人锚点几何，保持兼容性
+            proposed_angle = _wrap_angle(robot_base_angle + angle_offset)
+            scaled_distance = float(distance_scale * robot_base_distance)
+            final_distance = max(0.0, scaled_distance)
+            clip_limit = None
 
-        final_angle = _wrap_angle(base_angle + angle_offset)
+            if self.clip_to_window and window_radius is not None:
+                clip_limit = max(0.0, float(window_radius) - margin)
+                if final_distance > clip_limit:
+                    final_distance = clip_limit
 
-        world_target = np.array(
-            [
-                robot_pose[0] + final_distance * math.cos(robot_pose[2] + final_angle),
-                robot_pose[1] + final_distance * math.sin(robot_pose[2] + final_angle),
-            ],
-            dtype=np.float32,
-        )
+            planner = None if self.clip_to_window else self.global_planner
+            if planner is not None and final_distance > 1e-6:
+                los_attempted = True
+                los_distance = final_distance
+                while los_distance > 1e-6:
+                    candidate_target = np.array(
+                        [
+                            robot_pose[0] + los_distance * math.cos(yaw + proposed_angle),
+                            robot_pose[1] + los_distance * math.sin(yaw + proposed_angle),
+                        ],
+                        dtype=np.float32,
+                    )
+                    los_checks += 1
+                    if planner.has_line_of_sight(robot_xy, candidate_target):
+                        los_success = True
+                        final_distance = los_distance
+                        break
 
-        applied_scale = distance_scale
-        if base_distance > 1e-6:
-            applied_scale = float(np.clip(final_distance / base_distance, 0.0, 1.0))
+                    los_applied = True
+                    next_distance = max(los_min_distance, los_distance - los_backoff_step)
+                    if next_distance >= los_distance - 1e-6:
+                        los_success = False
+                        final_distance = next_distance
+                        break
 
-        decision_meta.update(
-            {
-                "anchor_index": anchor_index,
-                "anchor_base_distance": base_distance,
-                "anchor_base_angle": base_angle,
-                "distance_scale": distance_scale,
-                "distance_scale_applied": applied_scale,
-                "angle_offset_applied": _wrap_angle(final_angle - base_angle),
-                "final_distance": final_distance,
-                "final_angle": final_angle,
-                "distance_clip_limit": clip_limit,
-                "window_margin": margin if clip_limit is not None else None,
-            }
-        )
+                    los_distance = next_distance
+
+                if los_success is None:
+                    los_success = False
+
+            final_angle = proposed_angle
+            world_target = np.array(
+                [
+                    robot_pose[0] + final_distance * math.cos(yaw + final_angle),
+                    robot_pose[1] + final_distance * math.sin(yaw + final_angle),
+                ],
+                dtype=np.float32,
+            )
+            angle_offset_applied = _wrap_angle(final_angle - robot_base_angle)
+            target_radius = None
+
+        applied_scale_robot = distance_scale
+        if robot_base_distance > 1e-6:
+            applied_scale_robot = float(np.clip(final_distance / robot_base_distance, 0.0, 1.0))
+
+        meta_updates: Dict[str, object] = {
+            "anchor_index": anchor_index,
+            "anchor_base_distance": robot_base_distance,
+            "anchor_base_angle": robot_base_angle,
+            "anchor_tangent_heading": anchor_tangent,
+            "anchor_world_heading": world_heading,
+            "distance_scale": distance_scale,
+            "distance_scale_applied": applied_scale_robot,
+            "distance_scale_window_applied": distance_scale_window_applied,
+            "angle_offset_applied": angle_offset_applied,
+            "final_distance": final_distance,
+            "final_angle": final_angle,
+            "window_margin": margin if window_radius is not None else None,
+            "window_radius": float(window_radius) if window_radius is not None else None,
+            "window_radius_limit": window_radius_limit,
+            "window_centre": anchor_centre.tolist() if anchor_centre is not None else None,
+            "window_radius_applied": float(target_radius) if target_radius is not None else None,
+            "clip_to_window_enabled": self.clip_to_window,
+            "los_attempted": los_attempted,
+            "los_backoff_step": los_backoff_step,
+            "los_min_distance": los_min_distance,
+            "window_distance": window_distance,
+            "distance_retreat": window_retreat,
+            "phi_base": phi_base,
+            "phi_final": phi if anchor_centre is not None else None,
+        }
+
+        if los_attempted:
+            meta_updates.update(
+                {
+                    "los_retreat_applied": los_applied,
+                    "los_success": bool(los_success),
+                    "los_checks": los_checks,
+                }
+            )
+
+        decision_meta.update(meta_updates)
 
         if decision_meta.get("selected_waypoint") is None and anchor_index is not None:
             decision_meta["selected_waypoint"] = anchor_index
@@ -418,6 +605,19 @@ class HierarchicalNavigationSystem:
                 window_metrics=window_metrics,
                 metadata=decision_meta,
             )
+
+            if decision_meta.get("window_centre") is not None and decision_meta.get("window_radius") is not None:
+                centre_vec = np.asarray(decision_meta["window_centre"], dtype=np.float32)
+                radius_val = float(decision_meta["window_radius"])
+                permitted = max(0.0, radius_val - self.window_margin)
+                distance_to_centre = float(np.linalg.norm(world_target - centre_vec))
+                if distance_to_centre - permitted > 1e-3 and logger.isEnabledFor(logging.WARNING):
+                    logger.warning(
+                        "Subgoal outside window: dist=%.3f, limit=%.3f (margin=%.3f)",
+                        distance_to_centre,
+                        permitted,
+                        self.window_margin,
+                    )
 
             goal_direction_rel = math.atan2(goal_sin, goal_cos)
             self.high_level_planner.commit_subgoal(
@@ -526,17 +726,28 @@ class HierarchicalNavigationSystem:
             raw_path = self.global_planner.plan(start_xy, goal_vec)
         except RuntimeError as exc:
             print(f"[GlobalPlanner] {exc}. Using direct segment to goal.")
-            raw_path = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius)]
+            direction = goal_vec - start_xy
+            heading = float(math.atan2(direction[1], direction[0])) if np.linalg.norm(direction) > 1e-6 else 0.0
+            raw_path = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius, tangent_heading=heading)]
 
         filtered: List[WaypointWindow] = []
         for window in raw_path:
             centre = np.asarray(window.center, dtype=np.float32)
             if np.linalg.norm(centre - start_xy) <= 0.5 * self.global_planner.resolution:
                 continue
-            filtered.append(WaypointWindow(center=centre.copy(), radius=float(window.radius)))
+            tangent = float(getattr(window, "tangent_heading", 0.0))
+            filtered.append(
+                WaypointWindow(
+                    center=centre.copy(),
+                    radius=float(window.radius),
+                    tangent_heading=tangent,
+                )
+            )
 
         if not filtered:
-            filtered = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius)]
+            direction = goal_vec - start_xy
+            heading = float(math.atan2(direction[1], direction[0])) if np.linalg.norm(direction) > 1e-6 else 0.0
+            filtered = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius, tangent_heading=heading)]
 
         if not self._printed_plan_overview:
             goal_dists = [float(np.linalg.norm(goal_vec - wp.center)) for wp in filtered]
@@ -656,6 +867,7 @@ class HierarchicalNavigationSystem:
             "step_limit": self.window_step_limit,
             "limit_exceeded": self.window_limit_exceeded,
             "margin": margin,
+            "centre": centre.tolist(),
         }
 
     def update_window_state(
