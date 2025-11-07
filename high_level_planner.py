@@ -149,21 +149,34 @@ class EventTrigger:
         self.safety_trigger_distance = trigger_config.safety_trigger_distance
         self.subgoal_reach_threshold = trigger_config.subgoal_reach_threshold
         self.stagnation_steps = max(1, int(trigger_config.stagnation_steps))  # 确保至少1步
-        self.progress_epsilon = trigger_config.progress_epsilon
+        self.progress_epsilon_floor = float(max(trigger_config.progress_epsilon, 0.0))
+        self.progress_epsilon_ratio = float(max(trigger_config.progress_epsilon_ratio, 0.0))
+        self.current_progress_epsilon = self.progress_epsilon_floor
+        self.stagnation_turn_threshold = float(max(trigger_config.stagnation_turn_threshold, 0.0))
+        self.window_inside_hold = max(0, int(trigger_config.window_inside_hold))
         self.step_duration = motion_config.dt
-        self.min_interval = trigger_config.min_interval
-        # 计算最小步数间隔：将时间间隔转换为步数间隔
-        if self.step_duration > 0:
-            ratio = trigger_config.min_interval / self.step_duration if trigger_config.min_interval > 0 else 0
+        self.min_interval = float(max(trigger_config.min_interval, 0.0))
+
+        requested_steps = getattr(trigger_config, "min_step_interval", None)
+        if requested_steps is not None and requested_steps > 0:
+            self.min_step_interval = max(1, int(requested_steps))
+        elif self.step_duration > 0:
+            ratio = self.min_interval / self.step_duration if self.min_interval > 0 else 0
             self.min_step_interval = max(1, int(math.ceil(ratio)))
         else:
             self.min_step_interval = 1
+
+        # 同步时间阈值到步数设定，保证后续日志一致
+        if self.step_duration > 0:
+            self.min_interval = self.min_step_interval * self.step_duration
 
         # 状态变量初始化
         self.last_trigger_step = -self.min_step_interval  # 上次触发时间步，初始化为负值确保第一次可触发
         self.last_subgoal: Optional[np.ndarray] = None  # 上次子目标位置
         self.best_goal_distance: Optional[float] = None  # 最佳目标距离（用于进度跟踪）
         self.last_progress_step = 0  # 上次有进展的时间步
+        self.cumulative_turn = 0.0
+        self.last_heading_error: Optional[float] = None
 
     def safe_distance_trigger(self, min_obstacle_dist: float) -> bool:
         """若最近障碍物距离低于安全阈值则触发。"""
@@ -183,6 +196,7 @@ class EventTrigger:
         # 设置新的最佳距离基准
         self.best_goal_distance = goal_distance
         self.last_progress_step = current_step
+        self.reset_turn_metrics()
 
     def update_progress(self, goal_distance: float, current_step: int) -> None:
         """根据当前全局目标距离更新最优进度。"""
@@ -196,9 +210,47 @@ class EventTrigger:
             return
 
         # 如果当前距离比最佳距离小（更接近目标），且超过进度容差
-        if goal_distance + self.progress_epsilon < self.best_goal_distance:
+        if goal_distance + self.current_progress_epsilon < self.best_goal_distance:
             self.best_goal_distance = goal_distance  # 更新最佳距离
             self.last_progress_step = current_step  # 更新进度时间步
+            self.reset_turn_metrics()
+
+    def set_progress_context(self, window_radius: Optional[float]) -> None:
+        """根据窗口几何动态调整进度判据。"""
+
+        epsilon = self.progress_epsilon_floor
+        if window_radius is not None and window_radius > 0:
+            epsilon = max(epsilon, window_radius * self.progress_epsilon_ratio)
+        self.current_progress_epsilon = epsilon
+
+    @staticmethod
+    def _wrap(angle: float) -> float:
+        wrapped = (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
+        if wrapped <= -math.pi:
+            wrapped += 2.0 * math.pi
+        return wrapped
+
+    def update_heading_metrics(self, heading_error: Optional[float]) -> None:
+        """累计当前窗口阶段内的转向幅度。"""
+
+        if heading_error is None:
+            self.last_heading_error = None
+            return
+
+        angle = float(heading_error)
+        if self.last_heading_error is None:
+            self.last_heading_error = angle
+            return
+
+        delta = abs(self._wrap(angle - self.last_heading_error))
+        self.cumulative_turn += delta
+        self.last_heading_error = angle
+
+    def reset_turn_metrics(self) -> None:
+        """在进度重置或换子目标时清空累计转向。"""
+
+        self.cumulative_turn = 0.0
+        self.last_heading_error = None
 
     def is_stagnated(self, current_step: int) -> bool:
         """判断是否出现长时间进展停滞。"""
@@ -242,8 +294,13 @@ class EventTrigger:
         if dist_to_subgoal <= self.subgoal_reach_threshold:
             return True
 
-        # 条件2: 进度停滞触发 - 长时间没有向全局目标进展
-        stagnation = self.is_stagnated(current_step)
+        # 条件2: 进度停滞触发 - 长时间没有向全局目标进展且累计转向超阈值
+        self.update_heading_metrics(subgoal_angle)
+        turn_excess = (
+            self.stagnation_turn_threshold <= 0.0
+            or self.cumulative_turn >= self.stagnation_turn_threshold
+        )
+        stagnation = self.is_stagnated(current_step) and turn_excess
 
         # 条件3: 子目标受阻触发 - 子目标方向有障碍物
         blocked = False
@@ -277,6 +334,8 @@ class EventTrigger:
         self.last_subgoal = None
         self.best_goal_distance = None
         self.last_progress_step = 0
+        self.reset_turn_metrics()
+        self.current_progress_epsilon = self.progress_epsilon_floor
 
 
 class HighLevelPlanner:
@@ -358,6 +417,9 @@ class HighLevelPlanner:
         self.last_goal_direction = 0.0  # 上次目标方向角度
         self.prev_action = [0.0, 0.0]  # 上一动作（归一化坐标）
         self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标的世界坐标[x, y]
+        self.subgoal_smoothing_alpha = float(np.clip(self.trigger_config.subgoal_smoothing_alpha, 0.0, 0.999))
+        self._smoothed_distance: Optional[float] = None
+        self._smoothed_angle: Optional[float] = None
 
         # 如果请求则加载预训练模型
         if load_model:
@@ -449,6 +511,45 @@ class HighLevelPlanner:
     @staticmethod
     def _wrap_angle(angle: float) -> float:
         return math.atan2(math.sin(angle), math.cos(angle))
+
+    def _smooth_subgoal(self, distance: float, angle: float) -> Tuple[float, float]:
+        """Apply EMA smoothing to consecutive subgoals to damp oscillations."""
+
+        alpha = self.subgoal_smoothing_alpha
+        if not (0.0 < alpha < 1.0):
+            self._smoothed_distance = distance
+            self._smoothed_angle = angle
+            return distance, angle
+
+        if self._smoothed_distance is None or self._smoothed_angle is None:
+            self._smoothed_distance = distance
+            self._smoothed_angle = angle
+            return distance, angle
+
+        smoothed_distance = alpha * self._smoothed_distance + (1.0 - alpha) * distance
+
+        prev_vec = np.array(
+            [math.cos(self._smoothed_angle), math.sin(self._smoothed_angle)],
+            dtype=np.float32,
+        )
+        new_vec = np.array([math.cos(angle), math.sin(angle)], dtype=np.float32)
+        blended = alpha * prev_vec + (1.0 - alpha) * new_vec
+        if float(np.linalg.norm(blended)) <= 1e-6:
+            smoothed_angle = angle
+        else:
+            smoothed_angle = math.atan2(float(blended[1]), float(blended[0]))
+
+        smoothed_angle = math.atan2(math.sin(smoothed_angle), math.cos(smoothed_angle))
+
+        self._smoothed_distance = smoothed_distance
+        self._smoothed_angle = smoothed_angle
+        return smoothed_distance, smoothed_angle
+
+    def reset_smoothing(self) -> None:
+        """Clear the smoothing state when episodes reset or plans restart."""
+
+        self._smoothed_distance = None
+        self._smoothed_angle = None
 
     def _world_to_relative(self, robot_pose, waypoint) -> Tuple[float, float]:
         if robot_pose is None:
@@ -553,6 +654,20 @@ class HighLevelPlanner:
         goal_distance = float(goal_info[0]) if goal_info else float('inf')
         laser_scan = np.asarray(laser_scan, dtype=np.float32)  # 确保激光数据为numpy数组
 
+        window_radius: Optional[float] = None
+        inside_window = False
+        steps_inside = 0
+        limit_exceeded = False
+        if window_metrics:
+            radius_val = window_metrics.get("radius")
+            if radius_val is not None:
+                window_radius = float(radius_val)
+            inside_window = bool(window_metrics.get("inside", False))
+            steps_inside = int(window_metrics.get("steps_inside", 0))
+            limit_exceeded = bool(window_metrics.get("limit_exceeded", False))
+
+        self.event_trigger.set_progress_context(window_radius)
+
         # 如果未提供则计算最小障碍物距离
         if min_obstacle_dist is None:
             valid_scans = laser_scan[np.isfinite(laser_scan)]  # 过滤有效扫描值（非NaN/无穷大）
@@ -579,8 +694,10 @@ class HighLevelPlanner:
             min_obstacle_dist=min_obstacle_dist,
         )
 
-    # 最终触发决策：满足节流条件并触发安全/进度事件
-        trigger_new_subgoal = throttle_ready and (safe_trigger or progress_trigger)
+        # 最终触发决策：满足节流条件并触发安全/进度事件，窗口强制触发单独处理
+        trigger_new_subgoal = (safe_trigger or progress_trigger) and throttle_ready
+        if limit_exceeded:
+            trigger_new_subgoal = True
 
         # 如果触发，重置时间计数器
         if window_metrics:
@@ -589,6 +706,15 @@ class HighLevelPlanner:
             if window_metrics.get("entered", False):
                 # 新窗口被进入，刷新进度基准以避免重复触发
                 self.event_trigger.reset_progress(goal_distance, current_step)
+
+        hold_threshold = self.event_trigger.window_inside_hold
+        if (
+            trigger_new_subgoal
+            and not limit_exceeded
+            and inside_window
+            and steps_inside < hold_threshold
+        ):
+            trigger_new_subgoal = False
 
         if trigger_new_subgoal:
             self.event_trigger.reset_time(current_step)
@@ -603,9 +729,9 @@ class HighLevelPlanner:
         goal_sin,
         prev_action=None,
         robot_pose=None,
-    current_step: Optional[int] = None,
-    waypoints=None,
-    window_metrics: Optional[dict] = None,
+        current_step: Optional[int] = None,
+        waypoints=None,
+        window_metrics: Optional[dict] = None,
     ):
         """
         基于当前状态生成新子目标
@@ -728,10 +854,13 @@ class HighLevelPlanner:
         goal_direction: float,
         prev_action: Optional[Sequence[float]],
         current_step: int,
+        robot_pose: Optional[Sequence[float]] = None,
     ) -> None:
         """记录最新子目标并刷新触发器的内部状态。"""
 
-        self.current_subgoal = (float(distance), float(self._wrap_angle(angle)))
+        wrapped_angle = float(self._wrap_angle(angle))
+        smoothed_distance, smoothed_angle = self._smooth_subgoal(float(distance), wrapped_angle)
+        self.current_subgoal = (smoothed_distance, smoothed_angle)
         self.last_goal_distance = float(goal_distance)
         self.last_goal_direction = float(self._wrap_angle(goal_direction))
 
@@ -743,7 +872,11 @@ class HighLevelPlanner:
                     float(np.clip(prev_arr[1], -1.0, 1.0)),
                 ]
 
-        if world_target is not None:
+        if robot_pose is not None:
+            target_vec = self._relative_to_world(robot_pose, smoothed_distance, smoothed_angle)
+            self.current_subgoal_world = target_vec
+            self.event_trigger.last_subgoal = target_vec.tolist()
+        elif world_target is not None:
             target_vec = np.asarray(world_target, dtype=np.float32)
             self.current_subgoal_world = target_vec
             self.event_trigger.last_subgoal = target_vec.tolist()
