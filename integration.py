@@ -428,17 +428,26 @@ class HierarchicalNavigationSystem:
                 goal_direction=goal_direction_rel,
                 prev_action=self.prev_action,
                 current_step=self.step_count,
+                robot_pose=robot_pose,
             )
 
-            self.current_subgoal_world = world_target
+            planner_current = self.high_level_planner.current_subgoal_world
+            if planner_current is not None:
+                self.current_subgoal_world = np.asarray(planner_current, dtype=np.float32)
+            else:
+                self.current_subgoal_world = None
             self.last_replanning_step = self.step_count
             self.high_level_planner.event_trigger.reset_time(self.step_count)
 
-            self.current_subgoal = (final_distance, final_angle)
-
-            subgoal_distance = final_distance
-            subgoal_angle = final_angle
-            planner_world = world_target
+            if self.high_level_planner.current_subgoal is not None:
+                smoothed_distance, smoothed_angle = self.high_level_planner.current_subgoal
+                self.current_subgoal = (smoothed_distance, smoothed_angle)
+                subgoal_distance = smoothed_distance
+                subgoal_angle = smoothed_angle
+            else:
+                self.current_subgoal = None
+                subgoal_distance = None
+                subgoal_angle = None
         else:
             planner_world = self.high_level_planner.current_subgoal_world
             if planner_world is not None:
@@ -703,6 +712,7 @@ class HierarchicalNavigationSystem:
         self.current_waypoint_index = 0
         self.global_goal = None
         self.reset_window_tracking()
+        self.high_level_planner.reset_smoothing()
 
     def reset(self):
         """
@@ -720,6 +730,7 @@ class HierarchicalNavigationSystem:
         self.high_level_planner.prev_action = [0.0, 0.0]
         self.high_level_planner.event_trigger.last_subgoal = None
         self.high_level_planner.event_trigger.reset_state()
+        self.high_level_planner.reset_smoothing()
         self.clear_global_route()
 
 
