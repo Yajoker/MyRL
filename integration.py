@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
+from config import IntegrationConfig
 # 导入系统内部模块：低层控制器和高层规划器
 from low_level_controller import LowLevelController
 from global_planner import GlobalPlanner, WaypointWindow
@@ -26,14 +27,15 @@ class HierarchicalNavigationSystem:
         device=None,
         load_models: bool = False,
         models_directory: Path = Path("ethsrl/models"),
-        step_duration: float = 0.3,  #与yaml中的保持一致
-        trigger_min_interval: float = 1.0,
-        subgoal_threshold: float = 0.5,
+        step_duration: Optional[float] = None,  # 与yaml中的保持一致
+        trigger_min_interval: Optional[float] = None,
+        subgoal_threshold: Optional[float] = None,
         world_file: Optional[Path] = None,
-        global_plan_resolution: float = 0.25,
-        global_plan_margin: float = 0.35,
-        waypoint_lookahead: int = 3,
-        window_step_limit: int = 80,
+        global_plan_resolution: Optional[float] = None,
+        global_plan_margin: Optional[float] = None,
+        waypoint_lookahead: Optional[int] = None,
+        window_step_limit: Optional[int] = None,
+        integration_config: Optional[IntegrationConfig] = None,
     ) -> None:
         """
         初始化分层导航系统。
@@ -46,6 +48,29 @@ class HierarchicalNavigationSystem:
             load_models: 是否加载已训练好的模型
             models_directory: 模型文件所在目录
         """
+        # 提取集中配置
+        self._integration_config = integration_config or IntegrationConfig()
+        motion_cfg = self._integration_config.motion
+        trigger_cfg = self._integration_config.trigger
+        planner_cfg = self._integration_config.planner
+        window_cfg = self._integration_config.window
+
+        # 将显式参数与集中配置结合
+        if step_duration is None:
+            step_duration = motion_cfg.dt
+        if trigger_min_interval is None:
+            trigger_min_interval = trigger_cfg.min_interval if trigger_cfg.min_interval > 0 else trigger_cfg.min_step_interval * step_duration
+        if subgoal_threshold is None:
+            subgoal_threshold = trigger_cfg.subgoal_reach_threshold
+        if global_plan_resolution is None:
+            global_plan_resolution = planner_cfg.resolution
+        if global_plan_margin is None:
+            global_plan_margin = planner_cfg.safety_margin
+        if waypoint_lookahead is None:
+            waypoint_lookahead = planner_cfg.waypoint_lookahead
+        if window_step_limit is None:
+            window_step_limit = window_cfg.step_limit
+
         # 设置计算设备：若未指定则自动检测 GPU，否则使用 CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -63,6 +88,8 @@ class HierarchicalNavigationSystem:
             min_interval=trigger_min_interval,
             subgoal_reach_threshold=subgoal_threshold,
             waypoint_lookahead=waypoint_lookahead,
+            trigger_config=trigger_cfg,
+            planner_config=planner_cfg,
         )
 
         # 初始化低层控制器（负责执行动作）

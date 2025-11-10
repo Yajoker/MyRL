@@ -14,6 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
+from config import PlannerConfig, TriggerConfig
 from global_planner import WaypointWindow
 
 
@@ -110,39 +111,48 @@ class EventTrigger:
 
     def __init__(
         self,
-        safety_trigger_distance: float = 0.7,  # [修改] 从 1.0 降至 0.7
-        subgoal_reach_threshold: float = 0.4,  # [修改] 从 0.5 降至 0.4
-        stagnation_steps: int = 30,            # [修改] 从 40 降至 30
-        progress_epsilon: float = 0.1,
-        min_interval: float = 1.2,             # [修改] 从 1.0 增至 1.2
-        step_duration: float = 0.1,
+        *,
+        config: TriggerConfig,
+        step_duration: float,
+        min_interval: Optional[float] = None,
+        subgoal_reach_threshold: Optional[float] = None,
+        progress_epsilon: Optional[float] = None,
     ) -> None:
-        """
-        初始化事件触发器
+        """初始化事件触发器并与集中配置对齐。"""
 
-        Args:
-            safety_trigger_distance: 安全触发距离阈值（米）
-            subgoal_reach_threshold: 子目标到达阈值（米）
-            stagnation_steps: 停滞步数阈值
-            progress_epsilon: 进度容差（米）
-            min_interval: 最小触发间隔（秒）
-            step_duration: 步长持续时间（秒）
-        """
-        # 触发参数设置
-        self.safety_trigger_distance = safety_trigger_distance
-        self.subgoal_reach_threshold = subgoal_reach_threshold
-        self.stagnation_steps = max(1, int(stagnation_steps))  # 确保至少1步
-        self.progress_epsilon = progress_epsilon
-        self.min_interval = min_interval
+        self._config = config
+        self.safety_trigger_distance = config.safety_trigger_distance
+        self.subgoal_reach_threshold = (
+            subgoal_reach_threshold
+            if subgoal_reach_threshold is not None
+            else config.subgoal_reach_threshold
+        )
+        self.stagnation_steps = max(1, int(config.stagnation_steps))
+        self.progress_epsilon = (
+            progress_epsilon if progress_epsilon is not None else config.progress_epsilon
+        )
         self.step_duration = step_duration
-        # 计算最小步数间隔：将时间间隔转换为步数间隔
-        self.min_step_interval = max(1, int(math.ceil(min_interval / step_duration))) if step_duration > 0 else 1
+
+        base_min_interval = (
+            min_interval
+            if (min_interval is not None and min_interval > 0)
+            else config.min_interval
+        )
+        if base_min_interval is None or base_min_interval <= 0:
+            base_min_interval = config.min_step_interval * step_duration
+        self.min_interval = float(max(base_min_interval, 0.0))
+
+        if step_duration > 0 and self.min_interval > 0:
+            computed_steps = int(math.ceil(self.min_interval / step_duration))
+        else:
+            computed_steps = config.min_step_interval
+        self.min_step_interval = max(1, int(config.min_step_interval), computed_steps)
 
         # 状态变量初始化
-        self.last_trigger_step = -self.min_step_interval  # 上次触发时间步，初始化为负值确保第一次可触发
-        self.last_subgoal: Optional[np.ndarray] = None  # 上次子目标位置
-        self.best_goal_distance: Optional[float] = None  # 最佳目标距离（用于进度跟踪）
-        self.last_progress_step = 0  # 上次有进展的时间步
+        self.last_trigger_step = -self.min_step_interval
+        self.last_subgoal: Optional[np.ndarray] = None
+        self.best_goal_distance: Optional[float] = None
+        self.last_progress_step = 0
 
     def safe_distance_trigger(self, min_obstacle_dist: float) -> bool:
         """若最近障碍物距离低于安全阈值则触发。"""
@@ -274,10 +284,12 @@ class HighLevelPlanner:
         load_model=False,
         load_directory=None,
         step_duration=0.3,
-        min_interval=1.0,
-        subgoal_reach_threshold: float = 0.5,
-        waypoint_lookahead: int = 3,
+        min_interval: Optional[float] = None,
+        subgoal_reach_threshold: Optional[float] = None,
+        waypoint_lookahead: Optional[int] = None,
         *,
+        trigger_config: Optional[TriggerConfig] = None,
+        planner_config: Optional[PlannerConfig] = None,
         rwr_temperature: float = 2.0,
         rwr_min_temperature: float = 0.4,
         rwr_temperature_decay: float = 0.999,
@@ -293,9 +305,24 @@ class HighLevelPlanner:
             load_model: 是否加载预训练模型
             load_directory: 模型加载目录（如果为None则使用save_directory）
             step_duration: 步长持续时间（秒）
-            min_interval: 最小触发间隔（秒）
+            min_interval: 最小触发间隔（秒），为None时从TriggerConfig获取
+            trigger_config: 事件触发器配置
+            planner_config: 航点规划配置
         """
         self.belief_dim = belief_dim
+        trigger_cfg = trigger_config or TriggerConfig()
+        planner_cfg = planner_config or PlannerConfig()
+
+        if subgoal_reach_threshold is None:
+            subgoal_reach_threshold = trigger_cfg.subgoal_reach_threshold
+        if waypoint_lookahead is None:
+            waypoint_lookahead = planner_cfg.waypoint_lookahead
+        if min_interval is None:
+            min_interval = (
+                trigger_cfg.min_interval
+                if trigger_cfg.min_interval > 0
+                else trigger_cfg.min_step_interval * step_duration
+            )
         # 设置计算设备，默认为GPU（如果可用）否则CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -313,11 +340,14 @@ class HighLevelPlanner:
 
         # 初始化事件触发器
         self.event_trigger = EventTrigger(
-            min_interval=min_interval,
+            config=trigger_cfg,
             step_duration=step_duration,
+            min_interval=min_interval,
             subgoal_reach_threshold=subgoal_reach_threshold,
         )
         self.step_duration = step_duration
+
+        self.subgoal_reach_threshold = subgoal_reach_threshold
 
         # 训练设置
         self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=3e-4)  # Adam优化器
