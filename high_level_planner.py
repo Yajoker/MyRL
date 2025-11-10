@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from config import PlannerConfig, TriggerConfig
+from config import PlannerConfig, SafetyCriticConfig, TriggerConfig
 from global_planner import WaypointWindow
 
 
@@ -106,24 +106,61 @@ class SubgoalNetwork(nn.Module):
         return distance_adjust.squeeze(-1), angle_offset.squeeze(-1)
 
 
+class SafetyCritic(nn.Module):
+    """Safety critic that predicts short-horizon obstacle risk for candidate goals."""
+
+    def __init__(self, belief_dim=90, goal_info_dim=3, hidden_dim=192):
+        super().__init__()
+
+        self.cnn1 = nn.Conv1d(1, 8, kernel_size=5, stride=2)
+        self.cnn2 = nn.Conv1d(8, 16, kernel_size=3, stride=2)
+        self.cnn3 = nn.Conv1d(16, 8, kernel_size=3, stride=1)
+
+        self.goal_embed = nn.Linear(goal_info_dim, 64)
+        self.action_embed = nn.Linear(2, 16)
+        self.subgoal_embed = nn.Linear(3, 16)
+
+        cnn_output_dim = self._get_cnn_output_dim(belief_dim)
+        self.fc1 = nn.Linear(cnn_output_dim + 64 + 16 + 16, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.output_head = nn.Linear(hidden_dim // 2, 1)
+
+    def _get_cnn_output_dim(self, belief_dim: int) -> int:
+        x = torch.zeros(1, 1, belief_dim)
+        x = self.cnn1(x)
+        x = self.cnn2(x)
+        x = self.cnn3(x)
+        return x.numel()
+
+    def forward(self, belief_state, goal_info, prev_action, subgoal_geom):
+        laser = belief_state.unsqueeze(1)
+        x = F.relu(self.cnn1(laser))
+        x = F.relu(self.cnn2(x))
+        x = F.relu(self.cnn3(x))
+        x = x.flatten(start_dim=1)
+
+        g = F.relu(self.goal_embed(goal_info))
+        a = F.relu(self.action_embed(prev_action))
+        geom = F.relu(self.subgoal_embed(subgoal_geom))
+
+        combined = torch.cat((x, g, a, geom), dim=1)
+        x = F.relu(self.fc1(combined))
+        x = F.relu(self.fc2(x))
+        risk = F.softplus(self.output_head(x))
+        return risk.squeeze(-1)
+
+
 class EventTrigger:
     def __init__(
         self,
         *,
-        config: "TriggerConfig",
+        config: TriggerConfig,
         step_duration: float,
         min_interval: Optional[float] = None,
         subgoal_reach_threshold: Optional[float] = None,
         progress_epsilon: Optional[float] = None,
     ) -> None:
-        """初始化事件触发器并与集中配置对齐。
-
-        修复点：
-        - 若显式提供了 min_interval（秒），则优先采用它，并用 step_duration 反推 min_step_interval（步）。
-        - 若未提供显式时间但 config.min_interval > 0，则同样按时间→步数映射。
-        - 仅当两者都未提供有效时间时，才回退到 config.min_step_interval（步）。
-        - 不再无条件用 config.min_step_interval 作为下限去覆盖基于时间的设置。
-        """
+        """初始化事件触发器并与集中配置对齐。"""
 
         self._config = config
         self.safety_trigger_distance = config.safety_trigger_distance
@@ -136,39 +173,24 @@ class EventTrigger:
         self.progress_epsilon = (
             progress_epsilon if progress_epsilon is not None else config.progress_epsilon
         )
-        self.step_duration = float(step_duration)
+        self.step_duration = step_duration
 
-        # ---------- 1) 先确定“时间下限”的来源（显式 > 配置时间 > 配置步数） ----------
-        if min_interval is not None and min_interval > 0:
-            # 显式时间优先
-            self.min_interval = float(min_interval)
-            _time_source = "explicit_time"
-        elif getattr(config, "min_interval", 0) and config.min_interval > 0:
-            # 配置里的时间次之
-            self.min_interval = float(config.min_interval)
-            _time_source = "config_time"
+        base_min_interval = (
+            min_interval
+            if (min_interval is not None and min_interval > 0)
+            else config.min_interval
+        )
+        if base_min_interval is None or base_min_interval <= 0:
+            base_min_interval = config.min_step_interval * step_duration
+        self.min_interval = float(max(base_min_interval, 0.0))
+
+        if step_duration > 0 and self.min_interval > 0:
+            computed_steps = int(math.ceil(self.min_interval / step_duration))
         else:
-            # 都没有时间，就用“步数 × dt”作为时间的派生显示值（仅用于日志/可读）
-            steps_cfg = max(1, int(getattr(config, "min_step_interval", 1)))
-            self.min_interval = float(steps_cfg * self.step_duration) if self.step_duration > 0 else 0.0
-            _time_source = "config_steps"
+            computed_steps = config.min_step_interval
+        self.min_step_interval = max(1, int(config.min_step_interval), computed_steps)
 
-        # ---------- 2) 由时间反推“步数下限”；仅在纯步数配置时直接用配置步数 ----------
-        if _time_source in ("explicit_time", "config_time"):
-            if self.step_duration > 0:
-                steps_from_time = int(math.ceil(self.min_interval / self.step_duration))
-                self.min_step_interval = max(1, steps_from_time)
-            else:
-                # 极端兜底：没有有效 dt 时，退回到配置步数或 1
-                self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
-        else:
-            # 使用配置步数作为唯一来源
-            self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
-            # 同步一份与之对应的时间，便于日志可读（不影响逻辑）
-            self.min_interval = float(self.min_step_interval * self.step_duration) if self.step_duration > 0 else 0.0
-
-        # ---------- 3) 状态变量初始化 ----------
-        # 置为“负的步数阈值”，保证初始化后允许立即触发一次
+        # 状态变量初始化
         self.last_trigger_step = -self.min_step_interval
         self.last_subgoal: Optional[np.ndarray] = None
         self.best_goal_distance: Optional[float] = None
@@ -310,6 +332,7 @@ class HighLevelPlanner:
         *,
         trigger_config: Optional[TriggerConfig] = None,
         planner_config: Optional[PlannerConfig] = None,
+        safety_config: Optional[SafetyCriticConfig] = None,
         rwr_temperature: float = 2.0,
         rwr_min_temperature: float = 0.4,
         rwr_temperature_decay: float = 0.999,
@@ -332,6 +355,7 @@ class HighLevelPlanner:
         self.belief_dim = belief_dim
         trigger_cfg = trigger_config or TriggerConfig()
         planner_cfg = planner_config or PlannerConfig()
+        self.safety_config = safety_config or SafetyCriticConfig()
 
         if subgoal_reach_threshold is None:
             subgoal_reach_threshold = trigger_cfg.subgoal_reach_threshold
@@ -358,6 +382,12 @@ class HighLevelPlanner:
             goal_info_dim=self.goal_feature_dim,
         ).to(self.device)
 
+        # 战术层风险评估网络（Safety-Critic）
+        self.safety_critic = SafetyCritic(
+            belief_dim=belief_dim,
+            goal_info_dim=self.goal_feature_dim,
+        ).to(self.device)
+
         # 初始化事件触发器
         self.event_trigger = EventTrigger(
             config=trigger_cfg,
@@ -371,8 +401,13 @@ class HighLevelPlanner:
 
         # 训练设置
         self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=3e-4)  # Adam优化器
+        self.safety_optimizer = torch.optim.Adam(self.safety_critic.parameters(), lr=3e-4)
+        self.safety_loss_fn = nn.MSELoss()
         self.writer = SummaryWriter(comment=model_name)  # TensorBoard记录器，用于可视化训练过程
         self.iter_count = 0  # 迭代计数器，记录训练步数
+        self.safety_update_count = 0
+        self.safety_sample_count = 0
+        self._safety_buffer: List[Tuple[np.ndarray, np.ndarray, float]] = []
         self.model_name = model_name  # 模型名称
         self.save_directory = save_directory  # 保存目录
 
@@ -549,6 +584,107 @@ class HighLevelPlanner:
 
         return state_tensor.cpu().numpy()
 
+    def store_safety_sample(self, state_vector: np.ndarray, subgoal_geom: np.ndarray, target: float) -> None:
+        """缓存一次子目标的风险监督样本。"""
+
+        clipped_target = float(np.clip(target, self.safety_config.target_clip_min, self.safety_config.target_clip_max))
+        state_arr = np.asarray(state_vector, dtype=np.float32)
+        geom_arr = np.asarray(subgoal_geom, dtype=np.float32)
+
+        self._safety_buffer.append((state_arr, geom_arr, clipped_target))
+        self.safety_sample_count += 1
+
+        overflow = len(self._safety_buffer) - self.safety_config.max_buffer_size
+        if overflow > 0:
+            del self._safety_buffer[:overflow]
+
+    def maybe_update_safety_critic(self, batch_size: Optional[int] = None) -> Optional[dict]:
+        """在样本足够时执行一次Safety-Critic的更新。"""
+
+        batch = batch_size or self.safety_config.update_batch_size
+        required = max(self.safety_config.min_buffer_size, batch)
+        if len(self._safety_buffer) < required:
+            return None
+
+        samples = self._safety_buffer[:batch]
+        del self._safety_buffer[:batch]
+
+        states = np.stack([entry[0] for entry in samples])
+        geoms = np.stack([entry[1] for entry in samples])
+        targets = np.array([entry[2] for entry in samples], dtype=np.float32)
+
+        return self.update_safety_critic(states, geoms, targets)
+
+    def update_safety_critic(self, states: np.ndarray, subgoal_geoms: np.ndarray, targets: np.ndarray) -> dict:
+        """优化Safety-Critic，使其拟合未来最小障碍距离。"""
+
+        self.safety_critic.train()
+
+        tensor_states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+        tensor_geoms = torch.as_tensor(subgoal_geoms, dtype=torch.float32, device=self.device)
+        tensor_targets = torch.as_tensor(targets, dtype=torch.float32, device=self.device)
+
+        action_feature_dim = 2
+        laser_dim = tensor_states.shape[1] - (self.goal_feature_dim + action_feature_dim)
+        laser_scans = tensor_states[:, :laser_dim]
+        goal_info = tensor_states[:, laser_dim : laser_dim + self.goal_feature_dim]
+        prev_action = tensor_states[:, -action_feature_dim:]
+
+        preds = self.safety_critic(laser_scans, goal_info, prev_action, tensor_geoms)
+        loss = self.safety_loss_fn(preds, tensor_targets)
+
+        self.safety_optimizer.zero_grad()
+        loss.backward()
+        self.safety_optimizer.step()
+
+        self.safety_update_count += 1
+
+        with torch.no_grad():
+            avg_pred = float(preds.mean().item())
+            avg_target = float(tensor_targets.mean().item())
+
+        self.writer.add_scalar('planner/safety_loss', loss.item(), self.safety_update_count)
+        self.writer.add_scalar('planner/safety_target_mean', avg_target, self.safety_update_count)
+        self.writer.add_scalar('planner/safety_pred_mean', avg_pred, self.safety_update_count)
+        self.writer.add_scalar('planner/safety_buffer_size', len(self._safety_buffer), self.safety_update_count)
+
+        return {
+            'safety_loss': float(loss.item()),
+            'safety_pred_mean': avg_pred,
+            'safety_target_mean': avg_target,
+        }
+
+    def predict_safety_risk(self, laser_tensor: torch.Tensor, goal_tensor: torch.Tensor, action_tensor: torch.Tensor, subgoal_geom: Sequence[float]) -> float:
+        """基于当前状态与候选子目标预测未来风险。"""
+
+        if self.safety_sample_count < self.safety_config.min_buffer_size:
+            return 0.0
+
+        geom_tensor = torch.as_tensor(subgoal_geom, dtype=torch.float32, device=self.device).unsqueeze(0)
+
+        with torch.no_grad():
+            risk = self.safety_critic(
+                laser_tensor.unsqueeze(0),
+                goal_tensor.unsqueeze(0),
+                action_tensor.unsqueeze(0),
+                geom_tensor,
+            )
+
+        return float(risk.item())
+
+    def _compute_progress_score(self, distance: float, angle: float, radius: float) -> float:
+        """利用距离和角度估计候选子目标的进度收益。"""
+
+        radius = max(radius, 1e-3)
+        norm_distance = max(distance / radius, 0.0)
+        distance_term = 1.0 / (1.0 + norm_distance)
+        angle_term = (math.cos(angle) + 1.0) * 0.5
+
+        return (
+            self.safety_config.distance_weight * distance_term
+            + self.safety_config.angle_weight * angle_term
+        )
+
     def check_triggers(
         self,
         laser_scan,
@@ -716,16 +852,44 @@ class HighLevelPlanner:
         world_target = None
 
         anchor_info = None
+        scored_candidates: List[dict] = []
         if candidate_info:
+            reachable: List[dict] = []
+            fallback: List[dict] = []
             for info in candidate_info:
-                # 用现有的角→激光索引工具拿该方向的射线距离
+                info_with_flags = dict(info)
                 ray = self.event_trigger._ray_distance_to_angle(laser_scan, info["angle"])
-                # 直线可达性判据：射线距离 ≥ 窗口距离 + 安全边际
-                if np.isfinite(ray) and ray >= info["distance"] + self.event_trigger.safety_trigger_distance:
-                    anchor_info = info
-                    break
+                info_with_flags["ray_distance"] = float(ray) if np.isfinite(ray) else float("inf")
+                is_reachable = bool(
+                    np.isfinite(ray)
+                    and ray >= info["distance"] + self.event_trigger.safety_trigger_distance
+                )
+                info_with_flags["reachable"] = is_reachable
+                if is_reachable:
+                    reachable.append(info_with_flags)
+                fallback.append(info_with_flags)
 
-        # 找不到就回退到原来的第一个
+            evaluated = reachable if reachable else fallback
+
+            for info in evaluated:
+                radius = max(info.get("radius", 0.0), 1e-3)
+                subgoal_geom = [float(info["distance"]), float(info["angle"]), float(radius)]
+                risk_val = self.predict_safety_risk(laser_tensor, goal_tensor, action_tensor, subgoal_geom)
+                progress_val = self._compute_progress_score(float(info["distance"]), float(info["angle"]), float(radius))
+                score_val = (
+                    self.safety_config.progress_weight * progress_val
+                    - self.safety_config.risk_weight * risk_val
+                )
+                scored = dict(info)
+                scored["risk"] = float(risk_val)
+                scored["progress"] = float(progress_val)
+                scored["score"] = float(score_val)
+                scored_candidates.append(scored)
+
+            if scored_candidates:
+                anchor_info = max(scored_candidates, key=lambda entry: entry["score"])
+
+        # 找不到可行解就回退到原来的第一个候选
         if anchor_info is None and candidate_info:
             anchor_info = candidate_info[0]
 
@@ -795,6 +959,20 @@ class HighLevelPlanner:
             "raw_angle_offset": angle_offset,
             "distance_adjust_applied": applied_distance_adjust,
             "angle_offset_applied": applied_angle_offset,
+            "candidate_scores": [
+                {
+                    "index": entry.get("index"),
+                    "score": entry.get("score"),
+                    "risk": entry.get("risk"),
+                    "progress": entry.get("progress"),
+                    "reachable": entry.get("reachable", False),
+                }
+                for entry in scored_candidates
+            ],
+            "selected_risk": (float(anchor_info.get("risk")) if anchor_info and "risk" in anchor_info else None),
+            "selected_progress": (
+                float(anchor_info.get("progress")) if anchor_info and "progress" in anchor_info else None
+            ),
         }
 
         if metadata["selected_waypoint"] is None and active_window_index is not None:

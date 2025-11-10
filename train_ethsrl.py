@@ -42,6 +42,12 @@ class SubgoalContext:
     window_entered: bool = False  # 是否首次进入目标窗口
     window_inside_steps: int = 0  # 在目标窗口内累计的步数
     target_window_reached: bool = False  # 是否稳定到达目标窗口
+    min_dmin: float = float("inf")  # 子目标执行期间观测到的最近障碍距离
+    collision_occurred: bool = False  # 执行期间是否发生碰撞
+    subgoal_angle_at_start: Optional[float] = None  # 子目标生成时的角度
+    base_distance: Optional[float] = None  # Safety-Critic几何：锚点距离
+    base_angle: Optional[float] = None  # Safety-Critic几何：锚点角度
+    anchor_radius: Optional[float] = None  # Safety-Critic几何：窗口半径
 
 
 def compute_subgoal_world(robot_pose: Tuple[float, float, float], distance: float, angle: float) -> np.ndarray:
@@ -70,7 +76,7 @@ def finalize_subgoal_transition(
     reached_goal: bool,
     collision: bool,
     timed_out: bool,
-) -> Optional[dict]:
+) -> Optional[Tuple[dict, Optional[Tuple[np.ndarray, np.ndarray, float]]]]:
     """结束当前子目标并生成高层训练样本.
 
     Args:
@@ -83,7 +89,7 @@ def finalize_subgoal_transition(
         timed_out: 是否超时
         
     Returns:
-        奖励分量字典或None
+        包含奖励分量字典及可选风险样本的元组，或None
     """
 
     # 检查上下文有效性
@@ -125,7 +131,28 @@ def finalize_subgoal_transition(
         )
     )
 
-    return components
+    risk_sample: Optional[Tuple[np.ndarray, np.ndarray, float]] = None
+
+    target_distance = context.min_dmin
+    if collision or context.collision_occurred:
+        target_distance = 0.0
+
+    if np.isfinite(target_distance):
+        base_distance = float(context.base_distance) if context.base_distance is not None else 0.0
+        base_angle = (
+            float(context.base_angle)
+            if context.base_angle is not None
+            else float(context.subgoal_angle_at_start or 0.0)
+        )
+        anchor_radius = float(context.anchor_radius) if context.anchor_radius is not None else 0.0
+        subgoal_geom = np.array([base_distance, base_angle, anchor_radius], dtype=np.float32)
+        risk_sample = (
+            context.start_state.astype(np.float32, copy=False),
+            subgoal_geom,
+            float(target_distance),
+        )
+
+    return components, risk_sample
 
 
 def maybe_train_high_level(
@@ -388,7 +415,6 @@ def evaluate(
             scan_arr = np.asarray(latest_scan, dtype=np.float32)
             finite_scan = scan_arr[np.isfinite(scan_arr)]
             min_obstacle_distance = float(finite_scan.min()) if finite_scan.size else 8.0
-
             # 检查终止条件
             just_reached_subgoal = False
             if not current_subgoal_completed:
@@ -502,6 +528,7 @@ def main(args=None):
     bundle = ConfigBundle()
     config = bundle.training
     integration_config = bundle.integration
+    safety_cfg = bundle.safety_critic
 
     raw_world = Path(config.world_file)
     base_dir = Path(__file__).resolve().parent
@@ -651,7 +678,7 @@ def main(args=None):
 
             if should_replan:
                 # 完成当前子目标并训练
-                finalize_components = finalize_subgoal_transition(
+                finalize_result = finalize_subgoal_transition(
                     current_subgoal_context,
                     high_level_buffer,
                     high_reward_cfg,
@@ -660,7 +687,13 @@ def main(args=None):
                     collision=False,
                     timed_out=False,
                 )
-                if finalize_components is not None:
+                if finalize_result is not None:
+                    finalize_components, risk_sample = finalize_result
+                    if risk_sample is not None:
+                        system.high_level_planner.store_safety_sample(*risk_sample)
+                        system.high_level_planner.maybe_update_safety_critic(
+                            batch_size=safety_cfg.update_batch_size
+                        )
                     metrics = maybe_train_high_level(
                         system.high_level_planner,
                         high_level_buffer,
@@ -713,6 +746,9 @@ def main(args=None):
                 target_window_index = metadata.get("selected_waypoint")
                 distance_adjust_action = float(metadata.get("distance_adjust_applied", 0.0)) if metadata else 0.0
                 angle_offset_action = float(metadata.get("angle_offset_applied", 0.0)) if metadata else 0.0
+                anchor_distance = metadata.get("anchor_distance", subgoal_distance)
+                anchor_angle = metadata.get("anchor_angle", subgoal_angle)
+                anchor_radius = metadata.get("anchor_radius") if metadata else None
 
                 current_subgoal_context = SubgoalContext(
                     start_state=start_state.astype(np.float32, copy=False),
@@ -730,7 +766,15 @@ def main(args=None):
                     last_window_index=int(start_window_index) if start_window_index is not None else None,
                     last_window_distance=float(start_window_distance) if start_window_distance is not None else None,
                     best_window_distance=float(start_window_distance) if start_window_distance is not None else None,
+                    subgoal_angle_at_start=float(subgoal_angle) if subgoal_angle is not None else None,
+                    base_distance=float(anchor_distance) if anchor_distance is not None else None,
+                    base_angle=float(anchor_angle) if anchor_angle is not None else None,
+                    anchor_radius=float(anchor_radius) if anchor_radius is not None else None,
                 )
+                scan_arr = np.asarray(latest_scan, dtype=np.float32)
+                finite_scan = scan_arr[np.isfinite(scan_arr)]
+                if finite_scan.size:
+                    current_subgoal_context.min_dmin = float(min(current_subgoal_context.min_dmin, finite_scan.min()))
                 current_subgoal_completed = False
             else:
                 planner_world = system.high_level_planner.current_subgoal_world
@@ -830,6 +874,13 @@ def main(args=None):
             scan_arr = np.asarray(latest_scan, dtype=np.float32)
             finite_scan = scan_arr[np.isfinite(scan_arr)]
             min_obstacle_distance = float(finite_scan.min()) if finite_scan.size else 8.0
+            if current_subgoal_context is not None:
+                current_subgoal_context.min_dmin = min(
+                    current_subgoal_context.min_dmin,
+                    min_obstacle_distance,
+                )
+                if collision:
+                    current_subgoal_context.collision_occurred = True
 
             # 检查终止条件
             just_reached_subgoal = False
@@ -948,7 +999,7 @@ def main(args=None):
         timed_out_episode = not goal and not collision and steps >= config.max_steps
 
         # 完成最后一个子目标
-        finalize_components = finalize_subgoal_transition(
+        finalize_result = finalize_subgoal_transition(
             current_subgoal_context,
             high_level_buffer,
             high_reward_cfg,
@@ -957,7 +1008,13 @@ def main(args=None):
             collision=collision,
             timed_out=timed_out_episode,
         )
-        if finalize_components is not None:
+        if finalize_result is not None:
+            finalize_components, risk_sample = finalize_result
+            if risk_sample is not None:
+                system.high_level_planner.store_safety_sample(*risk_sample)
+                system.high_level_planner.maybe_update_safety_critic(
+                    batch_size=safety_cfg.update_batch_size
+                )
             metrics = maybe_train_high_level(
                 system.high_level_planner,
                 high_level_buffer,

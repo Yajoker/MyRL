@@ -53,6 +53,7 @@ class HierarchicalNavigationSystem:
         motion_cfg = self._integration_config.motion
         trigger_cfg = self._integration_config.trigger
         planner_cfg = self._integration_config.planner
+        safety_cfg = self._integration_config.safety_critic
         window_cfg = self._integration_config.window
 
         # 将显式参数与集中配置结合
@@ -90,6 +91,7 @@ class HierarchicalNavigationSystem:
             waypoint_lookahead=waypoint_lookahead,
             trigger_config=trigger_cfg,
             planner_config=planner_cfg,
+            safety_config=safety_cfg,
         )
 
         # 初始化低层控制器（负责执行动作）

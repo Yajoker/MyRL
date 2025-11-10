@@ -153,6 +153,41 @@ class PlannerConfig:
 
 
 @dataclass(frozen=True)
+class SafetyCriticConfig:
+    """Configuration for the tactical-layer safety critic."""
+
+    progress_weight: float = 1.0                     # 进度得分的权重α
+    risk_weight: float = 1.0                         # 风险惩罚的权重β
+    distance_weight: float = 1.0                     # 进度得分中的距离项权重
+    angle_weight: float = 0.35                       # 进度得分中的角度项权重
+    update_batch_size: int = 64                      # Safety-Critic训练批次大小
+    min_buffer_size: int = 128                       # 开始训练前所需的最少样本数
+    max_buffer_size: int = 4096                      # Safety-Critic样本缓冲区最大容量
+    target_clip_min: float = 0.0                     # 风险监督目标的最小裁剪值
+    target_clip_max: float = 6.0                     # 风险监督目标的最大裁剪值
+
+    def __post_init__(self) -> None:  # type: ignore[override]
+        if self.progress_weight < 0:
+            raise ValueError("progress_weight must be non-negative")
+        if self.risk_weight < 0:
+            raise ValueError("risk_weight must be non-negative")
+        if self.distance_weight < 0:
+            raise ValueError("distance_weight must be non-negative")
+        if self.angle_weight < 0:
+            raise ValueError("angle_weight must be non-negative")
+        if self.update_batch_size <= 0:
+            raise ValueError("update_batch_size must be positive")
+        if self.min_buffer_size < 0:
+            raise ValueError("min_buffer_size must be non-negative")
+        if self.max_buffer_size <= 0:
+            raise ValueError("max_buffer_size must be positive")
+        if self.target_clip_min < 0:
+            raise ValueError("target_clip_min must be non-negative")
+        if self.target_clip_max <= self.target_clip_min:
+            raise ValueError("target_clip_max must be greater than target_clip_min")
+
+
+@dataclass(frozen=True)
 class WindowRuntimeConfig:
     """Runtime rules for waypoint window tracking."""
 
@@ -240,6 +275,7 @@ class IntegrationConfig:
     motion: MotionConfig = field(default_factory=MotionConfig)                    # 运动配置
     trigger: TriggerConfig = field(default_factory=TriggerConfig)                 # 触发配置
     planner: PlannerConfig = field(default_factory=PlannerConfig)                 # 规划器配置
+    safety_critic: SafetyCriticConfig = field(default_factory=SafetyCriticConfig) # Safety-Critic配置
     window: WindowRuntimeConfig = field(default_factory=WindowRuntimeConfig)      # 窗口运行时配置
     low_level_reward: LowLevelRewardConfig = field(default_factory=LowLevelRewardConfig)  # 低层奖励配置
     high_level_reward: HighLevelRewardConfig = field(default_factory=HighLevelRewardConfig)  # 高层奖励配置
@@ -251,6 +287,7 @@ class IntegrationConfig:
         motion: MotionConfig | None = None,
         trigger: TriggerConfig | None = None,
         planner: PlannerConfig | None = None,
+        safety_critic: SafetyCriticConfig | None = None,
         window: WindowRuntimeConfig | None = None,
         low_level_reward: LowLevelRewardConfig | None = None,
         high_level_reward: HighLevelRewardConfig | None = None,
@@ -262,6 +299,7 @@ class IntegrationConfig:
             motion=motion or self.motion,
             trigger=trigger or self.trigger,
             planner=planner or self.planner,
+            safety_critic=safety_critic or self.safety_critic,
             window=window or self.window,
             low_level_reward=low_level_reward or self.low_level_reward,
             high_level_reward=high_level_reward or self.high_level_reward,
@@ -298,6 +336,11 @@ class ConfigBundle:
         """便捷属性：直接访问高层奖励配置"""
         return self.integration.high_level_reward
 
+    @property
+    def safety_critic(self) -> SafetyCriticConfig:
+        """便捷属性：直接访问安全评估模型配置"""
+        return self.integration.safety_critic
+
 
 # 模块导出列表
 __all__ = [
@@ -305,6 +348,7 @@ __all__ = [
     "MotionConfig",
     "TriggerConfig",
     "PlannerConfig",
+    "SafetyCriticConfig",
     "WindowRuntimeConfig",
     "LowLevelRewardConfig",
     "HighLevelRewardConfig",
