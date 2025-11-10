@@ -151,23 +151,26 @@ class SafetyCritic(nn.Module):
 
 
 class EventTrigger:
+    """事件触发器，聚焦安全距离与进度两类触发条件。"""
+
+        combined = torch.cat((x, g, a, geom), dim=1)
+        x = F.relu(self.fc1(combined))
+        x = F.relu(self.fc2(x))
+        risk = F.softplus(self.output_head(x))
+        return risk.squeeze(-1)
+
+
+class EventTrigger:
     def __init__(
         self,
         *,
-        config: "TriggerConfig",
+        config: TriggerConfig,
         step_duration: float,
         min_interval: Optional[float] = None,
         subgoal_reach_threshold: Optional[float] = None,
         progress_epsilon: Optional[float] = None,
     ) -> None:
-        """初始化事件触发器并与集中配置对齐。
-
-        修复点：
-        - 若显式提供了 min_interval（秒），则优先采用它，并用 step_duration 反推 min_step_interval（步）。
-        - 若未提供显式时间但 config.min_interval > 0，则同样按时间→步数映射。
-        - 仅当两者都未提供有效时间时，才回退到 config.min_step_interval（步）。
-        - 不再无条件用 config.min_step_interval 作为下限去覆盖基于时间的设置。
-        """
+        """初始化事件触发器并与集中配置对齐。"""
 
         self._config = config
         self.safety_trigger_distance = config.safety_trigger_distance
@@ -180,39 +183,24 @@ class EventTrigger:
         self.progress_epsilon = (
             progress_epsilon if progress_epsilon is not None else config.progress_epsilon
         )
-        self.step_duration = float(step_duration)
+        self.step_duration = step_duration
 
-        # ---------- 1) 先确定“时间下限”的来源（显式 > 配置时间 > 配置步数） ----------
-        if min_interval is not None and min_interval > 0:
-            # 显式时间优先
-            self.min_interval = float(min_interval)
-            _time_source = "explicit_time"
-        elif getattr(config, "min_interval", 0) and config.min_interval > 0:
-            # 配置里的时间次之
-            self.min_interval = float(config.min_interval)
-            _time_source = "config_time"
+        base_min_interval = (
+            min_interval
+            if (min_interval is not None and min_interval > 0)
+            else config.min_interval
+        )
+        if base_min_interval is None or base_min_interval <= 0:
+            base_min_interval = config.min_step_interval * step_duration
+        self.min_interval = float(max(base_min_interval, 0.0))
+
+        if step_duration > 0 and self.min_interval > 0:
+            computed_steps = int(math.ceil(self.min_interval / step_duration))
         else:
-            # 都没有时间，就用“步数 × dt”作为时间的派生显示值（仅用于日志/可读）
-            steps_cfg = max(1, int(getattr(config, "min_step_interval", 1)))
-            self.min_interval = float(steps_cfg * self.step_duration) if self.step_duration > 0 else 0.0
-            _time_source = "config_steps"
+            computed_steps = config.min_step_interval
+        self.min_step_interval = max(1, int(config.min_step_interval), computed_steps)
 
-        # ---------- 2) 由时间反推“步数下限”；仅在纯步数配置时直接用配置步数 ----------
-        if _time_source in ("explicit_time", "config_time"):
-            if self.step_duration > 0:
-                steps_from_time = int(math.ceil(self.min_interval / self.step_duration))
-                self.min_step_interval = max(1, steps_from_time)
-            else:
-                # 极端兜底：没有有效 dt 时，退回到配置步数或 1
-                self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
-        else:
-            # 使用配置步数作为唯一来源
-            self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
-            # 同步一份与之对应的时间，便于日志可读（不影响逻辑）
-            self.min_interval = float(self.min_step_interval * self.step_duration) if self.step_duration > 0 else 0.0
-
-        # ---------- 3) 状态变量初始化 ----------
-        # 置为“负的步数阈值”，保证初始化后允许立即触发一次
+        # 状态变量初始化
         self.last_trigger_step = -self.min_step_interval
         self.last_subgoal: Optional[np.ndarray] = None
         self.best_goal_distance: Optional[float] = None
@@ -677,10 +665,10 @@ class HighLevelPlanner:
         }
 
     def predict_safety_risk(self, laser_tensor: torch.Tensor, goal_tensor: torch.Tensor, action_tensor: torch.Tensor, subgoal_geom: Sequence[float]) -> float:
-        """基于当前状态与候选子目标预测未来风险。"""
+        """基于当前状态与候选子目标预测未来风险距离值。"""
 
         if self.safety_sample_count < self.safety_config.min_buffer_size:
-            return 0.0
+            return float("inf")
 
         geom_tensor = torch.as_tensor(subgoal_geom, dtype=torch.float32, device=self.device).unsqueeze(0)
 
@@ -706,6 +694,30 @@ class HighLevelPlanner:
             self.safety_config.distance_weight * distance_term
             + self.safety_config.angle_weight * angle_term
         )
+
+    def _convert_distance_to_risk_penalty(self, predicted_distance: float) -> float:
+        """将预测的最小障碍距离转换为风险惩罚值。"""
+
+        safe_distance = getattr(self.event_trigger, "safety_trigger_distance", 0.0)
+        if safe_distance <= 0:
+            safe_distance = 1.0
+
+        if math.isinf(predicted_distance):
+            return 0.0
+
+        if math.isnan(predicted_distance):
+            return safe_distance
+
+        if predicted_distance <= 0:
+            return safe_distance
+
+        if predicted_distance >= safe_distance:
+            return 0.0
+
+        deficit = safe_distance - predicted_distance
+        normalised = deficit / safe_distance
+
+        return deficit + normalised
 
     def check_triggers(
         self,
@@ -896,14 +908,20 @@ class HighLevelPlanner:
             for info in evaluated:
                 radius = max(info.get("radius", 0.0), 1e-3)
                 subgoal_geom = [float(info["distance"]), float(info["angle"]), float(radius)]
-                risk_val = self.predict_safety_risk(laser_tensor, goal_tensor, action_tensor, subgoal_geom)
-                progress_val = self._compute_progress_score(float(info["distance"]), float(info["angle"]), float(radius))
+                predicted_distance = self.predict_safety_risk(
+                    laser_tensor, goal_tensor, action_tensor, subgoal_geom
+                )
+                risk_val = self._convert_distance_to_risk_penalty(predicted_distance)
+                progress_val = self._compute_progress_score(
+                    float(info["distance"]), float(info["angle"]), float(radius)
+                )
                 score_val = (
                     self.safety_config.progress_weight * progress_val
                     - self.safety_config.risk_weight * risk_val
                 )
                 scored = dict(info)
                 scored["risk"] = float(risk_val)
+                scored["predicted_min_distance"] = float(predicted_distance)
                 scored["progress"] = float(progress_val)
                 scored["score"] = float(score_val)
                 scored_candidates.append(scored)
@@ -986,12 +1004,18 @@ class HighLevelPlanner:
                     "index": entry.get("index"),
                     "score": entry.get("score"),
                     "risk": entry.get("risk"),
+                    "predicted_min_distance": entry.get("predicted_min_distance"),
                     "progress": entry.get("progress"),
                     "reachable": entry.get("reachable", False),
                 }
                 for entry in scored_candidates
             ],
             "selected_risk": (float(anchor_info.get("risk")) if anchor_info and "risk" in anchor_info else None),
+            "selected_predicted_min_distance": (
+                float(anchor_info.get("predicted_min_distance"))
+                if anchor_info and "predicted_min_distance" in anchor_info
+                else None
+            ),
             "selected_progress": (
                 float(anchor_info.get("progress")) if anchor_info and "progress" in anchor_info else None
             ),
