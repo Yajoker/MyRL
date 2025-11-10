@@ -154,13 +154,20 @@ class EventTrigger:
     def __init__(
         self,
         *,
-        config: TriggerConfig,
+        config: "TriggerConfig",
         step_duration: float,
         min_interval: Optional[float] = None,
         subgoal_reach_threshold: Optional[float] = None,
         progress_epsilon: Optional[float] = None,
     ) -> None:
-        """初始化事件触发器并与集中配置对齐。"""
+        """初始化事件触发器并与集中配置对齐。
+
+        修复点：
+        - 若显式提供了 min_interval（秒），则优先采用它，并用 step_duration 反推 min_step_interval（步）。
+        - 若未提供显式时间但 config.min_interval > 0，则同样按时间→步数映射。
+        - 仅当两者都未提供有效时间时，才回退到 config.min_step_interval（步）。
+        - 不再无条件用 config.min_step_interval 作为下限去覆盖基于时间的设置。
+        """
 
         self._config = config
         self.safety_trigger_distance = config.safety_trigger_distance
@@ -173,24 +180,39 @@ class EventTrigger:
         self.progress_epsilon = (
             progress_epsilon if progress_epsilon is not None else config.progress_epsilon
         )
-        self.step_duration = step_duration
+        self.step_duration = float(step_duration)
 
-        base_min_interval = (
-            min_interval
-            if (min_interval is not None and min_interval > 0)
-            else config.min_interval
-        )
-        if base_min_interval is None or base_min_interval <= 0:
-            base_min_interval = config.min_step_interval * step_duration
-        self.min_interval = float(max(base_min_interval, 0.0))
-
-        if step_duration > 0 and self.min_interval > 0:
-            computed_steps = int(math.ceil(self.min_interval / step_duration))
+        # ---------- 1) 先确定“时间下限”的来源（显式 > 配置时间 > 配置步数） ----------
+        if min_interval is not None and min_interval > 0:
+            # 显式时间优先
+            self.min_interval = float(min_interval)
+            _time_source = "explicit_time"
+        elif getattr(config, "min_interval", 0) and config.min_interval > 0:
+            # 配置里的时间次之
+            self.min_interval = float(config.min_interval)
+            _time_source = "config_time"
         else:
-            computed_steps = config.min_step_interval
-        self.min_step_interval = max(1, int(config.min_step_interval), computed_steps)
+            # 都没有时间，就用“步数 × dt”作为时间的派生显示值（仅用于日志/可读）
+            steps_cfg = max(1, int(getattr(config, "min_step_interval", 1)))
+            self.min_interval = float(steps_cfg * self.step_duration) if self.step_duration > 0 else 0.0
+            _time_source = "config_steps"
 
-        # 状态变量初始化
+        # ---------- 2) 由时间反推“步数下限”；仅在纯步数配置时直接用配置步数 ----------
+        if _time_source in ("explicit_time", "config_time"):
+            if self.step_duration > 0:
+                steps_from_time = int(math.ceil(self.min_interval / self.step_duration))
+                self.min_step_interval = max(1, steps_from_time)
+            else:
+                # 极端兜底：没有有效 dt 时，退回到配置步数或 1
+                self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
+        else:
+            # 使用配置步数作为唯一来源
+            self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
+            # 同步一份与之对应的时间，便于日志可读（不影响逻辑）
+            self.min_interval = float(self.min_step_interval * self.step_duration) if self.step_duration > 0 else 0.0
+
+        # ---------- 3) 状态变量初始化 ----------
+        # 置为“负的步数阈值”，保证初始化后允许立即触发一次
         self.last_trigger_step = -self.min_step_interval
         self.last_subgoal: Optional[np.ndarray] = None
         self.best_goal_distance: Optional[float] = None
