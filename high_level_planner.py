@@ -151,8 +151,6 @@ class SafetyCritic(nn.Module):
 
 
 class EventTrigger:
-    """事件触发器，聚焦安全距离与进度两类触发条件。"""
-
     def __init__(
         self,
         *,
