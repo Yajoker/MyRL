@@ -9,29 +9,44 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import math
 import numpy as np
 import torch
 
 # 导入自定义模块
-from ethsrl.integration import (
-    HierarchicalNavigationSystem,
-    map_actor_to_commands,
-    map_commands_to_actor,
-)
-from ethsrl.config import (
-    ConfigBundle,
-    IntegrationConfig,
-    LowLevelRewardConfig,
+from integration import HierarchicalNavigationSystem
+from rewards import (
     HighLevelRewardConfig,
-    TrainingConfig,
-)
-from ethsrl.rewards import (
+    LowLevelRewardConfig,
     compute_high_level_reward,
     compute_low_level_reward,
 )
 from robot_nav.SIM_ENV.sim import SIM
 from robot_nav.replay_buffer import ReplayBuffer
+
+
+@dataclass
+class TrainingConfig:
+    """训练超参数配置容器"""
+
+    buffer_size: int = 80000  # 经验回放缓冲区大小
+    batch_size: int = 64  # 训练批次大小  64->128
+    max_epochs: int = 60  # 最大训练轮数
+    episodes_per_epoch: int = 70  # 每轮训练的情节数
+    max_steps: int = 350  # 每个情节的最大步数  300->350
+    train_every_n_episodes: int = 1  # 每N个情节训练一次   2->1
+    training_iterations: int = 100  # 每次训练的迭代次数   80->100
+    exploration_noise: float = 0.15  # 探索噪声强度    0.2->0.15
+    min_buffer_size: int = 1000  # 开始训练的最小缓冲区大小  500->2500->1000
+    max_lin_velocity: float = 1.0  # 最大线速度
+    max_ang_velocity: float = 1.0  # 最大角速度
+    eval_episodes: int = 10  # 评估时使用的情节数
+    subgoal_radius: float = 0.4  # 判定子目标达成的距离阈值  0.5->0.4
+    save_every: int = 5  # 每隔多少个情节保存一次模型（<=0 表示仅最终保存）
+    world_file: str = "env_b.yaml"  # 使用的世界配置文件（位于ethsrl/worlds）
+    waypoint_lookahead: int = 3  # 全局规划提供给高层的航点数量
+    global_plan_resolution: float = 0.25  # 全局规划网格分辨率
+    global_plan_margin: float = 0.35  # 全局规划安全膨胀系数
+
 
 @dataclass
 class SubgoalContext:
@@ -55,11 +70,31 @@ class SubgoalContext:
     window_entered: bool = False  # 是否首次进入目标窗口
     window_inside_steps: int = 0  # 在目标窗口内累计的步数
     target_window_reached: bool = False  # 是否稳定到达目标窗口
+
+
+def compute_subgoal_world(robot_pose: Tuple[float, float, float], distance: float, angle: float) -> np.ndarray:
+    """将相对子目标 (r, θ) 转换为全局坐标.
+
+    Args:
+        robot_pose: 机器人位姿 (x, y, theta)
+        distance: 子目标相对距离
+        angle: 子目标相对角度
+        
+    Returns:
+        子目标的全局坐标 [x, y]
+    """
+
+    # 计算子目标在世界坐标系中的位置
+    world_x = robot_pose[0] + distance * np.cos(robot_pose[2] + angle)
+    world_y = robot_pose[1] + distance * np.sin(robot_pose[2] + angle)
+    return np.array([world_x, world_y], dtype=np.float32)
+
+
 def finalize_subgoal_transition(
     context: Optional[SubgoalContext],
     buffer: List[Tuple[np.ndarray, np.ndarray, float, np.ndarray, float]],
     high_cfg: HighLevelRewardConfig,
-    subgoal_done: bool,
+    done: bool,
     reached_goal: bool,
     collision: bool,
     timed_out: bool,
@@ -70,7 +105,7 @@ def finalize_subgoal_transition(
         context: 子目标上下文
         buffer: 高层经验回放缓冲区
         high_cfg: 高层奖励配置
-        subgoal_done: 子目标是否结束（env done 时需同时为 True）
+        done: 是否终止
         reached_goal: 是否到达目标
         collision: 是否碰撞
         timed_out: 是否超时
@@ -114,7 +149,7 @@ def finalize_subgoal_transition(
             context.action.astype(np.float32, copy=False),  # 子目标动作
             float(reward),  # 奖励
             last_state.astype(np.float32, copy=False),  # 结束状态
-            float(subgoal_done),  # 子目标终止标志
+            float(done),  # 终止标志
         )
     )
 
@@ -150,10 +185,10 @@ def maybe_train_high_level(
     actions = np.stack([entry[1] for entry in batch])
     rewards = np.array([entry[2] for entry in batch], dtype=np.float32)
     next_states = np.stack([entry[3] for entry in batch])
-    subgoal_dones = np.array([entry[4] for entry in batch], dtype=np.float32)
+    dones = np.array([entry[4] for entry in batch], dtype=np.float32)
 
     # 更新规划器
-    metrics = planner.update_planner(states, actions, rewards, subgoal_dones, next_states, batch_size=batch_size)
+    metrics = planner.update_planner(states, actions, rewards, dones, next_states, batch_size=batch_size)
     return metrics
 
 
@@ -164,21 +199,21 @@ class TD3ReplayAdapter:
         """初始化回放缓冲区适配器"""
         self._buffer = ReplayBuffer(buffer_size=buffer_size, random_seed=random_seed)
 
-    def add(self, state, action, reward, env_done, next_state) -> None:
-        """向缓冲区添加低层经验（env_done 为场景终止标志）。"""
+    def add(self, state, action, reward, done, next_state) -> None:
+        """向缓冲区添加经验"""
         state_arr = np.asarray(state, dtype=np.float32)
         action_arr = np.asarray(action, dtype=np.float32)
         next_state_arr = np.asarray(next_state, dtype=np.float32)
         reward_val = float(reward)
-        env_done_val = float(env_done)
-        self._buffer.add(state_arr, action_arr, reward_val, env_done_val, next_state_arr)
+        done_val = float(done)
+        self._buffer.add(state_arr, action_arr, reward_val, done_val, next_state_arr)
 
     def size(self) -> int:
         """返回缓冲区当前大小"""
         return self._buffer.size()
 
     def sample(self, batch_size: int):
-        """从缓冲区采样批次数据，返回的dones对应env_done标志。"""
+        """从缓冲区采样批次数据"""
         states, actions, rewards, dones, next_states = self._buffer.sample_batch(batch_size)
         return states, actions, rewards, dones, next_states
 
@@ -247,18 +282,11 @@ def evaluate(
     episode_lengths: List[int] = []
     episode_success_flags: List[bool] = []
 
-    motion_limits = system.motion_limits
-    subgoal_threshold = system.subgoal_threshold
-
     # 运行评估情节
     for ep_idx in range(config.eval_episodes):
         system.reset()  # 重置系统状态
-        latest_scan, distance, cos, sin, collision, goal, reset_action, _ = sim.reset()
-        if reset_action is not None:
-            prev_command = [float(reset_action[0]), float(reset_action[1])]
-        else:
-            prev_command = [0.0, 0.0]
-        prev_action = list(map_commands_to_actor(prev_command[0], prev_command[1], motion_limits))
+        latest_scan, distance, cos, sin, collision, goal, prev_action, _ = sim.reset()
+        prev_action = [0.0, 0.0]  # 初始化动作
         current_subgoal_world: Optional[np.ndarray] = None
         robot_pose = get_robot_pose(sim)
         eval_goal_pose = get_goal_pose(sim)
@@ -276,28 +304,19 @@ def evaluate(
             window_metrics = system.update_window_state(robot_pose, active_waypoints)
             goal_info = [distance, cos, sin]
 
-            system.step_count = steps
-            throttle_ready = (steps - system.last_replanning_step) >= system.trigger_step_interval
-            force_trigger = window_metrics.get("limit_exceeded", False)
-            effective_throttle = throttle_ready or force_trigger
-
             # 检查是否需要重新规划
-            if system.high_level_planner.current_subgoal_world is None:
-                should_replan = True
-            elif effective_throttle:
-                should_replan = system.high_level_planner.check_triggers(
+            should_replan = (
+                system.high_level_planner.current_subgoal_world is None
+                or system.high_level_planner.check_triggers(
                     latest_scan,
                     robot_pose,
                     goal_info,
                     prev_action=prev_action,
                     current_step=steps,
                     window_metrics=window_metrics,
-                    throttle_ready=effective_throttle,
                 )
-            else:
-                should_replan = False
-
-            if force_trigger:
+            )
+            if window_metrics.get("limit_exceeded", False):
                 should_replan = True
 
             subgoal_distance: Optional[float] = None
@@ -306,7 +325,7 @@ def evaluate(
 
             if should_replan:
                 # 生成新子目标
-                distance_scale, angle_offset, metadata = system.high_level_planner.generate_subgoal(
+                subgoal_distance, subgoal_angle, metadata = system.high_level_planner.generate_subgoal(
                     latest_scan,
                     distance,
                     cos,
@@ -319,43 +338,12 @@ def evaluate(
                 )
                 system.reset_window_tracking()
                 system.update_selected_waypoint(metadata.get("selected_waypoint"))
-                final_distance, final_angle, metadata, world_target = system._synthesise_subgoal(
-                    distance_scale=distance_scale,
-                    angle_offset=angle_offset,
-                    robot_pose=robot_pose,
-                    goal_distance=distance,
-                    goal_cos=cos,
-                    goal_sin=sin,
-                    waypoint_candidates=active_waypoints,
-                    window_metrics=window_metrics,
-                    metadata=metadata,
-                )
-                goal_direction_rel = math.atan2(sin, cos)
-                system.high_level_planner.commit_subgoal(
-                    distance=final_distance,
-                    angle=final_angle,
-                    world_target=world_target,
-                    goal_distance=distance,
-                    goal_direction=goal_direction_rel,
-                    prev_action=prev_action,
-                    current_step=steps,
-                    robot_pose=robot_pose,
-                )
-                planner_target = system.high_level_planner.current_subgoal_world
-                if planner_target is not None:
-                    system.current_subgoal_world = np.asarray(planner_target, dtype=np.float32)
-                    current_subgoal_world = system.current_subgoal_world.copy()
-                else:
-                    system.current_subgoal_world = None
-                    current_subgoal_world = None
+                planner_world = system.high_level_planner.current_subgoal_world
+                current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None
                 system.high_level_planner.event_trigger.reset_time(steps)
-                system.last_replanning_step = steps
+                if current_subgoal_world is None:
+                    current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)
                 current_subgoal_completed = False
-                if system.high_level_planner.current_subgoal is not None:
-                    smoothed_distance, smoothed_angle = system.high_level_planner.current_subgoal
-                    subgoal_distance, subgoal_angle = smoothed_distance, smoothed_angle
-                else:
-                    subgoal_distance, subgoal_angle = final_distance, final_angle
             else:
                 planner_world = system.high_level_planner.current_subgoal_world
                 if planner_world is not None:
@@ -391,9 +379,8 @@ def evaluate(
 
             # 预测动作（无探索噪声）
             action = system.low_level_controller.predict_action(state, add_noise=False)
-            lin_cmd, ang_cmd = map_actor_to_commands(action, motion_limits)
-            lin_cmd = float(lin_cmd)
-            ang_cmd = float(ang_cmd)
+            lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))
+            ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))
 
             # 执行动作
             latest_scan, distance, cos, sin, collision, goal, _, _ = sim.step(
@@ -419,9 +406,9 @@ def evaluate(
                     current_subgoal_distance = float(relative_after[0])
 
             action_delta: Optional[List[float]] = None
-            if prev_command is not None:
-                delta_lin = float(lin_cmd - prev_command[0])
-                delta_ang = float(ang_cmd - prev_command[1])
+            if prev_action is not None:
+                delta_lin = float(lin_cmd - prev_action[0])
+                delta_ang = float(ang_cmd - prev_action[1])
                 action_delta = [delta_lin, delta_ang]
 
             # 计算最小障碍物距离
@@ -434,11 +421,11 @@ def evaluate(
             if not current_subgoal_completed:
                 if (
                     current_subgoal_distance is not None
-                    and current_subgoal_distance <= subgoal_threshold
+                    and current_subgoal_distance <= config.subgoal_radius
                 ):
                     if prev_subgoal_distance is None:
                         just_reached_subgoal = True
-                    elif prev_subgoal_distance > subgoal_threshold:
+                    elif prev_subgoal_distance > config.subgoal_radius:
                         just_reached_subgoal = True
             else:
                 just_reached_subgoal = False
@@ -469,8 +456,7 @@ def evaluate(
             # 更新统计
             episode_reward += low_reward
             steps += 1
-            prev_command = [lin_cmd, ang_cmd]
-            prev_action = list(map_commands_to_actor(lin_cmd, ang_cmd, motion_limits))
+            prev_action = [lin_cmd, ang_cmd]
 
             # 检查终止
             if collision:
@@ -535,15 +521,12 @@ def evaluate(
     writer.add_scalar("eval_raw/collision_count", collision_count, epoch)
 
 
-def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
+def main(args=None):
     """ETHSRL+GP的主要训练循环"""
 
     # ========== 训练配置与设备初始化 ==========
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    bundle = config_bundle or ConfigBundle()
-    integration_cfg: IntegrationConfig = bundle.integration
-    config: TrainingConfig = integration_cfg.training
-    planner_cfg = integration_cfg.planner
+    config = TrainingConfig()
 
     raw_world = Path(config.world_file)
     base_dir = Path(__file__).resolve().parent
@@ -590,9 +573,9 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
     print(f"   • World file: {world_path}")
     print(
         "   • Global planner: res={:.2f} m, margin={:.2f} m, lookahead={}".format(
-            planner_cfg.resolution,
-            planner_cfg.safety_margin,
-            planner_cfg.waypoint_lookahead,
+            config.global_plan_resolution,
+            config.global_plan_margin,
+            config.waypoint_lookahead,
         )
     )
     if config.save_every > 0:
@@ -605,13 +588,13 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
     print("🔄 Initializing ETHSRL+GP system...")
     system = HierarchicalNavigationSystem(
         device=device,
+        subgoal_threshold=config.subgoal_radius,
         world_file=world_path,
-        config=integration_cfg,
+        global_plan_resolution=config.global_plan_resolution,
+        global_plan_margin=config.global_plan_margin,
+        waypoint_lookahead=config.waypoint_lookahead,
     )
-    replay_buffer = TD3ReplayAdapter(
-        buffer_size=config.buffer_size,
-        random_seed=config.random_seed if config.random_seed is not None else 666,
-    )
+    replay_buffer = TD3ReplayAdapter(buffer_size=config.buffer_size)
     print("✅ System initialization completed")
 
     # ========== 环境初始化 ==========
@@ -634,10 +617,8 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
     print("-" * 50)
 
     # 奖励配置初始化
-    low_reward_cfg = integration_cfg.low_level_reward
-    high_reward_cfg = integration_cfg.high_level_reward
-    motion_limits = system.motion_limits
-    subgoal_threshold = system.subgoal_threshold
+    low_reward_cfg = LowLevelRewardConfig()
+    high_reward_cfg = HighLevelRewardConfig()
     high_level_buffer: List[Tuple[np.ndarray, np.ndarray, float, np.ndarray, float]] = []
     current_subgoal_context: Optional[SubgoalContext] = None
 
@@ -648,12 +629,8 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
         current_subgoal_context = None
         system.current_subgoal = None
 
-        latest_scan, distance, cos, sin, collision, goal, reset_action, _ = sim.reset()
-        if reset_action is not None:
-            prev_command = [float(reset_action[0]), float(reset_action[1])]
-        else:
-            prev_command = [0.0, 0.0]
-        prev_action = list(map_commands_to_actor(prev_command[0], prev_command[1], motion_limits))
+        latest_scan, distance, cos, sin, collision, goal, prev_action, _ = sim.reset()
+        prev_action = [0.0, 0.0]  # 重置动作
         current_subgoal_world: Optional[np.ndarray] = None
 
         robot_pose = get_robot_pose(sim)
@@ -662,11 +639,11 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
 
         steps = 0
         episode_reward = 0.0
-        env_done = False
+        done = False
         current_subgoal_completed = False
 
         # ========== 单次情节循环 ==========
-        while not env_done and steps < config.max_steps:
+        while not done and steps < config.max_steps:
             robot_pose = get_robot_pose(sim)
             system.plan_global_route(robot_pose, episode_goal_pose)
             active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)
@@ -674,28 +651,19 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
             waypoint_sequence = active_waypoints
             goal_info = [distance, cos, sin]
 
-            system.step_count = steps
-            throttle_ready = (steps - system.last_replanning_step) >= system.trigger_step_interval
-            force_trigger = window_metrics.get("limit_exceeded", False)
-            effective_throttle = throttle_ready or force_trigger
-
             # 检查是否需要重新规划子目标
-            if system.high_level_planner.current_subgoal_world is None:
-                should_replan = True
-            elif effective_throttle:
-                should_replan = system.high_level_planner.check_triggers(
+            should_replan = (
+                system.high_level_planner.current_subgoal_world is None
+                or system.high_level_planner.check_triggers(
                     latest_scan,
                     robot_pose,
                     goal_info,
                     prev_action=prev_action,
                     current_step=steps,
                     window_metrics=window_metrics,
-                    throttle_ready=effective_throttle,
                 )
-            else:
-                should_replan = False
-
-            if force_trigger:
+            )
+            if window_metrics.get("limit_exceeded", False):
                 should_replan = True
 
             metadata = {}
@@ -708,7 +676,7 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                     current_subgoal_context,
                     high_level_buffer,
                     high_reward_cfg,
-                    subgoal_done=True,
+                    done=False,
                     reached_goal=False,
                     collision=False,
                     timed_out=False,
@@ -729,7 +697,7 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                             )
 
                 # 生成新子目标
-                distance_scale, angle_offset, metadata = system.high_level_planner.generate_subgoal(
+                subgoal_distance, subgoal_angle, metadata = system.high_level_planner.generate_subgoal(
                     latest_scan,
                     distance,
                     cos,
@@ -742,42 +710,11 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                 )
                 system.reset_window_tracking()
                 system.update_selected_waypoint(metadata.get("selected_waypoint"))
-                final_distance, final_angle, metadata, world_target = system._synthesise_subgoal(
-                    distance_scale=distance_scale,
-                    angle_offset=angle_offset,
-                    robot_pose=robot_pose,
-                    goal_distance=distance,
-                    goal_cos=cos,
-                    goal_sin=sin,
-                    waypoint_candidates=active_waypoints,
-                    window_metrics=window_metrics,
-                    metadata=metadata,
-                )
-                goal_direction_rel = math.atan2(sin, cos)
-                system.high_level_planner.commit_subgoal(
-                    distance=final_distance,
-                    angle=final_angle,
-                    world_target=world_target,
-                    goal_distance=distance,
-                    goal_direction=goal_direction_rel,
-                    prev_action=prev_action,
-                    current_step=steps,
-                    robot_pose=robot_pose,
-                )
-                planner_target = system.high_level_planner.current_subgoal_world
-                if planner_target is not None:
-                    system.current_subgoal_world = np.asarray(planner_target, dtype=np.float32)
-                    current_subgoal_world = system.current_subgoal_world.copy()
-                else:
-                    system.current_subgoal_world = None
-                    current_subgoal_world = None
+                planner_world = system.high_level_planner.current_subgoal_world
+                current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None
                 system.high_level_planner.event_trigger.reset_time(steps)
-                system.last_replanning_step = steps
-                if system.high_level_planner.current_subgoal is not None:
-                    smoothed_distance, smoothed_angle = system.high_level_planner.current_subgoal
-                    subgoal_distance, subgoal_angle = smoothed_distance, smoothed_angle
-                else:
-                    subgoal_distance, subgoal_angle = final_distance, final_angle
+                if current_subgoal_world is None:
+                    current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)
 
                 # 构建高层状态向量
                 start_state = system.high_level_planner.build_state_vector(
@@ -795,19 +732,12 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                 start_window_index = meta_metrics.get("index")
                 start_window_distance = meta_metrics.get("distance")
                 target_window_index = metadata.get("selected_waypoint")
-                raw_distance_scale = float(metadata.get("distance_scale", distance_scale)) if metadata else float(distance_scale)
-                window_distance_scale = None
-                if metadata is not None:
-                    window_distance_scale = metadata.get("distance_scale_window_applied")
-                if window_distance_scale is None:
-                    applied_distance_scale = float(metadata.get("distance_scale_applied", raw_distance_scale)) if metadata else raw_distance_scale
-                else:
-                    applied_distance_scale = float(window_distance_scale)
-                angle_offset_action = float(metadata.get("angle_offset_applied", angle_offset)) if metadata else float(angle_offset)
+                distance_adjust_action = float(metadata.get("distance_adjust_applied", 0.0)) if metadata else 0.0
+                angle_offset_action = float(metadata.get("angle_offset_applied", 0.0)) if metadata else 0.0
 
                 current_subgoal_context = SubgoalContext(
                     start_state=start_state.astype(np.float32, copy=False),
-                    action=np.array([applied_distance_scale, angle_offset_action], dtype=np.float32),
+                    action=np.array([distance_adjust_action, angle_offset_action], dtype=np.float32),
                     world_target=current_subgoal_world,
                     start_goal_distance=distance,
                     last_goal_distance=distance,
@@ -865,9 +795,8 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
             action = np.clip(action, -1.0, 1.0)  # 裁剪动作
 
             # 转换为实际控制命令
-            lin_cmd, ang_cmd = map_actor_to_commands(action, motion_limits)
-            lin_cmd = float(lin_cmd)
-            ang_cmd = float(ang_cmd)
+            lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))
+            ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))
 
             # 执行动作
             latest_scan, distance, cos, sin, collision, goal, executed_action, _ = sim.step(
@@ -911,19 +840,10 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
 
             system.current_subgoal = (post_subgoal_distance, post_subgoal_angle)
 
-            if executed_action is not None:
-                executed_lin = float(executed_action[0])
-                executed_ang = float(executed_action[1])
-            else:
-                executed_lin = lin_cmd
-                executed_ang = ang_cmd
-
-            executed_actor = list(map_commands_to_actor(executed_lin, executed_ang, motion_limits))
-
             action_delta: Optional[List[float]] = None
-            if prev_command is not None:
-                delta_lin = float(executed_lin - prev_command[0])
-                delta_ang = float(executed_ang - prev_command[1])
+            if executed_action is not None and prev_action is not None:
+                delta_lin = float(executed_action[0] - prev_action[0])
+                delta_ang = float(executed_action[1] - prev_action[1])
                 action_delta = [delta_lin, delta_ang]
 
             # 计算最小障碍物距离
@@ -936,11 +856,11 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
             if not current_subgoal_completed:
                 if (
                     current_subgoal_distance is not None
-                    and current_subgoal_distance <= subgoal_threshold
+                    and current_subgoal_distance <= config.subgoal_radius
                 ):
                     if prev_subgoal_distance is None:
                         just_reached_subgoal = True
-                    elif prev_subgoal_distance > subgoal_threshold:
+                    elif prev_subgoal_distance > config.subgoal_radius:
                         just_reached_subgoal = True
             else:
                 just_reached_subgoal = False
@@ -986,7 +906,7 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                     distance,
                     cos,
                     sin,
-                    executed_actor,
+                    executed_action,
                     waypoints=next_active_waypoints,
                     robot_pose=next_pose,
                 )
@@ -1017,7 +937,7 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                     current_subgoal_context.window_inside_steps += 1
 
             # 准备下一状态
-            next_prev_action = executed_actor
+            next_prev_action = [executed_action[0], executed_action[1]]
             next_state = system.low_level_controller.process_observation(
                 latest_scan,
                 post_subgoal_distance,
@@ -1026,10 +946,10 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
             )
 
             # 检查终止条件
-            env_done = collision or goal or steps == config.max_steps - 1
+            done = collision or goal or steps == config.max_steps - 1
 
             # 添加经验到回放缓冲区
-            replay_buffer.add(state, action, low_reward, env_done, next_state)
+            replay_buffer.add(state, action, low_reward, float(done), next_state)
 
             # 定期输出回放缓冲区大小与奖励
             if steps % 50 == 0:
@@ -1042,18 +962,17 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                 )
 
             prev_action = next_prev_action
-            prev_command = [executed_lin, executed_ang]
             steps += 1
 
         # ========== 情节结束处理 ==========
-        timed_out_episode = not goal and not collision and env_done and steps >= config.max_steps
+        timed_out_episode = not goal and not collision and steps >= config.max_steps
 
         # 完成最后一个子目标
         finalize_components = finalize_subgoal_transition(
             current_subgoal_context,
             high_level_buffer,
             high_reward_cfg,
-            subgoal_done=True,
+            done=True,
             reached_goal=goal,
             collision=collision,
             timed_out=timed_out_episode,
@@ -1106,11 +1025,11 @@ def main(args=None, *, config_bundle: Optional[ConfigBundle] = None):
                 system.low_level_controller.update(
                     replay_buffer,
                     batch_size=config.batch_size,
-                    discount=config.discount,
-                    tau=config.tau,
-                    policy_noise=config.policy_noise,
-                    noise_clip=config.noise_clip,
-                    policy_freq=config.policy_freq,
+                    discount=0.99,
+                    tau=0.001,    # 0.001
+                    policy_noise=0.2,
+                    noise_clip=0.5,
+                    policy_freq=2,   #2
                 )
             print("   ✅ Training completed")
 
