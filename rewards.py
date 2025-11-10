@@ -1,61 +1,10 @@
-"""
-奖励塑造工具函数，用于ETHSRL+GP导航栈。
-提供高层规划器和低层控制器的奖励计算功能。
+"""奖励塑造工具函数，用于ETHSRL+GP导航栈。"""
 
-[最终优化版] - 基于Yajoker用户的最终设计方案实现。
-该版本具有逻辑清晰、职责分离、数学表达精炼的优点。
-"""
-
-from dataclasses import dataclass
 from typing import Dict, Optional, Sequence, Tuple
 import math
 import numpy as np
 
-
-# --- 1. 低层奖励函数 ---
-
-@dataclass
-class LowLevelRewardConfig:
-    """
-    [最终优化版] 低层控制器奖励配置。
-    根据用户方案：R_low = R_progress + R_safety + R_terminal
-    """
-    # 进展奖励 (R_progress)
-    progress_weight: float = 12.0         # w_p: 进展权重
-    efficiency_penalty: float = 0.12      # w_eff: 每步的效率惩罚（按0.3s步长缩放）
-
-    # 安全惩罚 (R_safety)
-    safety_weight: float = 1.8            # w_s: 安全权重
-    safety_sensitivity: float = 2.0       # σ: 指数惩罚的敏感度参数
-    safety_clearance: float = 1.0         # 清晰距离阈值，超过该距离不再惩罚
-
-    # 终局奖励 (R_terminal)
-    goal_bonus: float = 60.0              # 到达最终目标的奖励
-    subgoal_bonus: float = 18.0           # 到达子目标的奖励
-    collision_penalty: float = -50.0      # 碰撞惩罚
-    timeout_penalty: float = -15.0        # 超时惩罚
-
-
-@dataclass
-class HighLevelRewardConfig:
-    """
-    [最终优化版] 高层规划器奖励配置。
-    根据用户方案：R_high = R_strategic + R_decision + R_terminal
-    """
-    # 战略进展奖励 (R_strategic)
-    path_progress_weight: float = 5.0    # w_path: 沿路径窗口索引推进的权重
-    global_progress_weight: float = 2.0   # w_global: 朝向最终目标进展的权重
-    # (注意：路径后退惩罚将在计算中通过 path_progress_weight * (负的Δi) 实现)
-
-    # 决策质量奖励 (R_decision)
-    low_level_return_scale: float = 0.02  # κ: 低层累积回报的共享权重
-    subgoal_completion_bonus: float = 4.0 # w_comp: 子目标完成奖励
-    low_level_failure_penalty: float = -10.0 # w_fail: 低层执行失败的惩罚
-
-    # 终局奖励 (R_terminal)
-    goal_bonus: float = 60.0             # 到达最终目标的巨大奖励
-    collision_penalty: float = -50.0     # 导致碰撞的决策的巨大惩罚
-    timeout_penalty: float = -25.0        # 导致超时的决策的惩罚
+from config import HighLevelRewardConfig, LowLevelRewardConfig
 
 
 def compute_low_level_reward(
