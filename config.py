@@ -49,12 +49,31 @@ class HighLevelRewardConfig:
 
 
 @dataclass(frozen=True)
+class ShieldingConfig:
+    """Velocity shielding parameters applied before executing commands."""
+
+    enabled: bool = True                             # 是否启用速度缩放屏蔽
+    safe_distance: float = 0.7                       # 安全距离阈值 d_safe
+    gain: float = 8.0                                # Logistic 缩放的斜率系数 k
+    angular_gain: float = 1.5                        # 安全距离内角速度放大系数 γ
+
+    def __post_init__(self) -> None:  # type: ignore[override]
+        if self.safe_distance <= 0:
+            raise ValueError("safe_distance must be positive")
+        if self.gain <= 0:
+            raise ValueError("gain must be positive")
+        if self.angular_gain < 1.0:
+            raise ValueError("angular_gain must be at least 1.0")
+
+
+@dataclass(frozen=True)
 class MotionConfig:
     """Motion primitive limits and time discretisation."""
 
     v_max: float = 0.5                               # 最大线速度 (m/s)
     omega_max: float = 1.0                           # 最大角速度 (rad/s)
     dt: float = 0.3                                  # 控制时间步长 (s)
+    shielding: ShieldingConfig = field(default_factory=ShieldingConfig)  # 速度缩放屏蔽配置
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -282,6 +301,7 @@ class ConfigBundle:
 
 # 模块导出列表
 __all__ = [
+    "ShieldingConfig",
     "MotionConfig",
     "TriggerConfig",
     "PlannerConfig",

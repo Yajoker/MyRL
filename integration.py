@@ -254,11 +254,62 @@ class HierarchicalNavigationSystem:
         # 保持角速度在 [-1,1] 范围内
         angular_velocity = action[1]
 
+        # 应用速度缩放屏蔽以提高安全性
+        linear_velocity, angular_velocity = self._apply_velocity_shielding(
+            linear_velocity,
+            angular_velocity,
+            laser_scan,
+        )
+
         # 记录当前动作（用于下一次输入）
         self.prev_action = [linear_velocity, angular_velocity]
 
         # 返回控制命令
         return [linear_velocity, angular_velocity]
+
+    def apply_velocity_shielding(
+        self,
+        linear_velocity: float,
+        angular_velocity: float,
+        laser_scan,
+    ) -> Tuple[float, float]:
+        """公开接口：对外提供零侵入式速度屏蔽能力。"""
+
+        return self._apply_velocity_shielding(linear_velocity, angular_velocity, laser_scan)
+
+    def _apply_velocity_shielding(
+        self,
+        linear_velocity: float,
+        angular_velocity: float,
+        laser_scan,
+    ) -> Tuple[float, float]:
+        """按最近障碍距离对速度进行单调缩放，实现零侵入式屏蔽。"""
+
+        motion_cfg = self._integration_config.motion
+        shield_cfg = motion_cfg.shielding
+        if not shield_cfg.enabled:
+            return float(linear_velocity), float(angular_velocity)
+
+        scan_arr = np.asarray(laser_scan, dtype=np.float32)
+        finite_scan = scan_arr[np.isfinite(scan_arr)]
+        if finite_scan.size == 0:
+            return float(linear_velocity), float(angular_velocity)
+
+        d_min = float(finite_scan.min())
+
+        # Logistic 缩放确保线速度在安全距离附近平滑衰减
+        sigma_input = float(np.clip(shield_cfg.gain * (d_min - shield_cfg.safe_distance), -60.0, 60.0))
+        linear_scale = float(1.0 / (1.0 + np.exp(-sigma_input)))
+        scaled_linear = float(linear_velocity * linear_scale)
+        scaled_linear = float(np.clip(scaled_linear, 0.0, motion_cfg.v_max))
+
+        scaled_angular = float(angular_velocity)
+        if d_min <= shield_cfg.safe_distance:
+            scaled_angular = float(scaled_angular * shield_cfg.angular_gain)
+
+        scaled_angular = float(np.clip(scaled_angular, -motion_cfg.omega_max, motion_cfg.omega_max))
+
+        return scaled_linear, scaled_angular
 
     def plan_global_route(self, robot_pose, goal_position, force: bool = False):
         """Compute (or refresh) the global waypoint sequence."""

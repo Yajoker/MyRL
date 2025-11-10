@@ -353,6 +353,7 @@ def evaluate(
             action = system.low_level_controller.predict_action(state, add_noise=False)
             lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))
             ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))
+            lin_cmd, ang_cmd = system.apply_velocity_shielding(lin_cmd, ang_cmd, latest_scan)
 
             # 执行动作
             latest_scan, distance, cos, sin, collision, goal, _, _ = sim.step(
@@ -775,6 +776,7 @@ def main(args=None):
             # 转换为实际控制命令
             lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))
             ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))
+            lin_cmd, ang_cmd = system.apply_velocity_shielding(lin_cmd, ang_cmd, latest_scan)
 
             # 执行动作
             latest_scan, distance, cos, sin, collision, goal, executed_action, _ = sim.step(
