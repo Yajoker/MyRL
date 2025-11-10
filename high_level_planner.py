@@ -14,20 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from ethsrl.global_planner import WaypointWindow
-from ethsrl.config import MotionConfig, TriggerConfig
+from global_planner import WaypointWindow
 
-
-def _logit(value: torch.Tensor) -> torch.Tensor:
-    """Compute element-wise logit for values in (0, 1)."""
-
-    return torch.log(value) - torch.log1p(-value)
-
-
-def _artanh(value: torch.Tensor) -> torch.Tensor:
-    """Compute element-wise inverse tanh for values in (-1, 1)."""
-
-    return 0.5 * (torch.log1p(value) - torch.log1p(-value))
 
 class SubgoalNetwork(nn.Module):
     """
@@ -65,7 +53,7 @@ class SubgoalNetwork(nn.Module):
         # 第二层全连接：输入=隐藏层维度，输出=隐藏层维度的一半
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         # 输出层：距离调整系数与角度偏移量
-        self.distance_head = nn.Linear(hidden_dim // 2, 1)  # 距离缩放输出头
+        self.distance_head = nn.Linear(hidden_dim // 2, 1)  # 距离调整输出头
         self.angle_head = nn.Linear(hidden_dim // 2, 1)  # 角度偏移输出头
 
     def _get_cnn_output_dim(self, belief_dim):
@@ -109,22 +97,12 @@ class SubgoalNetwork(nn.Module):
         x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU：[batch_size, hidden_dim]
         x = F.relu(self.fc2(x))  # 第二层全连接 + ReLU：[batch_size, hidden_dim//2]
 
-        # 生成未约束的距离与角度表示
-        distance_logits = self.distance_head(x)
-        angle_logits = self.angle_head(x)
-
-        # 在推理阶段再压回合法区间，并在距离上保留 ε 以避免饱和
-        eps = 1e-3
-        distance_scale = torch.sigmoid(distance_logits) * (1 - 2 * eps) + eps
-        angle_offset = torch.tanh(angle_logits) * (np.pi / 4)
+        # 生成子目标调整量
+        distance_adjust = torch.tanh(self.distance_head(x))  # 距离调整系数∈[-1, 1]
+        angle_offset = torch.tanh(self.angle_head(x)) * (np.pi / 4)  # 角度偏移量∈[-π/4, π/4]
 
         # squeeze掉最后一维，保持批量维度，便于后续堆叠或索引
-        return (
-            distance_scale.squeeze(-1),
-            angle_offset.squeeze(-1),
-            distance_logits.squeeze(-1),
-            angle_logits.squeeze(-1),
-        )
+        return distance_adjust.squeeze(-1), angle_offset.squeeze(-1)
 
 
 class EventTrigger:
@@ -132,51 +110,39 @@ class EventTrigger:
 
     def __init__(
         self,
-        *,
-        trigger_config: TriggerConfig,
-        motion_config: MotionConfig,
+        safety_trigger_distance: float = 0.7,  # [修改] 从 1.0 降至 0.7
+        subgoal_reach_threshold: float = 0.4,  # [修改] 从 0.5 降至 0.4
+        stagnation_steps: int = 30,            # [修改] 从 40 降至 30
+        progress_epsilon: float = 0.1,
+        min_interval: float = 1.2,             # [修改] 从 1.0 增至 1.2
+        step_duration: float = 0.1,
     ) -> None:
         """
         初始化事件触发器
 
         Args:
-            trigger_config: 高层触发相关阈值配置
-            motion_config: 运动学与时间步配置
+            safety_trigger_distance: 安全触发距离阈值（米）
+            subgoal_reach_threshold: 子目标到达阈值（米）
+            stagnation_steps: 停滞步数阈值
+            progress_epsilon: 进度容差（米）
+            min_interval: 最小触发间隔（秒）
+            step_duration: 步长持续时间（秒）
         """
         # 触发参数设置
-        self.config = trigger_config
-        self.motion = motion_config
-        self.safety_trigger_distance = trigger_config.safety_trigger_distance
-        self.subgoal_reach_threshold = trigger_config.subgoal_reach_threshold
-        self.stagnation_steps = max(1, int(trigger_config.stagnation_steps))  # 确保至少1步
-        self.progress_epsilon_floor = float(max(trigger_config.progress_epsilon, 0.0))
-        self.progress_epsilon_ratio = float(max(trigger_config.progress_epsilon_ratio, 0.0))
-        self.current_progress_epsilon = self.progress_epsilon_floor
-        self.stagnation_turn_threshold = float(max(trigger_config.stagnation_turn_threshold, 0.0))
-        self.window_inside_hold = max(0, int(trigger_config.window_inside_hold))
-        self.step_duration = motion_config.dt
-        self.min_interval = float(max(trigger_config.min_interval, 0.0))
-
-        requested_steps = getattr(trigger_config, "min_step_interval", None)
-        if requested_steps is not None and requested_steps > 0:
-            self.min_step_interval = max(1, int(requested_steps))
-        elif self.step_duration > 0:
-            ratio = self.min_interval / self.step_duration if self.min_interval > 0 else 0
-            self.min_step_interval = max(1, int(math.ceil(ratio)))
-        else:
-            self.min_step_interval = 1
-
-        # 同步时间阈值到步数设定，保证后续日志一致
-        if self.step_duration > 0:
-            self.min_interval = self.min_step_interval * self.step_duration
+        self.safety_trigger_distance = safety_trigger_distance
+        self.subgoal_reach_threshold = subgoal_reach_threshold
+        self.stagnation_steps = max(1, int(stagnation_steps))  # 确保至少1步
+        self.progress_epsilon = progress_epsilon
+        self.min_interval = min_interval
+        self.step_duration = step_duration
+        # 计算最小步数间隔：将时间间隔转换为步数间隔
+        self.min_step_interval = max(1, int(math.ceil(min_interval / step_duration))) if step_duration > 0 else 1
 
         # 状态变量初始化
         self.last_trigger_step = -self.min_step_interval  # 上次触发时间步，初始化为负值确保第一次可触发
         self.last_subgoal: Optional[np.ndarray] = None  # 上次子目标位置
         self.best_goal_distance: Optional[float] = None  # 最佳目标距离（用于进度跟踪）
         self.last_progress_step = 0  # 上次有进展的时间步
-        self.cumulative_turn = 0.0
-        self.last_heading_error: Optional[float] = None
 
     def safe_distance_trigger(self, min_obstacle_dist: float) -> bool:
         """若最近障碍物距离低于安全阈值则触发。"""
@@ -196,7 +162,6 @@ class EventTrigger:
         # 设置新的最佳距离基准
         self.best_goal_distance = goal_distance
         self.last_progress_step = current_step
-        self.reset_turn_metrics()
 
     def update_progress(self, goal_distance: float, current_step: int) -> None:
         """根据当前全局目标距离更新最优进度。"""
@@ -210,47 +175,9 @@ class EventTrigger:
             return
 
         # 如果当前距离比最佳距离小（更接近目标），且超过进度容差
-        if goal_distance + self.current_progress_epsilon < self.best_goal_distance:
+        if goal_distance + self.progress_epsilon < self.best_goal_distance:
             self.best_goal_distance = goal_distance  # 更新最佳距离
             self.last_progress_step = current_step  # 更新进度时间步
-            self.reset_turn_metrics()
-
-    def set_progress_context(self, window_radius: Optional[float]) -> None:
-        """根据窗口几何动态调整进度判据。"""
-
-        epsilon = self.progress_epsilon_floor
-        if window_radius is not None and window_radius > 0:
-            epsilon = max(epsilon, window_radius * self.progress_epsilon_ratio)
-        self.current_progress_epsilon = epsilon
-
-    @staticmethod
-    def _wrap(angle: float) -> float:
-        wrapped = (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
-        if wrapped <= -math.pi:
-            wrapped += 2.0 * math.pi
-        return wrapped
-
-    def update_heading_metrics(self, heading_error: Optional[float]) -> None:
-        """累计当前窗口阶段内的转向幅度。"""
-
-        if heading_error is None:
-            self.last_heading_error = None
-            return
-
-        angle = float(heading_error)
-        if self.last_heading_error is None:
-            self.last_heading_error = angle
-            return
-
-        delta = abs(self._wrap(angle - self.last_heading_error))
-        self.cumulative_turn += delta
-        self.last_heading_error = angle
-
-    def reset_turn_metrics(self) -> None:
-        """在进度重置或换子目标时清空累计转向。"""
-
-        self.cumulative_turn = 0.0
-        self.last_heading_error = None
 
     def is_stagnated(self, current_step: int) -> bool:
         """判断是否出现长时间进展停滞。"""
@@ -294,13 +221,8 @@ class EventTrigger:
         if dist_to_subgoal <= self.subgoal_reach_threshold:
             return True
 
-        # 条件2: 进度停滞触发 - 长时间没有向全局目标进展且累计转向超阈值
-        self.update_heading_metrics(subgoal_angle)
-        turn_excess = (
-            self.stagnation_turn_threshold <= 0.0
-            or self.cumulative_turn >= self.stagnation_turn_threshold
-        )
-        stagnation = self.is_stagnated(current_step) and turn_excess
+        # 条件2: 进度停滞触发 - 长时间没有向全局目标进展
+        stagnation = self.is_stagnated(current_step)
 
         # 条件3: 子目标受阻触发 - 子目标方向有障碍物
         blocked = False
@@ -334,8 +256,6 @@ class EventTrigger:
         self.last_subgoal = None
         self.best_goal_distance = None
         self.last_progress_step = 0
-        self.reset_turn_metrics()
-        self.current_progress_epsilon = self.progress_epsilon_floor
 
 
 class HighLevelPlanner:
@@ -353,10 +273,11 @@ class HighLevelPlanner:
         model_name="high_level_planner",
         load_model=False,
         load_directory=None,
+        step_duration=0.3,
+        min_interval=1.0,
+        subgoal_reach_threshold: float = 0.5,
         waypoint_lookahead: int = 3,
         *,
-        trigger_config: Optional[TriggerConfig] = None,
-        motion_config: Optional[MotionConfig] = None,
         rwr_temperature: float = 2.0,
         rwr_min_temperature: float = 0.4,
         rwr_temperature_decay: float = 0.999,
@@ -371,16 +292,14 @@ class HighLevelPlanner:
             model_name: 模型文件名
             load_model: 是否加载预训练模型
             load_directory: 模型加载目录（如果为None则使用save_directory）
-            trigger_config: 高层触发阈值配置
-            motion_config: 运动学与时间步配置
+            step_duration: 步长持续时间（秒）
+            min_interval: 最小触发间隔（秒）
         """
         self.belief_dim = belief_dim
         # 设置计算设备，默认为GPU（如果可用）否则CPU
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # 航点窗口相关参数
-        self.motion_config = motion_config or MotionConfig()
-        self.trigger_config = trigger_config or TriggerConfig()
         self.waypoint_lookahead = max(1, int(waypoint_lookahead))
         self.active_window_feature_dim = 6  # [dist, cos, sin, radius, inside, margin]
         self.per_window_feature_dim = 4  # [dist, cos, sin, radius]
@@ -394,10 +313,11 @@ class HighLevelPlanner:
 
         # 初始化事件触发器
         self.event_trigger = EventTrigger(
-            trigger_config=self.trigger_config,
-            motion_config=self.motion_config,
+            min_interval=min_interval,
+            step_duration=step_duration,
+            subgoal_reach_threshold=subgoal_reach_threshold,
         )
-        self.step_duration = self.motion_config.dt
+        self.step_duration = step_duration
 
         # 训练设置
         self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=3e-4)  # Adam优化器
@@ -415,11 +335,8 @@ class HighLevelPlanner:
         self.current_subgoal = None  # 当前子目标（相对坐标：距离，角度）
         self.last_goal_distance = float('inf')  # 上次目标距离，初始化为无穷大
         self.last_goal_direction = 0.0  # 上次目标方向角度
-        self.prev_action = [0.0, 0.0]  # 上一动作（归一化坐标）
+        self.prev_action = [0.0, 0.0]  # 上一动作 [线速度, 角速度]
         self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标的世界坐标[x, y]
-        self.subgoal_smoothing_alpha = float(np.clip(self.trigger_config.subgoal_smoothing_alpha, 0.0, 0.999))
-        self._smoothed_distance: Optional[float] = None
-        self._smoothed_angle: Optional[float] = None
 
         # 如果请求则加载预训练模型
         if load_model:
@@ -492,18 +409,16 @@ class HighLevelPlanner:
         处理历史动作为张量
 
         Args:
-            prev_action: 上一步的归一化动作 [-1, 1] 区间
+            prev_action: 上一步的动作 [线速度, 角速度]
 
         Returns:
             处理后的动作信息张量
         """
-        prev = np.asarray(prev_action, dtype=np.float32).flatten()
-        if prev.size < 2:
-            raise ValueError("prev_action must contain at least two elements (a_lin, a_ang).")
+        # 简单归一化处理
+        lin_vel = float(prev_action[0]) * 2  # 假设线速度范围在[0, 0.5]，缩放到[0,1]
+        ang_vel = float(prev_action[1])  # 假设角速度范围在[-1, 1]，保持不变
 
-        lin_vel = float(np.clip(prev[0], -1.0, 1.0))
-        ang_vel = float(np.clip(prev[1], -1.0, 1.0))
-
+        # 组合成张量：[线速度, 角速度]
         action_info = torch.FloatTensor([lin_vel, ang_vel]).to(self.device)
 
         return action_info
@@ -511,45 +426,6 @@ class HighLevelPlanner:
     @staticmethod
     def _wrap_angle(angle: float) -> float:
         return math.atan2(math.sin(angle), math.cos(angle))
-
-    def _smooth_subgoal(self, distance: float, angle: float) -> Tuple[float, float]:
-        """Apply EMA smoothing to consecutive subgoals to damp oscillations."""
-
-        alpha = self.subgoal_smoothing_alpha
-        if not (0.0 < alpha < 1.0):
-            self._smoothed_distance = distance
-            self._smoothed_angle = angle
-            return distance, angle
-
-        if self._smoothed_distance is None or self._smoothed_angle is None:
-            self._smoothed_distance = distance
-            self._smoothed_angle = angle
-            return distance, angle
-
-        smoothed_distance = alpha * self._smoothed_distance + (1.0 - alpha) * distance
-
-        prev_vec = np.array(
-            [math.cos(self._smoothed_angle), math.sin(self._smoothed_angle)],
-            dtype=np.float32,
-        )
-        new_vec = np.array([math.cos(angle), math.sin(angle)], dtype=np.float32)
-        blended = alpha * prev_vec + (1.0 - alpha) * new_vec
-        if float(np.linalg.norm(blended)) <= 1e-6:
-            smoothed_angle = angle
-        else:
-            smoothed_angle = math.atan2(float(blended[1]), float(blended[0]))
-
-        smoothed_angle = math.atan2(math.sin(smoothed_angle), math.cos(smoothed_angle))
-
-        self._smoothed_distance = smoothed_distance
-        self._smoothed_angle = smoothed_angle
-        return smoothed_distance, smoothed_angle
-
-    def reset_smoothing(self) -> None:
-        """Clear the smoothing state when episodes reset or plans restart."""
-
-        self._smoothed_distance = None
-        self._smoothed_angle = None
 
     def _world_to_relative(self, robot_pose, waypoint) -> Tuple[float, float]:
         if robot_pose is None:
@@ -632,8 +508,6 @@ class HighLevelPlanner:
         min_obstacle_dist=None,
         current_step: int = 0,
         window_metrics: Optional[dict] = None,
-        *,
-        throttle_ready: bool = True,
     ):
         """
         检查是否有任何事件触发器被激活
@@ -642,31 +516,19 @@ class HighLevelPlanner:
             laser_scan: 当前激光雷达读数
             robot_pose: 当前机器人位姿 [x, y, theta]
             goal_info: 全局目标信息 [distance, cos, sin]
-            prev_action: 上一步的动作（归一化）[a_lin, a_ang]
+            prev_action: 上一步的动作 [线速度, 角速度]
             min_obstacle_dist: 到最近障碍物的距离（如果为None，则从laser_scan计算）
             current_step: 当前时间步
-            throttle_ready: 是否已满足最小触发间隔（由集成层统筹）
 
         Returns:
             布尔值，指示是否应生成新子目标
         """
+        # 检查时间间隔条件
+        time_ready = self.event_trigger.time_based_trigger(current_step)
+
         # 提取目标距离信息
         goal_distance = float(goal_info[0]) if goal_info else float('inf')
         laser_scan = np.asarray(laser_scan, dtype=np.float32)  # 确保激光数据为numpy数组
-
-        window_radius: Optional[float] = None
-        inside_window = False
-        steps_inside = 0
-        limit_exceeded = False
-        if window_metrics:
-            radius_val = window_metrics.get("radius")
-            if radius_val is not None:
-                window_radius = float(radius_val)
-            inside_window = bool(window_metrics.get("inside", False))
-            steps_inside = int(window_metrics.get("steps_inside", 0))
-            limit_exceeded = bool(window_metrics.get("limit_exceeded", False))
-
-        self.event_trigger.set_progress_context(window_radius)
 
         # 如果未提供则计算最小障碍物距离
         if min_obstacle_dist is None:
@@ -694,10 +556,8 @@ class HighLevelPlanner:
             min_obstacle_dist=min_obstacle_dist,
         )
 
-        # 最终触发决策：满足节流条件并触发安全/进度事件，窗口强制触发单独处理
-        trigger_new_subgoal = (safe_trigger or progress_trigger) and throttle_ready
-        if limit_exceeded:
-            trigger_new_subgoal = True
+        # 最终触发决策：时间间隔满足 AND (安全触发 OR 进度触发)
+        trigger_new_subgoal = time_ready and (safe_trigger or progress_trigger)
 
         # 如果触发，重置时间计数器
         if window_metrics:
@@ -706,15 +566,6 @@ class HighLevelPlanner:
             if window_metrics.get("entered", False):
                 # 新窗口被进入，刷新进度基准以避免重复触发
                 self.event_trigger.reset_progress(goal_distance, current_step)
-
-        hold_threshold = self.event_trigger.window_inside_hold
-        if (
-            trigger_new_subgoal
-            and not limit_exceeded
-            and inside_window
-            and steps_inside < hold_threshold
-        ):
-            trigger_new_subgoal = False
 
         if trigger_new_subgoal:
             self.event_trigger.reset_time(current_step)
@@ -741,7 +592,7 @@ class HighLevelPlanner:
             goal_distance: 到全局目标的距离
             goal_cos: 到全局目标角度的余弦值
             goal_sin: 到全局目标角度的正弦值
-            prev_action: 上一步的动作（归一化）[a_lin, a_ang]
+            prev_action: 上一步的动作 [线速度, 角速度]
             robot_pose: 机器人位姿 [x, y, theta]（用于计算世界坐标）
             current_step: 当前全局时间步（用于进度重置）
             waypoints: 当前全局规划提供的候选航点
@@ -764,23 +615,14 @@ class HighLevelPlanner:
 
         # 使用网络生成子目标（不计算梯度）
         with torch.no_grad():  # 推理模式，不计算梯度
-            (
-                distance_scale_tensor,
-                angle_offset_tensor,
-                _,
-                _,
-            ) = self.subgoal_network(
+            distance_adjust_tensor, angle_offset_tensor = self.subgoal_network(
                 laser_tensor.unsqueeze(0),  # 增加批次维度：[1, belief_dim] -> [1, 1, belief_dim]
                 goal_tensor.unsqueeze(0),  # 增加批次维度：[3] -> [1, 3]
                 action_tensor.unsqueeze(0),  # 增加批次维度：[2] -> [1, 2]
             )
 
-        distance_scale = float(distance_scale_tensor.cpu().numpy().item())
+        distance_adjust = float(distance_adjust_tensor.cpu().numpy().item())
         angle_offset = float(angle_offset_tensor.cpu().numpy().item())
-
-        # 规范化输出范围
-        distance_scale = float(np.clip(distance_scale, 0.0, 1.0))
-        angle_offset = float(self._wrap_angle(angle_offset))
 
         candidate_info = []
         active_window_index: Optional[int] = None
@@ -811,7 +653,6 @@ class HighLevelPlanner:
                         "distance": rel_dist,
                         "angle": rel_angle,
                         "radius": float(window_obj.radius),
-                        "tangent_heading": float(getattr(window_obj, "tangent_heading", 0.0)),
                     }
                 )
 
@@ -820,11 +661,73 @@ class HighLevelPlanner:
                 active_window_radius = candidate_info[0]["radius"]
 
         selected_index = None
+        final_distance: float
+        final_angle: float
+        world_target = None
 
-        anchor_info = candidate_info[0] if candidate_info else None
+        anchor_info = None
+        if candidate_info:
+            for info in candidate_info:
+                # 用现有的角→激光索引工具拿该方向的射线距离
+                ray = self.event_trigger._ray_distance_to_angle(laser_scan, info["angle"])
+                # 直线可达性判据：射线距离 ≥ 窗口距离 + 安全边际
+                if np.isfinite(ray) and ray >= info["distance"] + self.event_trigger.safety_trigger_distance:
+                    anchor_info = info
+                    break
 
-        if anchor_info is not None and anchor_info["index"] is not None:
-            selected_index = int(anchor_info["index"])
+        # 找不到就回退到原来的第一个
+        if anchor_info is None and candidate_info:
+            anchor_info = candidate_info[0]
+
+        if anchor_info is not None:
+            if anchor_info["index"] is not None:
+                selected_index = int(anchor_info["index"])
+            base_distance = anchor_info["distance"]
+            base_angle = anchor_info["angle"]
+            anchor_radius = max(anchor_info["radius"], 0.3)
+            active_window_radius = anchor_radius
+        else:
+            base_angle = math.atan2(goal_sin, goal_cos)
+            base_distance = max(0.5, min(float(goal_distance), 3.0))
+            anchor_radius = max(0.5, min(float(goal_distance), 2.0) * 0.5)
+            if active_window_radius is None:
+                active_window_radius = anchor_radius
+
+        # 根据网络输出的调整量生成最终子目标
+        min_distance = max(0.2, base_distance - anchor_radius)
+        max_distance = base_distance + anchor_radius
+        candidate_distance = base_distance + distance_adjust * anchor_radius
+        final_distance = float(np.clip(candidate_distance, min_distance, max_distance))
+        final_angle = self._wrap_angle(base_angle + angle_offset)
+
+        # 记录实际应用的调整量（考虑裁剪后的效果）
+        applied_distance_adjust = 0.0
+        if anchor_radius > 1e-3:
+            applied_distance_adjust = float(np.clip((final_distance - base_distance) / anchor_radius, -1.0, 1.0))
+        applied_angle_offset = float(
+            np.clip(self._wrap_angle(final_angle - base_angle), -math.pi / 4, math.pi / 4)
+        )
+
+        if robot_pose is not None:
+            world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
+
+        # 存储供将来参考
+        self.current_subgoal = (final_distance, final_angle)
+        self.last_goal_distance = float(goal_distance)
+        self.last_goal_direction = math.atan2(goal_sin, goal_cos)
+        if prev_action is not None:
+            self.prev_action = list(prev_action)
+
+        if world_target is not None:
+            self.current_subgoal_world = world_target
+            self.event_trigger.last_subgoal = world_target.tolist()
+        else:
+            self.current_subgoal_world = None
+            self.event_trigger.last_subgoal = None
+
+        # 重置进度基准（新子目标意味着重新开始进度跟踪）
+        progress_step = current_step if current_step is not None else 0
+        self.event_trigger.reset_progress(goal_distance, progress_step)
 
         if active_window_index is None and window_metrics:
             active_window_index = window_metrics.get("index")
@@ -835,58 +738,19 @@ class HighLevelPlanner:
             "active_window_index": active_window_index,
             "active_window_radius": active_window_radius,
             "window_metrics": dict(window_metrics) if window_metrics else {},
-            "candidate_info": candidate_info,
-            "raw_distance_scale": distance_scale,
+            "anchor_distance": base_distance,
+            "anchor_angle": base_angle,
+            "anchor_radius": anchor_radius,
+            "raw_distance_adjust": distance_adjust,
             "raw_angle_offset": angle_offset,
+            "distance_adjust_applied": applied_distance_adjust,
+            "angle_offset_applied": applied_angle_offset,
         }
 
         if metadata["selected_waypoint"] is None and active_window_index is not None:
             metadata["selected_waypoint"] = active_window_index
 
-        return distance_scale, angle_offset, metadata
-
-    def commit_subgoal(
-        self,
-        *,
-        distance: float,
-        angle: float,
-        world_target: Optional[np.ndarray],
-        goal_distance: float,
-        goal_direction: float,
-        prev_action: Optional[Sequence[float]],
-        current_step: int,
-        robot_pose: Optional[Sequence[float]] = None,
-    ) -> None:
-        """记录最新子目标并刷新触发器的内部状态。"""
-
-        wrapped_angle = float(self._wrap_angle(angle))
-        smoothed_distance, smoothed_angle = self._smooth_subgoal(float(distance), wrapped_angle)
-        self.current_subgoal = (smoothed_distance, smoothed_angle)
-        self.last_goal_distance = float(goal_distance)
-        self.last_goal_direction = float(self._wrap_angle(goal_direction))
-
-        if prev_action is not None:
-            prev_arr = np.asarray(prev_action, dtype=np.float32).flatten()
-            if prev_arr.size >= 2:
-                self.prev_action = [
-                    float(np.clip(prev_arr[0], -1.0, 1.0)),
-                    float(np.clip(prev_arr[1], -1.0, 1.0)),
-                ]
-
-        if robot_pose is not None:
-            target_vec = self._relative_to_world(robot_pose, smoothed_distance, smoothed_angle)
-            self.current_subgoal_world = target_vec
-            self.event_trigger.last_subgoal = target_vec.tolist()
-        elif world_target is not None:
-            target_vec = np.asarray(world_target, dtype=np.float32)
-            self.current_subgoal_world = target_vec
-            self.event_trigger.last_subgoal = target_vec.tolist()
-        else:
-            self.current_subgoal_world = None
-            self.event_trigger.last_subgoal = None
-
-        progress_step = int(current_step)
-        self.event_trigger.reset_progress(goal_distance, progress_step)
+        return final_distance, final_angle, metadata
 
     def compute_environment_complexity(self, laser_scan):
         """
@@ -962,7 +826,7 @@ class HighLevelPlanner:
 
         return safe_subgoals  # 返回安全子目标列表
 
-    def update_planner(self, states, actions, rewards, subgoal_dones, next_states, batch_size=64):
+    def update_planner(self, states, actions, rewards, dones, next_states, batch_size=64):
         """
         使用收集的经验更新规划器的神经网络
 
@@ -971,7 +835,7 @@ class HighLevelPlanner:
             actions: 采取的动作批次（真实的子目标）
             rewards: 获得的奖励批次
             next_states: 结果状态批次
-            subgoal_dones: 子目标终止标志批次
+            dones: 完成标志批次
             batch_size: 训练批次大小
 
         Returns:
@@ -981,7 +845,7 @@ class HighLevelPlanner:
         states = torch.FloatTensor(states).to(self.device)
         actions = torch.FloatTensor(actions).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)  # 增加维度便于广播
-        subgoal_dones = torch.FloatTensor(subgoal_dones).to(self.device).unsqueeze(1)
+        dones = torch.FloatTensor(dones).to(self.device).unsqueeze(1)
         next_states = torch.FloatTensor(next_states).to(self.device)
 
         goal_feature_dim = self.goal_feature_dim
@@ -992,30 +856,9 @@ class HighLevelPlanner:
         prev_action = states[:, -action_feature_dim:]
 
         # 生成子目标（网络预测）
-        (
-            distance_scales,
-            angle_offsets,
-            distance_logits,
-            angle_logits,
-        ) = self.subgoal_network(laser_scans, goal_info, prev_action)
-
-        # 合并调整量为完整动作 [distance_scale, angle_offset]
-        subgoals = torch.stack((distance_scales, angle_offsets), dim=1)
-
-        # 将监督信号反变换到未约束空间
-        eps = 1e-3
-        target_distance = actions[:, 0:1]
-        target_angle = actions[:, 1:2]
-
-        clamped_distance = target_distance.clamp(eps, 1.0 - eps)
-        distance_targets = _logit(clamped_distance)
-
-        angle_scale = np.pi / 4
-        normalized_angle = (target_angle / angle_scale).clamp(-1.0 + eps, 1.0 - eps)
-        angle_targets = _artanh(normalized_angle)
-
-        distance_logits = distance_logits.unsqueeze(1)
-        angle_logits = angle_logits.unsqueeze(1)
+        distance_adjusts, angle_offsets = self.subgoal_network(laser_scans, goal_info, prev_action)
+        # 合并调整量为完整动作 [distance_coeff, angle_offset]
+        subgoals = torch.stack((distance_adjusts, angle_offsets), dim=1)
 
         # 基于软最大化的奖励加权，温度参数控制集中度
         with torch.no_grad():
@@ -1023,10 +866,8 @@ class HighLevelPlanner:
             scaled = (rewards - rewards.max()) / temperature
             weights = torch.softmax(scaled.squeeze(1), dim=0).unsqueeze(1)
 
-        # 计算每个样本的Huber损失
-        distance_loss = F.smooth_l1_loss(distance_logits, distance_targets, reduction='none')
-        angle_loss = F.smooth_l1_loss(angle_logits, angle_targets, reduction='none')
-        per_sample_loss = distance_loss + angle_loss
+        # 计算每个样本的MSE损失
+        per_sample_loss = F.mse_loss(subgoals, actions, reduction='none').mean(dim=1, keepdim=True)
         # 加权损失：突出高回报样本的重要性
         loss = (per_sample_loss * weights).sum() / weights.sum()
 
@@ -1053,7 +894,7 @@ class HighLevelPlanner:
 
         return {
             'loss': loss.item(),  # 损失值
-            'avg_distance_scale': distance_scales.mean().item(),  # 平均距离缩放量
+            'avg_distance_adjust': distance_adjusts.mean().item(),  # 平均距离调整量
             'avg_angle_offset': angle_offsets.mean().item(),  # 平均角度偏移量
             'weight_mean': weights.mean().item(),  # 平均权重
             'weight_entropy': weight_entropy,
