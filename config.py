@@ -16,15 +16,15 @@ from typing import Optional
 class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
-    progress_weight: float = 5.0                    # 前进进度奖励权重
-    efficiency_penalty: float = 0.07                 # 效率惩罚系数（惩罚不必要的动作）
-    safety_weight: float = 0.8                       # 安全性奖励权重
-    safety_sensitivity: float = 2.0                  # 安全敏感性系数（影响安全奖励计算）
-    safety_clearance: float = 1.0                    # 安全距离阈值
-    goal_bonus: float = 35.0                         # 到达最终目标的奖励
-    subgoal_bonus: float = 12.0                      # 到达子目标的奖励
-    collision_penalty: float = -30.0                 # 碰撞惩罚
-    timeout_penalty: float = -15.0                   # 超时惩罚
+    progress_weight: float = 12.0                   # 前进进度奖励权重
+    efficiency_penalty: float = 0.12                # 效率惩罚系数（惩罚不必要的动作）
+    safety_weight: float = 1.8                      # 安全性奖励权重
+    safety_sensitivity: float = 2.0                 # 安全敏感性系数（影响安全奖励计算）
+    safety_clearance: float = 1.0                   # 安全距离阈值
+    goal_bonus: float = 60.0                        # 到达最终目标的奖励
+    subgoal_bonus: float = 18.0                     # 到达子目标的奖励
+    collision_penalty: float = -50.0                # 碰撞惩罚
+    timeout_penalty: float = -15.0                  # 超时惩罚
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -38,14 +38,32 @@ class LowLevelRewardConfig:
 class HighLevelRewardConfig:
     """Reward shaping coefficients for the high-level planner."""
 
-    path_progress_weight: float = 5.0                # 路径进度奖励权重
-    global_progress_weight: float = 2.0              # 全局进度奖励权重
-    low_level_return_scale: float = 0.02             # 低层控制器回报的缩放因子
-    subgoal_completion_bonus: float = 10.0            # 子目标完成奖励
-    low_level_failure_penalty: float = -10.0         # 低层控制器失败的惩罚
-    goal_bonus: float = 35.0                         # 到达最终目标的奖励
-    collision_penalty: float = -30.0                 # 碰撞惩罚
-    timeout_penalty: float = -15.0                   # 超时惩罚
+    path_progress_weight: float = 5.0               # 路径进度奖励权重
+    global_progress_weight: float = 2.0             # 全局进度奖励权重
+    low_level_return_scale: float = 0.02            # 低层控制器回报的缩放因子
+    subgoal_completion_bonus: float = 4.0           # 子目标完成奖励
+    low_level_failure_penalty: float = -10.0        # 低层控制器失败的惩罚
+    goal_bonus: float = 60.0                        # 到达最终目标的奖励
+    collision_penalty: float = -50.0                # 碰撞惩罚
+    timeout_penalty: float = -25.0                  # 超时惩罚
+
+
+@dataclass(frozen=True)
+class ShieldingConfig:
+    """Velocity shielding parameters applied before executing commands."""
+
+    enabled: bool = True                             # 是否启用速度缩放屏蔽
+    safe_distance: float = 0.7                       # 安全距离阈值 d_safe
+    gain: float = 8.0                                # Logistic 缩放的斜率系数 k
+    angular_gain: float = 1.5                        # 安全距离内角速度放大系数 γ
+
+    def __post_init__(self) -> None:  # type: ignore[override]
+        if self.safe_distance <= 0:
+            raise ValueError("safe_distance must be positive")
+        if self.gain <= 0:
+            raise ValueError("gain must be positive")
+        if self.angular_gain < 1.0:
+            raise ValueError("angular_gain must be at least 1.0")
 
 
 @dataclass(frozen=True)
@@ -55,6 +73,7 @@ class MotionConfig:
     v_max: float = 0.5                               # 最大线速度 (m/s)
     omega_max: float = 1.0                           # 最大角速度 (rad/s)
     dt: float = 0.3                                  # 控制时间步长 (s)
+    shielding: ShieldingConfig = field(default_factory=ShieldingConfig)  # 速度缩放屏蔽配置
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -71,12 +90,12 @@ class TriggerConfig:
     """High-level trigger thresholds and timing rules."""
 
     safety_trigger_distance: float = 0.7             # 安全触发距离阈值
-    subgoal_reach_threshold: float = 0.3             # 子目标到达判定阈值
-    stagnation_steps: int = 60                       # 停滞步数阈值（检测是否卡住）
+    subgoal_reach_threshold: float = 0.4             # 子目标到达判定阈值
+    stagnation_steps: int = 30                       # 停滞步数阈值（检测是否卡住）
     stagnation_turn_threshold: float = 3.5           # 累计转向阈值（弧度）
-    progress_epsilon: float = 0.05                   # 进度变化最小阈值下限（采用窗口比例时的兜底值）
+    progress_epsilon: float = 0.1                    # 进度变化最小阈值下限（采用窗口比例时的兜底值）
     progress_epsilon_ratio: float = 0.02             # 进度阈值相对于窗口半径的比例
-    min_interval: float = 0.0                        # 最小触发间隔时间（秒，优先使用步数配置）
+    min_interval: float = 1.2                        # 最小触发间隔时间（秒，优先使用步数配置）
     min_step_interval: int = 10                      # 最小触发间隔步数
     window_inside_hold: int = 3                      # 进入窗口后至少驻留的步数
     subgoal_smoothing_alpha: float = 0.7             # 子目标EMA平滑系数
@@ -134,6 +153,41 @@ class PlannerConfig:
 
 
 @dataclass(frozen=True)
+class SafetyCriticConfig:
+    """Configuration for the tactical-layer safety critic."""
+
+    progress_weight: float = 1.0                     # 进度得分的权重α
+    risk_weight: float = 1.0                         # 风险惩罚的权重β
+    distance_weight: float = 1.0                     # 进度得分中的距离项权重
+    angle_weight: float = 0.35                       # 进度得分中的角度项权重
+    update_batch_size: int = 64                      # Safety-Critic训练批次大小
+    min_buffer_size: int = 128                       # 开始训练前所需的最少样本数
+    max_buffer_size: int = 4096                      # Safety-Critic样本缓冲区最大容量
+    target_clip_min: float = 0.0                     # 风险监督目标的最小裁剪值
+    target_clip_max: float = 6.0                     # 风险监督目标的最大裁剪值
+
+    def __post_init__(self) -> None:  # type: ignore[override]
+        if self.progress_weight < 0:
+            raise ValueError("progress_weight must be non-negative")
+        if self.risk_weight < 0:
+            raise ValueError("risk_weight must be non-negative")
+        if self.distance_weight < 0:
+            raise ValueError("distance_weight must be non-negative")
+        if self.angle_weight < 0:
+            raise ValueError("angle_weight must be non-negative")
+        if self.update_batch_size <= 0:
+            raise ValueError("update_batch_size must be positive")
+        if self.min_buffer_size < 0:
+            raise ValueError("min_buffer_size must be non-negative")
+        if self.max_buffer_size <= 0:
+            raise ValueError("max_buffer_size must be positive")
+        if self.target_clip_min < 0:
+            raise ValueError("target_clip_min must be non-negative")
+        if self.target_clip_max <= self.target_clip_min:
+            raise ValueError("target_clip_max must be greater than target_clip_min")
+
+
+@dataclass(frozen=True)
 class WindowRuntimeConfig:
     """Runtime rules for waypoint window tracking."""
 
@@ -153,18 +207,24 @@ class WindowRuntimeConfig:
 class TrainingConfig:
     """End-to-end training and evaluation hyper-parameters."""
 
-    buffer_size: int = 100_000                        # 经验回放缓冲区大小
-    batch_size: int = 128                             # 训练批次大小
+    buffer_size: int = 80_000                        # 经验回放缓冲区大小
+    batch_size: int = 64                             # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
     max_steps: int = 350                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 100                   # 每次训练的迭代次数
     exploration_noise: float = 0.15                  # 探索噪声系数
-    min_buffer_size: int = 5_000                     # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 1_000                     # 开始训练的最小缓冲区大小
+    max_lin_velocity: float = 1.0                    # 最大线速度
+    max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
+    subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
-    world_file: str = "env_b.yaml"                   # 环境配置文件
+    world_file: str = "env_b.yaml"                  # 环境配置文件
+    waypoint_lookahead: int = 3                      # 高层使用的前瞻航点数
+    global_plan_resolution: float = 0.25             # 全局规划分辨率
+    global_plan_margin: float = 0.35                 # 全局规划安全裕度
     discount: float = 0.99                           # 折扣因子
     tau: float = 0.005                               # 目标网络软更新系数
     policy_noise: float = 0.2                        # 策略噪声
@@ -215,6 +275,7 @@ class IntegrationConfig:
     motion: MotionConfig = field(default_factory=MotionConfig)                    # 运动配置
     trigger: TriggerConfig = field(default_factory=TriggerConfig)                 # 触发配置
     planner: PlannerConfig = field(default_factory=PlannerConfig)                 # 规划器配置
+    safety_critic: SafetyCriticConfig = field(default_factory=SafetyCriticConfig) # Safety-Critic配置
     window: WindowRuntimeConfig = field(default_factory=WindowRuntimeConfig)      # 窗口运行时配置
     low_level_reward: LowLevelRewardConfig = field(default_factory=LowLevelRewardConfig)  # 低层奖励配置
     high_level_reward: HighLevelRewardConfig = field(default_factory=HighLevelRewardConfig)  # 高层奖励配置
@@ -226,6 +287,7 @@ class IntegrationConfig:
         motion: MotionConfig | None = None,
         trigger: TriggerConfig | None = None,
         planner: PlannerConfig | None = None,
+        safety_critic: SafetyCriticConfig | None = None,
         window: WindowRuntimeConfig | None = None,
         low_level_reward: LowLevelRewardConfig | None = None,
         high_level_reward: HighLevelRewardConfig | None = None,
@@ -237,6 +299,7 @@ class IntegrationConfig:
             motion=motion or self.motion,
             trigger=trigger or self.trigger,
             planner=planner or self.planner,
+            safety_critic=safety_critic or self.safety_critic,
             window=window or self.window,
             low_level_reward=low_level_reward or self.low_level_reward,
             high_level_reward=high_level_reward or self.high_level_reward,
@@ -273,12 +336,19 @@ class ConfigBundle:
         """便捷属性：直接访问高层奖励配置"""
         return self.integration.high_level_reward
 
+    @property
+    def safety_critic(self) -> SafetyCriticConfig:
+        """便捷属性：直接访问安全评估模型配置"""
+        return self.integration.safety_critic
+
 
 # 模块导出列表
 __all__ = [
+    "ShieldingConfig",
     "MotionConfig",
     "TriggerConfig",
     "PlannerConfig",
+    "SafetyCriticConfig",
     "WindowRuntimeConfig",
     "LowLevelRewardConfig",
     "HighLevelRewardConfig",
