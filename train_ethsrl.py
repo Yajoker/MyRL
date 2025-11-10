@@ -13,39 +13,11 @@ import numpy as np
 import torch
 
 # 导入自定义模块
+from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, TrainingConfig
 from integration import HierarchicalNavigationSystem
-from rewards import (
-    HighLevelRewardConfig,
-    LowLevelRewardConfig,
-    compute_high_level_reward,
-    compute_low_level_reward,
-)
+from rewards import compute_high_level_reward, compute_low_level_reward
 from robot_nav.SIM_ENV.sim import SIM
 from robot_nav.replay_buffer import ReplayBuffer
-
-
-@dataclass
-class TrainingConfig:
-    """训练超参数配置容器"""
-
-    buffer_size: int = 80000  # 经验回放缓冲区大小
-    batch_size: int = 64  # 训练批次大小  64->128
-    max_epochs: int = 60  # 最大训练轮数
-    episodes_per_epoch: int = 70  # 每轮训练的情节数
-    max_steps: int = 350  # 每个情节的最大步数  300->350
-    train_every_n_episodes: int = 1  # 每N个情节训练一次   2->1
-    training_iterations: int = 100  # 每次训练的迭代次数   80->100
-    exploration_noise: float = 0.15  # 探索噪声强度    0.2->0.15
-    min_buffer_size: int = 1000  # 开始训练的最小缓冲区大小  500->2500->1000
-    max_lin_velocity: float = 1.0  # 最大线速度
-    max_ang_velocity: float = 1.0  # 最大角速度
-    eval_episodes: int = 10  # 评估时使用的情节数
-    subgoal_radius: float = 0.4  # 判定子目标达成的距离阈值  0.5->0.4
-    save_every: int = 5  # 每隔多少个情节保存一次模型（<=0 表示仅最终保存）
-    world_file: str = "env_b.yaml"  # 使用的世界配置文件（位于ethsrl/worlds）
-    waypoint_lookahead: int = 3  # 全局规划提供给高层的航点数量
-    global_plan_resolution: float = 0.25  # 全局规划网格分辨率
-    global_plan_margin: float = 0.35  # 全局规划安全膨胀系数
 
 
 @dataclass
@@ -526,7 +498,9 @@ def main(args=None):
 
     # ========== 训练配置与设备初始化 ==========
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = TrainingConfig()
+    bundle = ConfigBundle()
+    config = bundle.training
+    integration_config = bundle.integration
 
     raw_world = Path(config.world_file)
     base_dir = Path(__file__).resolve().parent
@@ -593,8 +567,12 @@ def main(args=None):
         global_plan_resolution=config.global_plan_resolution,
         global_plan_margin=config.global_plan_margin,
         waypoint_lookahead=config.waypoint_lookahead,
+        integration_config=integration_config,
     )
-    replay_buffer = TD3ReplayAdapter(buffer_size=config.buffer_size)
+    replay_buffer = TD3ReplayAdapter(
+        buffer_size=config.buffer_size,
+        random_seed=config.random_seed or 666,
+    )
     print("✅ System initialization completed")
 
     # ========== 环境初始化 ==========
@@ -617,8 +595,8 @@ def main(args=None):
     print("-" * 50)
 
     # 奖励配置初始化
-    low_reward_cfg = LowLevelRewardConfig()
-    high_reward_cfg = HighLevelRewardConfig()
+    low_reward_cfg = bundle.low_level_reward
+    high_reward_cfg = bundle.high_level_reward
     high_level_buffer: List[Tuple[np.ndarray, np.ndarray, float, np.ndarray, float]] = []
     current_subgoal_context: Optional[SubgoalContext] = None
 
