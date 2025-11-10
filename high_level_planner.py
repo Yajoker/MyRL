@@ -153,6 +153,14 @@ class SafetyCritic(nn.Module):
 class EventTrigger:
     """事件触发器，聚焦安全距离与进度两类触发条件。"""
 
+        combined = torch.cat((x, g, a, geom), dim=1)
+        x = F.relu(self.fc1(combined))
+        x = F.relu(self.fc2(x))
+        risk = F.softplus(self.output_head(x))
+        return risk.squeeze(-1)
+
+
+class EventTrigger:
     def __init__(
         self,
         *,
