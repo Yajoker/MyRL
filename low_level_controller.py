@@ -211,18 +211,17 @@ class LowLevelController:
     """
 
     def __init__(
-        self,
-        state_dim,
-        action_dim,
-        max_action,
-        device,
-        lr=3e-4,
-        save_every=0,
-        load_model=False,
-        save_directory=Path("ethsrl/models/low_level"),
-        model_name="low_level_controller",
-        load_directory=None,
-        distance_normalizer: float = 1.0,
+            self,
+            state_dim,
+            action_dim,
+            max_action,
+            device,
+            lr=3e-4,
+            save_every=0,
+            load_model=False,
+            save_directory=Path("ethsrl/models/low_level"),
+            model_name="low_level_controller",
+            load_directory=None,
     ):
         """
         初始化低层控制器
@@ -238,13 +237,11 @@ class LowLevelController:
             save_directory: 模型保存目录
             model_name: 模型文件名
             load_directory: 模型加载目录（如果为None则使用save_directory）
-            distance_normalizer: 子目标距离归一化尺度
         """
         self.device = device
         self.action_dim = action_dim
         self.max_action = max_action
         self.state_dim = state_dim
-        self.distance_normalizer = max(1e-6, float(distance_normalizer))
 
         # 初始化Actor网络和目标网络
         self.actor = LowLevelActorNetwork(action_dim).to(device)
@@ -278,7 +275,7 @@ class LowLevelController:
             laser_scan: 原始激光雷达扫描数据
             subgoal_distance: 到子目标的距离
             subgoal_angle: 到子目标的角度
-            prev_action: 历史动作（归一化）[a_lin, a_ang]，范围[-1, 1]
+            prev_action: 历史动作 [线速度, 角速度]
 
         Returns:
             处理后的状态向量
@@ -290,15 +287,12 @@ class LowLevelController:
         laser_scan /= 7.0  # 归一化到[0, 1]范围
 
         # 归一化子目标距离和角度
-        norm_distance = min(subgoal_distance / self.distance_normalizer, 1.0)
+        norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
         norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
 
-        # 处理历史动作（直接使用归一化后的值）
-        prev_arr = np.asarray(prev_action, dtype=np.float32).flatten()
-        if prev_arr.size < 2:
-            raise ValueError("prev_action must contain at least two elements (a_lin, a_ang).")
-        lin_vel = float(np.clip(prev_arr[0], -1.0, 1.0))
-        ang_vel = float(np.clip(prev_arr[1], -1.0, 1.0))
+        # 处理历史动作
+        lin_vel = prev_action[0] * 2  # 缩放到适当范围
+        ang_vel = (prev_action[1] + 1) / 2  # 缩放到[0, 1]范围
 
         # 组合所有组件
         state = laser_scan.tolist() + [norm_distance, norm_angle] + [lin_vel, ang_vel]
