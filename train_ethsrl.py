@@ -817,10 +817,10 @@ def main(args=None):
             )
             action = np.clip(action, -1.0, 1.0)  # 裁剪动作
 
-            # 转换为实际控制命令
-            lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))  # 线性速度命令
-            ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))  # 角速度命令
-            lin_cmd, ang_cmd = system.apply_velocity_shielding(lin_cmd, ang_cmd, latest_scan)  # 应用速度屏蔽
+            # 转换为实际控制命令（未屏蔽的环境动作）
+            env_lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))  # 线性速度命令
+            env_ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))  # 角速度命令
+            lin_cmd, ang_cmd = system.apply_velocity_shielding(env_lin_cmd, env_ang_cmd, latest_scan)  # 应用速度屏蔽
 
             # 执行动作
             latest_scan, distance, cos, sin, collision, goal, executed_action, _ = sim.step(  # 执行一步仿真
@@ -979,8 +979,9 @@ def main(args=None):
             # 检查终止条件
             done = collision or goal or steps == config.max_steps - 1  # 终止条件
 
-            # 添加经验到回放缓冲区
-            replay_buffer.add(state, action, low_reward, float(done), next_state)  # 添加到回放缓冲区
+            # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
+            scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
+            replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
 
             # 定期输出回放缓冲区大小与奖励
             if steps % 50 == 0:  # 每50步输出一次

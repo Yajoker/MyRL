@@ -102,7 +102,9 @@ class HierarchicalNavigationSystem:
             device=self.device,  # 计算设备
             save_directory=models_directory / "low_level",  # 模型保存路径
             model_name="low_level_controller",  # 模型名称
-            load_model=load_models  # 是否加载已有模型
+            load_model=load_models,  # 是否加载已有模型
+            max_lin_velocity=self._integration_config.training.max_lin_velocity,
+            max_ang_velocity=self._integration_config.training.max_ang_velocity,
         )
 
         # 系统运行状态变量
