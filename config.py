@@ -52,7 +52,7 @@ class HighLevelRewardConfig:
 class ShieldingConfig:
     """Velocity shielding parameters applied before executing commands."""
 
-    enabled: bool = True                             # 是否启用速度缩放屏蔽
+    enabled: bool = False                             # 是否启用速度缩放屏蔽
     safe_distance: float = 0.7                       # 安全距离阈值 d_safe
     gain: float = 8.0                                # Logistic 缩放的斜率系数 k
     angular_gain: float = 1.5                        # 安全距离内角速度放大系数 γ
@@ -207,7 +207,7 @@ class WindowRuntimeConfig:
 class TrainingConfig:
     """End-to-end training and evaluation hyper-parameters."""
 
-    buffer_size: int = 80_000                        # 经验回放缓冲区大小
+    buffer_size: int = 50_000                        # 经验回放缓冲区大小
     batch_size: int = 64                             # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
@@ -215,7 +215,7 @@ class TrainingConfig:
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 100                   # 每次训练的迭代次数
     exploration_noise: float = 0.15                  # 探索噪声系数
-    min_buffer_size: int = 1_000                     # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 800                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
