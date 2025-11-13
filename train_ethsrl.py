@@ -1064,7 +1064,7 @@ def main(args=None):
                     replay_buffer,  # 回放缓冲区
                     batch_size=config.batch_size,  # 批次大小
                     discount=0.99,  # 折扣因子
-                    tau=0.001,    # 软更新参数
+                    tau=0.005,    # 软更新参数
                     policy_noise=0.2,  # 策略噪声
                     noise_clip=0.5,  # 噪声裁剪
                     policy_freq=2,   # 策略频率
