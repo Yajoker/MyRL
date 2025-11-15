@@ -20,22 +20,22 @@ class HierarchicalNavigationSystem:
     """
 
     def __init__(
-        self,
-        laser_dim: int = 180,
-        action_dim: int = 2,
-        max_action: float = 1.0,
-        device=None,
-        load_models: bool = False,
-        models_directory: Path = Path("ethsrl/models"),
-        step_duration: Optional[float] = None,  # 与yaml中的保持一致
-        trigger_min_interval: Optional[float] = None,
-        subgoal_threshold: Optional[float] = None,
-        world_file: Optional[Path] = None,
-        global_plan_resolution: Optional[float] = None,
-        global_plan_margin: Optional[float] = None,
-        waypoint_lookahead: Optional[int] = None,
-        window_step_limit: Optional[int] = None,
-        integration_config: Optional[IntegrationConfig] = None,
+            self,
+            laser_dim: int = 180,
+            action_dim: int = 2,
+            max_action: float = 1.0,
+            device=None,
+            load_models: bool = False,
+            models_directory: Path = Path("ethsrl/models"),
+            step_duration: Optional[float] = None,  # 与yaml中的保持一致
+            trigger_min_interval: Optional[float] = None,
+            subgoal_threshold: Optional[float] = None,
+            world_file: Optional[Path] = None,
+            global_plan_resolution: Optional[float] = None,
+            global_plan_margin: Optional[float] = None,
+            waypoint_lookahead: Optional[int] = None,
+            window_step_limit: Optional[int] = None,
+            integration_config: Optional[IntegrationConfig] = None,
     ) -> None:
         """
         初始化分层导航系统。
@@ -205,7 +205,8 @@ class HierarchicalNavigationSystem:
             self.reset_window_tracking()  # 重置窗口跟踪
             self.update_selected_waypoint(decision_meta.get("selected_waypoint"))  # 更新选择的航点
             planner_world = self.high_level_planner.current_subgoal_world  # 规划器中的子目标世界坐标
-            self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world, dtype=np.float32)  # 更新当前子目标世界坐标
+            self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world,
+                                                                                       dtype=np.float32)  # 更新当前子目标世界坐标
             self.last_replanning_step = self.step_count  # 记录上次重新规划步数
             self.high_level_planner.event_trigger.reset_time(self.step_count)  # 重置事件触发器时间
         else:
@@ -271,20 +272,20 @@ class HierarchicalNavigationSystem:
         return [linear_velocity, angular_velocity]  # 返回动作
 
     def apply_velocity_shielding(
-        self,
-        linear_velocity: float,
-        angular_velocity: float,
-        laser_scan,
+            self,
+            linear_velocity: float,
+            angular_velocity: float,
+            laser_scan,
     ) -> Tuple[float, float]:
         """公开接口：对外提供零侵入式速度屏蔽能力。"""
 
         return self._apply_velocity_shielding(linear_velocity, angular_velocity, laser_scan)  # 调用内部速度屏蔽方法
 
     def _apply_velocity_shielding(
-        self,
-        linear_velocity: float,
-        angular_velocity: float,
-        laser_scan,
+            self,
+            linear_velocity: float,
+            angular_velocity: float,
+            laser_scan,
     ) -> Tuple[float, float]:
         """按最近障碍距离对速度进行单调缩放，实现零侵入式屏蔽。"""
 
@@ -303,7 +304,7 @@ class HierarchicalNavigationSystem:
         # Logistic 缩放确保线速度在安全距离附近平滑衰减
         sigma_input = float(np.clip(shield_cfg.gain * (d_min - shield_cfg.safe_distance), -60.0, 60.0))  # 计算缩放输入
         linear_scale = float(1.0 / (1.0 + np.exp(-sigma_input)))  # 线性缩放因子
-        
+
         scaled_linear = float(linear_velocity * linear_scale)  # 缩放后的线性速度
         scaled_linear = float(np.clip(scaled_linear, 0.0, motion_cfg.v_max))  # 裁剪到最大速度
 
@@ -325,10 +326,10 @@ class HierarchicalNavigationSystem:
         goal_vec = np.asarray(goal_position[:2], dtype=np.float32)  # 目标位置
 
         if (
-            not force
-            and self.global_goal is not None
-            and self.global_waypoints
-            and np.linalg.norm(goal_vec - self.global_goal) < 1e-4  # 目标未改变
+                not force
+                and self.global_goal is not None
+                and self.global_waypoints
+                and np.linalg.norm(goal_vec - self.global_goal) < 1e-4  # 目标未改变
         ):
             self._advance_waypoints(robot_pose)  # 推进航点
             return self.global_waypoints  # 返回现有航点
@@ -349,19 +350,22 @@ class HierarchicalNavigationSystem:
             filtered.append(WaypointWindow(center=centre.copy(), radius=float(window.radius)))  # 添加到过滤列表
 
         if not filtered:
-            filtered = [WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius)]  # 如果没有航点，添加目标窗口
+            filtered = [
+                WaypointWindow(center=goal_vec.copy(), radius=self.global_planner.window_radius)]  # 如果没有航点，添加目标窗口
 
         if not self._printed_plan_overview:
             goal_dists = [float(np.linalg.norm(goal_vec - wp.center)) for wp in filtered]  # 计算各航点到目标的距离
             print(f"[GlobalPlanner] Waypoints in world frame ({len(filtered)} total):")  # 打印航点信息
             for idx, (wp, dist) in enumerate(zip(filtered, goal_dists)):
-                print(f"  #{idx:02d} {wp.center.tolist()} | dist_to_goal={dist:.3f} m | radius={wp.radius:.2f} m")  # 打印每个航点
+                print(
+                    f"  #{idx:02d} {wp.center.tolist()} | dist_to_goal={dist:.3f} m | radius={wp.radius:.2f} m")  # 打印每个航点
 
             if len(goal_dists) > 1:
                 # 检查距离是否单调递减
                 monotonic = all(goal_dists[i + 1] <= goal_dists[i] + 1e-6 for i in range(len(goal_dists) - 1))
                 if not monotonic:
-                    print("[GlobalPlanner] Warning: waypoint distance does not consistently decrease toward the goal.")  # 警告：距离不单调递减
+                    print(
+                        "[GlobalPlanner] Warning: waypoint distance does not consistently decrease toward the goal.")  # 警告：距离不单调递减
 
             self._printed_plan_overview = True  # 标记已打印规划概览
 
@@ -402,7 +406,8 @@ class HierarchicalNavigationSystem:
             threshold = max(base_threshold, radius * 0.9)  # 计算阈值
             distance = float(np.linalg.norm(centre - position))  # 计算距离
 
-            if distance <= threshold and self.current_waypoint_index < len(self.global_waypoints) - 1:  # 如果距离小于阈值且不是最后一个航点
+            if distance <= threshold and self.current_waypoint_index < len(
+                    self.global_waypoints) - 1:  # 如果距离小于阈值且不是最后一个航点
                 self.current_waypoint_index += 1  # 推进到下一个航点
                 window_changed = True  # 标记窗口改变
                 continue
@@ -412,9 +417,9 @@ class HierarchicalNavigationSystem:
             self.reset_window_tracking()  # 重置窗口跟踪
 
     def _update_window_metrics(
-        self,
-        robot_pose,
-        waypoint_candidates: List[Tuple[int, WaypointWindow]],
+            self,
+            robot_pose,
+            waypoint_candidates: List[Tuple[int, WaypointWindow]],
     ) -> None:
         """更新窗口指标。"""
         if not waypoint_candidates:
@@ -476,9 +481,9 @@ class HierarchicalNavigationSystem:
         }
 
     def update_window_state(
-        self,
-        robot_pose,
-        waypoint_candidates: List[Tuple[int, WaypointWindow]],
+            self,
+            robot_pose,
+            waypoint_candidates: List[Tuple[int, WaypointWindow]],
     ) -> Dict[str, object]:
         """更新窗口状态并返回指标。"""
         self._update_window_metrics(robot_pose, waypoint_candidates)  # 更新窗口指标
@@ -550,12 +555,12 @@ class HierarchicalNavigationSystem:
 
 
 def create_navigation_system(
-    load_models: bool = False,
-    subgoal_threshold: float = 0.5,
-    world_file: Optional[Path] = None,
-    global_plan_resolution: float = 0.25,
-    global_plan_margin: float = 0.35,
-    waypoint_lookahead: int = 3,
+        load_models: bool = False,
+        subgoal_threshold: float = 0.5,
+        world_file: Optional[Path] = None,
+        global_plan_resolution: float = 0.25,
+        global_plan_margin: float = 0.35,
+        waypoint_lookahead: int = 3,
 ):
     """
     工厂函数：创建一个完整的分层导航系统实例。
