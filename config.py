@@ -16,15 +16,15 @@ from typing import Optional
 class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
-    progress_weight: float = 12.0                   # 前进进度奖励权重
-    efficiency_penalty: float = 0.12                # 效率惩罚系数（惩罚不必要的动作）
-    safety_weight: float = 1.8                      # 安全性奖励权重
+    progress_weight: float = 1.5                   # 前进进度奖励权重
+    efficiency_penalty: float = 0.05                # 效率惩罚系数（惩罚不必要的动作）
+    safety_weight: float = 0.5                      # 安全性奖励权重
     safety_sensitivity: float = 2.0                 # 安全敏感性系数（影响安全奖励计算）
-    safety_clearance: float = 1.0                   # 安全距离阈值
-    goal_bonus: float = 60.0                        # 到达最终目标的奖励
-    subgoal_bonus: float = 18.0                     # 到达子目标的奖励
-    collision_penalty: float = -50.0                # 碰撞惩罚
-    timeout_penalty: float = -15.0                  # 超时惩罚
+    safety_clearance: float = 0.8                   # 安全距离阈值
+    goal_bonus: float = 10.0                        # 到达最终目标的奖励
+    subgoal_bonus: float = 2.0                     # 到达子目标的奖励
+    collision_penalty: float = -10.0                # 碰撞惩罚
+    timeout_penalty: float = -5.0                  # 超时惩罚
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -40,7 +40,7 @@ class HighLevelRewardConfig:
 
     path_progress_weight: float = 5.0               # 路径进度奖励权重
     global_progress_weight: float = 2.0             # 全局进度奖励权重
-    low_level_return_scale: float = 0.02            # 低层控制器回报的缩放因子
+    low_level_return_scale: float = 0.01            # 低层控制器回报的缩放因子（与归一化后奖励量级对齐）
     subgoal_completion_bonus: float = 4.0           # 子目标完成奖励
     low_level_failure_penalty: float = -10.0        # 低层控制器失败的惩罚
     goal_bonus: float = 60.0                        # 到达最终目标的奖励
@@ -89,7 +89,7 @@ class MotionConfig:
 class TriggerConfig:
     """High-level trigger thresholds and timing rules."""
 
-    safety_trigger_distance: float = 0.7             # 安全触发距离阈值
+    safety_trigger_distance: float = 0.8             # 安全触发距离阈值
     subgoal_reach_threshold: float = 0.4             # 子目标到达判定阈值
     stagnation_steps: int = 30                       # 停滞步数阈值（检测是否卡住）
     stagnation_turn_threshold: float = 3.5           # 累计转向阈值（弧度）
@@ -213,9 +213,9 @@ class TrainingConfig:
     episodes_per_epoch: int = 70                     # 每个周期的回合数
     max_steps: int = 350                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
-    training_iterations: int = 100                   # 每次训练的迭代次数
+    training_iterations: int = 50                   # 每次训练的迭代次数
     exploration_noise: float = 0.15                  # 探索噪声系数
-    min_buffer_size: int = 800                     # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 1500                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
