@@ -180,7 +180,6 @@ class HierarchicalNavigationSystem:
                 laser_scan,  # 激光数据
                 robot_pose,  # 机器人位姿
                 goal_info,  # 目标信息
-                prev_action=self.prev_action,  # 上次动作
                 current_step=self.step_count,  # 当前步数
                 window_metrics=window_metrics,  # 窗口指标
             )
@@ -198,7 +197,6 @@ class HierarchicalNavigationSystem:
                 goal_distance,  # 目标距离
                 goal_cos,  # 目标余弦
                 goal_sin,  # 目标正弦
-                prev_action=self.prev_action,  # 上次动作
                 robot_pose=robot_pose,  # 机器人位姿
                 current_step=self.step_count,  # 当前步数
                 waypoints=waypoint_candidates,  # 航点候选
@@ -546,7 +544,6 @@ class HierarchicalNavigationSystem:
         self.last_replanning_step = 0  # 清除上次规划记录
         self.high_level_planner.current_subgoal = None  # 重置高层规划器子目标
         self.high_level_planner.current_subgoal_world = None  # 重置高层规划器子目标世界坐标
-        self.high_level_planner.prev_action = [0.0, 0.0]  # 重置高层规划器上次动作
         self.high_level_planner.event_trigger.last_subgoal = None  # 重置事件触发器上次子目标
         self.high_level_planner.event_trigger.reset_state()  # 重置事件触发器状态
         self.clear_global_route()  # 清空全局路径
