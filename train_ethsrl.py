@@ -975,6 +975,7 @@ def main(args=None):
 
             # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
             scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
+            low_reward=0.2*low_reward  # 奖励缩放
             replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
 
             # 定期输出回放缓冲区大小与奖励
