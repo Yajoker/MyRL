@@ -310,7 +310,6 @@ def evaluate(
                     latest_scan,  # 最新激光数据
                     robot_pose,  # 机器人位姿
                     goal_info,  # 目标信息
-                    prev_action=prev_action,  # 上次动作
                     current_step=steps,  # 当前步数
                     window_metrics=window_metrics,  # 窗口指标
                 )
@@ -329,7 +328,6 @@ def evaluate(
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
-                    prev_action=prev_action,  # 上次动作
                     robot_pose=robot_pose,  # 机器人位姿
                     current_step=steps,  # 当前步数
                     waypoints=active_waypoints,  # 活动航点
@@ -664,7 +662,6 @@ def main(args=None):
                     latest_scan,  # 最新激光数据
                     robot_pose,  # 机器人位姿
                     goal_info,  # 目标信息
-                    prev_action=prev_action,  # 上次动作
                     current_step=steps,  # 当前步数
                     window_metrics=window_metrics,  # 窗口指标
                 )
@@ -714,7 +711,6 @@ def main(args=None):
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
-                    prev_action=prev_action,  # 上次动作
                     robot_pose=robot_pose,  # 机器人位姿
                     current_step=steps,  # 当前步数
                     waypoints=active_waypoints,  # 活动航点
@@ -734,7 +730,6 @@ def main(args=None):
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
-                    prev_action,  # 上次动作
                     waypoints=waypoint_sequence,  # 航点序列
                     robot_pose=robot_pose,  # 机器人位姿
                 )
@@ -937,7 +932,6 @@ def main(args=None):
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
-                    executed_action,  # 执行动作
                     waypoints=next_active_waypoints,  # 下一时刻活动航点
                     robot_pose=next_pose,  # 下一时刻机器人位姿
                 )

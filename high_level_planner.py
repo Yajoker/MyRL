@@ -44,13 +44,10 @@ class SubgoalNetwork(nn.Module):
         # 全局目标信息处理层
         self.goal_embed = nn.Linear(goal_info_dim, 64)  # 处理距离、余弦、正弦及航点特征
 
-        # 历史动作嵌入层
-        self.action_embed = nn.Linear(2, 16)  # 处理历史线速度和角速度，输出16维
-
         # 全连接层 - 更新输入维度
         cnn_output_dim = self._get_cnn_output_dim(belief_dim)  # 计算CNN输出维度
-        # 第一层全连接：输入=CNN输出+目标嵌入+动作嵌入，输出=隐藏层维度
-        self.fc1 = nn.Linear(cnn_output_dim + 64 + 16, hidden_dim)
+        # 第一层全连接：输入=CNN输出+目标嵌入，输出=隐藏层维度
+        self.fc1 = nn.Linear(cnn_output_dim + 64, hidden_dim)
         # 第二层全连接：输入=隐藏层维度，输出=隐藏层维度的一半
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         # 输出层：距离调整系数与角度偏移量
@@ -66,14 +63,13 @@ class SubgoalNetwork(nn.Module):
         x = self.cnn3(x)  # 通过第三层CNN
         return x.numel()  # 返回元素总数（展平后的维度）
 
-    def forward(self, belief_state, goal_info, prev_action):
+    def forward(self, belief_state, goal_info):
         """
         子目标网络的前向传播
 
         Args:
             belief_state: 包含激光雷达数据的张量，形状[batch_size, belief_dim]
             goal_info: 包含全局目标与航点特征的张量，形状[batch_size, goal_info_dim]
-            prev_action: 包含[线速度, 角速度]历史动作的张量，形状[batch_size, 2]
 
         Returns:
             包含(距离调整系数, 角度偏移量)的元组
@@ -88,11 +84,8 @@ class SubgoalNetwork(nn.Module):
         # 处理目标信息
         g = F.relu(self.goal_embed(goal_info))  # 目标嵌入 + ReLU激活：[batch_size, 32]
 
-        # 处理历史动作
-        a = F.relu(self.action_embed(prev_action))  # 动作嵌入 + ReLU激活：[batch_size, 16]
-
-        # 合并特征 - 更新为包含动作
-        combined = torch.cat((x, g, a), dim=1)  # 拼接所有特征：[batch_size, cnn_output_dim+64+16]
+        # 合并特征 - 更新为仅包含激光与目标信息
+        combined = torch.cat((x, g), dim=1)  # 拼接所有特征：[batch_size, cnn_output_dim+64]
 
         # 全连接层处理
         x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU：[batch_size, hidden_dim]
@@ -119,15 +112,13 @@ class SafetyCritic(nn.Module):
 
         # 目标信息嵌入层
         self.goal_embed = nn.Linear(goal_info_dim, 64)  # 处理目标信息，输出64维
-        # 历史动作嵌入层
-        self.action_embed = nn.Linear(2, 16)  # 处理历史动作，输出16维
         # 子目标几何信息嵌入层
         self.subgoal_embed = nn.Linear(3, 16)  # 处理子目标几何信息，输出16维
 
         # 计算CNN输出维度
         cnn_output_dim = self._get_cnn_output_dim(belief_dim)
-        # 第一层全连接：输入=CNN输出+目标嵌入+动作嵌入+子目标嵌入，输出=隐藏层维度
-        self.fc1 = nn.Linear(cnn_output_dim + 64 + 16 + 16, hidden_dim)
+        # 第一层全连接：输入=CNN输出+目标嵌入+子目标嵌入，输出=隐藏层维度
+        self.fc1 = nn.Linear(cnn_output_dim + 64 + 16, hidden_dim)
         # 第二层全连接：输入=隐藏层维度，输出=隐藏层维度的一半
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         # 输出层：风险预测值
@@ -142,14 +133,13 @@ class SafetyCritic(nn.Module):
         x = self.cnn3(x)  # 通过第三层CNN
         return x.numel()  # 返回元素总数（展平后的维度）
 
-    def forward(self, belief_state, goal_info, prev_action, subgoal_geom):
+    def forward(self, belief_state, goal_info, subgoal_geom):
         """
         Safety critic的前向传播
 
         Args:
             belief_state: 信念状态（激光雷达数据）
             goal_info: 目标信息
-            prev_action: 历史动作
             subgoal_geom: 子目标几何信息
 
         Returns:
@@ -164,13 +154,11 @@ class SafetyCritic(nn.Module):
 
         # 处理目标信息
         g = F.relu(self.goal_embed(goal_info))  # 目标嵌入 + ReLU激活
-        # 处理历史动作
-        a = F.relu(self.action_embed(prev_action))  # 动作嵌入 + ReLU激活
         # 处理子目标几何信息
         geom = F.relu(self.subgoal_embed(subgoal_geom))  # 子目标几何嵌入 + ReLU激活
 
         # 合并所有特征
-        combined = torch.cat((x, g, a, geom), dim=1)  # 拼接所有特征
+        combined = torch.cat((x, g, geom), dim=1)  # 拼接所有特征
         # 全连接层处理
         x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU
         x = F.relu(self.fc2(x))  # 第二层全连接 + ReLU
@@ -474,7 +462,6 @@ class HighLevelPlanner:
         self.current_subgoal = None  # 当前子目标（相对坐标：距离，角度）
         self.last_goal_distance = float('inf')  # 上次目标距离，初始化为无穷大
         self.last_goal_direction = 0.0  # 上次目标方向角度
-        self.prev_action = [0.0, 0.0]  # 上一动作 [线速度, 角速度]
         self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标的世界坐标[x, y]
 
         # 如果请求则加载预训练模型
@@ -542,25 +529,6 @@ class HighLevelPlanner:
             base_features.extend(float(value) for value in waypoint_features)  # 添加航点特征
 
         return torch.FloatTensor(base_features).to(self.device)  # 转换为张量并移动到设备
-
-    def process_action_info(self, prev_action):
-        """
-        处理历史动作为张量
-
-        Args:
-            prev_action: 上一步的动作 [线速度, 角速度]
-
-        Returns:
-            处理后的动作信息张量
-        """
-        # 简单归一化处理
-        lin_vel = float(prev_action[0]) * 2  # 假设线速度范围在[0, 0.5]，缩放到[0,1]
-        ang_vel = float(prev_action[1])  # 假设角速度范围在[-1, 1]，保持不变
-
-        # 组合成张量：[线速度, 角速度]
-        action_info = torch.FloatTensor([lin_vel, ang_vel]).to(self.device)
-
-        return action_info
 
     @staticmethod
     def _wrap_angle(angle: float) -> float:
@@ -631,15 +599,14 @@ class HighLevelPlanner:
 
         return active_features + sequence_features  # 返回完整特征向量
 
-    def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, prev_action, waypoints=None, robot_pose=None):
+    def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, waypoints=None, robot_pose=None):
         """构造高层规划器训练所需的状态向量"""
 
         with torch.no_grad():
             laser_tensor = self.process_laser_scan(laser_scan)  # 处理激光数据
             waypoint_features = self.build_waypoint_features(waypoints, robot_pose)  # 构建航点特征
             goal_tensor = self.process_goal_info(distance, cos_angle, sin_angle, waypoint_features)  # 处理目标信息
-            action_tensor = self.process_action_info(prev_action)  # 处理动作信息
-            state_tensor = torch.cat((laser_tensor, goal_tensor, action_tensor))  # 拼接所有特征
+            state_tensor = torch.cat((laser_tensor, goal_tensor))  # 拼接所有特征
 
         return state_tensor.cpu().numpy()  # 转换为numpy数组返回
 
@@ -683,13 +650,12 @@ class HighLevelPlanner:
         tensor_geoms = torch.as_tensor(subgoal_geoms, dtype=torch.float32, device=self.device)  # 几何信息张量
         tensor_targets = torch.as_tensor(targets, dtype=torch.float32, device=self.device)  # 目标值张量
 
-        action_feature_dim = 2  # 动作特征维度
-        laser_dim = tensor_states.shape[1] - (self.goal_feature_dim + action_feature_dim)  # 激光数据维度
+        goal_feature_dim = self.goal_feature_dim  # 目标特征维度
+        laser_dim = tensor_states.shape[1] - goal_feature_dim  # 激光数据维度
         laser_scans = tensor_states[:, :laser_dim]  # 激光数据
-        goal_info = tensor_states[:, laser_dim : laser_dim + self.goal_feature_dim]  # 目标信息
-        prev_action = tensor_states[:, -action_feature_dim:]  # 历史动作
+        goal_info = tensor_states[:, laser_dim:]  # 目标信息
 
-        preds = self.safety_critic(laser_scans, goal_info, prev_action, tensor_geoms)  # 预测风险
+        preds = self.safety_critic(laser_scans, goal_info, tensor_geoms)  # 预测风险
         loss = self.safety_loss_fn(preds, tensor_targets)  # 计算损失
 
         self.safety_optimizer.zero_grad()  # 清零梯度
@@ -714,7 +680,7 @@ class HighLevelPlanner:
             'safety_target_mean': avg_target,  # 平均目标值
         }
 
-    def predict_safety_risk(self, laser_tensor: torch.Tensor, goal_tensor: torch.Tensor, action_tensor: torch.Tensor, subgoal_geom: Sequence[float]) -> float:
+    def predict_safety_risk(self, laser_tensor: torch.Tensor, goal_tensor: torch.Tensor, subgoal_geom: Sequence[float]) -> float:
         """基于当前状态与候选子目标预测未来风险距离值。"""
 
         if self.safety_sample_count < self.safety_config.min_buffer_size:
@@ -726,7 +692,6 @@ class HighLevelPlanner:
             risk = self.safety_critic(
                 laser_tensor.unsqueeze(0),  # 激光数据
                 goal_tensor.unsqueeze(0),  # 目标信息
-                action_tensor.unsqueeze(0),  # 历史动作
                 geom_tensor,  # 几何信息
             )
 
@@ -774,7 +739,6 @@ class HighLevelPlanner:
         laser_scan,
         robot_pose,
         goal_info,
-        prev_action=None,
         min_obstacle_dist=None,
         current_step: int = 0,
         window_metrics: Optional[dict] = None,
@@ -786,7 +750,6 @@ class HighLevelPlanner:
             laser_scan: 当前激光雷达读数
             robot_pose: 当前机器人位姿 [x, y, theta]
             goal_info: 全局目标信息 [distance, cos, sin]
-            prev_action: 上一步的动作 [线速度, 角速度]
             min_obstacle_dist: 到最近障碍物的距离（如果为None，则从laser_scan计算）
             current_step: 当前时间步
 
@@ -848,7 +811,6 @@ class HighLevelPlanner:
         goal_distance,
         goal_cos,
         goal_sin,
-        prev_action=None,
         robot_pose=None,
         current_step: Optional[int] = None,
         waypoints=None,
@@ -862,7 +824,6 @@ class HighLevelPlanner:
             goal_distance: 到全局目标的距离
             goal_cos: 到全局目标角度的余弦值
             goal_sin: 到全局目标角度的正弦值
-            prev_action: 上一步的动作 [线速度, 角速度]
             robot_pose: 机器人位姿 [x, y, theta]（用于计算世界坐标）
             current_step: 当前全局时间步（用于进度重置）
             waypoints: 当前全局规划提供的候选航点
@@ -876,19 +837,11 @@ class HighLevelPlanner:
         waypoint_features = self.build_waypoint_features(waypoints, robot_pose)  # 构建航点特征
         goal_tensor = self.process_goal_info(goal_distance, goal_cos, goal_sin, waypoint_features)  # 处理目标信息
 
-        # 如果未提供动作，则使用存储的上一步动作
-        if prev_action is None:
-            prev_action = self.prev_action
-
-        # 处理动作信息
-        action_tensor = self.process_action_info(prev_action)
-
         # 使用网络生成子目标（不计算梯度）
         with torch.no_grad():  # 推理模式，不计算梯度
             distance_adjust_tensor, angle_offset_tensor = self.subgoal_network(
                 laser_tensor.unsqueeze(0),  # 增加批次维度：[1, belief_dim] -> [1, 1, belief_dim]
                 goal_tensor.unsqueeze(0),  # 增加批次维度：[3] -> [1, 3]
-                action_tensor.unsqueeze(0),  # 增加批次维度：[2] -> [1, 2]
             )
 
         distance_adjust = float(distance_adjust_tensor.cpu().numpy().item())  # 距离调整量
@@ -959,7 +912,7 @@ class HighLevelPlanner:
                 radius = max(info.get("radius", 0.0), 1e-3)  # 半径
                 subgoal_geom = [float(info["distance"]), float(info["angle"]), float(radius)]  # 子目标几何信息
                 predicted_distance = self.predict_safety_risk(
-                    laser_tensor, goal_tensor, action_tensor, subgoal_geom  # 预测风险距离
+                    laser_tensor, goal_tensor, subgoal_geom  # 预测风险距离
                 )
                 risk_val = self._convert_distance_to_risk_penalty(predicted_distance)  # 风险值
                 progress_val = self._compute_progress_score(
@@ -1019,9 +972,6 @@ class HighLevelPlanner:
         self.current_subgoal = (final_distance, final_angle)  # 当前子目标
         self.last_goal_distance = float(goal_distance)  # 上次目标距离
         self.last_goal_direction = math.atan2(goal_sin, goal_cos)  # 上次目标方向
-        if prev_action is not None:
-            self.prev_action = list(prev_action)  # 上次动作
-
         if world_target is not None:
             self.current_subgoal_world = world_target  # 当前子目标世界坐标
             self.event_trigger.last_subgoal = world_target.tolist()  # 事件触发器中的子目标
@@ -1173,14 +1123,12 @@ class HighLevelPlanner:
         next_states = torch.FloatTensor(next_states).to(self.device)
 
         goal_feature_dim = self.goal_feature_dim  # 目标特征维度
-        action_feature_dim = 2  # 动作特征维度
-        split_index = states.shape[1] - (goal_feature_dim + action_feature_dim)  # 分割索引
+        split_index = states.shape[1] - goal_feature_dim  # 分割索引
         laser_scans = states[:, :split_index]  # 激光数据
-        goal_info = states[:, split_index : split_index + goal_feature_dim]  # 目标信息
-        prev_action = states[:, -action_feature_dim:]  # 历史动作
+        goal_info = states[:, split_index:]  # 目标信息
 
         # 生成子目标（网络预测）
-        distance_adjusts, angle_offsets = self.subgoal_network(laser_scans, goal_info, prev_action)
+        distance_adjusts, angle_offsets = self.subgoal_network(laser_scans, goal_info)
         # 合并调整量为完整动作 [distance_coeff, angle_offset]
         subgoals = torch.stack((distance_adjusts, angle_offsets), dim=1)
 
