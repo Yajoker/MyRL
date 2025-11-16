@@ -389,7 +389,7 @@ class LowLevelController:
         current_q1, current_q2 = self.critic(state, action)
 
         # 计算Critic损失并更新
-        critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
+        critic_loss = F.smooth_l1_loss(current_q1, target_q) + F.smooth_l1_loss(current_q2, target_q)
         self.critic_optimizer.zero_grad()  # 清零梯度
         critic_loss.backward()  # 反向传播
         self.critic_optimizer.step()  # 更新参数
