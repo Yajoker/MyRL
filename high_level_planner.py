@@ -282,7 +282,7 @@ class EventTrigger:
 
     def _ray_distance_to_angle(self, laser_scan: Optional[np.ndarray], angle: float) -> float:
         """将角度转换为激光雷达扫描中的距离值"""
-        
+
         if laser_scan is None or len(laser_scan) == 0 or np.isnan(angle):  # 检查输入有效性
             return float('inf')  # 无效输入返回无穷大
 
