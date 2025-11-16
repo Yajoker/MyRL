@@ -551,6 +551,7 @@ class HierarchicalNavigationSystem:
         self.high_level_planner.current_subgoal_world = None  # 重置高层规划器子目标世界坐标
         self.high_level_planner.event_trigger.last_subgoal = None  # 重置事件触发器上次子目标
         self.high_level_planner.event_trigger.reset_state()  # 重置事件触发器状态
+        self.high_level_planner.reset_subgoal_hidden()  # 清空子目标网络隐状态
         self.clear_global_route()  # 清空全局路径
 
 

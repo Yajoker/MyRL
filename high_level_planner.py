@@ -44,11 +44,18 @@ class SubgoalNetwork(nn.Module):
         # 全局目标信息处理层
         self.goal_embed = nn.Linear(goal_info_dim, 64)  # 处理距离、余弦、正弦及航点特征
 
-        # 全连接层 - 更新输入维度
         cnn_output_dim = self._get_cnn_output_dim(belief_dim)  # 计算CNN输出维度
-        # 第一层全连接：输入=CNN输出+目标嵌入，输出=隐藏层维度
-        self.fc1 = nn.Linear(cnn_output_dim + 64, hidden_dim)
-        # 第二层全连接：输入=隐藏层维度，输出=隐藏层维度的一半
+        combined_dim = cnn_output_dim + 64  # 融合激光与目标特征后的维度
+
+        # 序列建模层：在触发之间捕捉子目标演化
+        self.rnn = nn.GRU(
+            input_size=combined_dim,
+            hidden_size=hidden_dim,
+            batch_first=True,
+        )
+
+        # 全连接层
+        self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         # 输出层：距离调整系数与角度偏移量
         self.distance_head = nn.Linear(hidden_dim // 2, 1)  # 距离调整输出头
@@ -63,16 +70,17 @@ class SubgoalNetwork(nn.Module):
         x = self.cnn3(x)  # 通过第三层CNN
         return x.numel()  # 返回元素总数（展平后的维度）
 
-    def forward(self, belief_state, goal_info):
+    def forward(self, belief_state, goal_info, hidden_state: Optional[torch.Tensor] = None):
         """
         子目标网络的前向传播
 
         Args:
             belief_state: 包含激光雷达数据的张量，形状[batch_size, belief_dim]
             goal_info: 包含全局目标与航点特征的张量，形状[batch_size, goal_info_dim]
+            hidden_state: 可选的RNN隐状态，形状[num_layers, batch_size, hidden_dim]
 
         Returns:
-            包含(距离调整系数, 角度偏移量)的元组
+            包含(距离调整系数, 角度偏移量, 下一个隐状态)的元组
         """
         # 处理激光雷达数据
         laser = belief_state.unsqueeze(1)  # 增加通道维度：[batch_size, 1, belief_dim]
@@ -85,10 +93,15 @@ class SubgoalNetwork(nn.Module):
         g = F.relu(self.goal_embed(goal_info))  # 目标嵌入 + ReLU激活：[batch_size, 32]
 
         # 合并特征 - 更新为仅包含激光与目标信息
-        combined = torch.cat((x, g), dim=1)  # 拼接所有特征：[batch_size, cnn_output_dim+64]
+        combined = torch.cat((x, g), dim=1)  # 拼接所有特征：[batch_size, combined_dim]
+
+        # 通过GRU引入时序记忆
+        x_seq = combined.unsqueeze(1)  # [batch_size, 1, combined_dim]
+        rnn_out, next_hidden = self.rnn(x_seq, hidden_state)
+        h_t = rnn_out[:, -1, :]  # 取序列末端输出作为表示
 
         # 全连接层处理
-        x = F.relu(self.fc1(combined))  # 第一层全连接 + ReLU：[batch_size, hidden_dim]
+        x = F.relu(self.fc1(h_t))  # 第一层全连接 + ReLU
         x = F.relu(self.fc2(x))  # 第二层全连接 + ReLU：[batch_size, hidden_dim//2]
 
         # 生成子目标调整量
@@ -96,7 +109,7 @@ class SubgoalNetwork(nn.Module):
         angle_offset = torch.tanh(self.angle_head(x)) * (np.pi / 4)  # 角度偏移量∈[-π/4, π/4]
 
         # squeeze掉最后一维，保持批量维度，便于后续堆叠或索引
-        return distance_adjust.squeeze(-1), angle_offset.squeeze(-1)
+        return distance_adjust.squeeze(-1), angle_offset.squeeze(-1), next_hidden
 
 
 class SafetyCritic(nn.Module):
@@ -463,11 +476,17 @@ class HighLevelPlanner:
         self.last_goal_distance = float('inf')  # 上次目标距离，初始化为无穷大
         self.last_goal_direction = 0.0  # 上次目标方向角度
         self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标的世界坐标[x, y]
+        self.subgoal_hidden: Optional[torch.Tensor] = None  # GRU隐状态
 
         # 如果请求则加载预训练模型
         if load_model:
             load_dir = load_directory if load_directory else save_directory
             self.load_model(filename=model_name, directory=load_dir)
+
+    def reset_subgoal_hidden(self) -> None:
+        """在回合之间重置子目标网络的隐状态。"""
+
+        self.subgoal_hidden = None
 
     def get_relative_subgoal(self, robot_pose: Optional[Sequence[float]]) -> Tuple[Optional[float], Optional[float]]:
         """计算当前子目标相对于机器人姿态的距离和角度。"""
@@ -839,10 +858,22 @@ class HighLevelPlanner:
 
         # 使用网络生成子目标（不计算梯度）
         with torch.no_grad():  # 推理模式，不计算梯度
-            distance_adjust_tensor, angle_offset_tensor = self.subgoal_network(
+            hidden_in = self.subgoal_hidden
+            if hidden_in is not None:
+                hidden_in = hidden_in.detach()
+                if hidden_in.device != self.device:
+                    hidden_in = hidden_in.to(self.device)
+
+            (
+                distance_adjust_tensor,
+                angle_offset_tensor,
+                next_hidden,
+            ) = self.subgoal_network(
                 laser_tensor.unsqueeze(0),  # 增加批次维度：[1, belief_dim] -> [1, 1, belief_dim]
                 goal_tensor.unsqueeze(0),  # 增加批次维度：[3] -> [1, 3]
+                hidden_state=hidden_in,
             )
+            self.subgoal_hidden = next_hidden.detach() if next_hidden is not None else None
 
         distance_adjust = float(distance_adjust_tensor.cpu().numpy().item())  # 距离调整量
         angle_offset = float(angle_offset_tensor.cpu().numpy().item())  # 角度偏移量
@@ -1128,7 +1159,11 @@ class HighLevelPlanner:
         goal_info = states[:, split_index:]  # 目标信息
 
         # 生成子目标（网络预测）
-        distance_adjusts, angle_offsets = self.subgoal_network(laser_scans, goal_info)
+        distance_adjusts, angle_offsets, _ = self.subgoal_network(
+            laser_scans,
+            goal_info,
+            hidden_state=None,  # 快速版训练：不维护跨样本的隐状态
+        )
         # 合并调整量为完整动作 [distance_coeff, angle_offset]
         subgoals = torch.stack((distance_adjusts, angle_offsets), dim=1)
 
