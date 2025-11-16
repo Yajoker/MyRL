@@ -39,17 +39,32 @@ def compute_low_level_reward(
         # 如果没有有效的距离信息，只施加效率惩罚
         progress_reward = -step_penalty
     components["progress"] = progress_reward
-
+    # print(f"Progress Reward: {progress_reward}")
     # 2. 安全惩罚 (R_safety)
     # 公式: R_safety = -w_s * exp(-σ * d_min)
     # 使用 math.exp 来精确实现指数形式
     # 为了防止 d_min 过大导致 exp 结果为0，或 d_min 过小导致 exp 溢出，可以做适当处理
     # 但在典型机器人场景下，d_min 通常在合理范围内
-    if min_obstacle_distance >= config.safety_clearance:
-        safety_penalty = 0.0
+    #if min_obstacle_distance >= config.safety_clearance:
+    #    safety_penalty = 0.0
+    #else:
+    #    safety_penalty = -config.safety_weight * math.exp(-config.safety_sensitivity * min_obstacle_distance)
+    #components["safety"] = safety_penalty
+
+    if min_obstacle_distance < config.collision_distance:
+        # 已经非常近，视作几乎要撞
+        safety_reward = -1.0
+    elif min_obstacle_distance < config.safety_clearance:
+        # 在线性区间内，根据距离插值
+        ratio = (config.safety_clearance - min_obstacle_distance) / (
+                config.safety_clearance - config.collision_distance
+        )
+        # 从 -0.3 到 -1.0 线性变化
+        safety_reward = -0.3 - 0.7 * ratio
     else:
-        safety_penalty = -config.safety_weight * math.exp(-config.safety_sensitivity * min_obstacle_distance)
-    components["safety"] = safety_penalty
+        safety_reward = 0.0
+
+    components["safety"] = config.safety_weight * safety_reward
 
     # 3. 终局奖励/惩罚 (R_terminal)
     terminal_reward = 0.0
