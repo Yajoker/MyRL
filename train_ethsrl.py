@@ -17,7 +17,7 @@ from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, Tr
 from integration import HierarchicalNavigationSystem
 from rewards import compute_high_level_reward, compute_low_level_reward
 from robot_nav.SIM_ENV.sim import SIM
-from robot_nav.replay_buffer import ReplayBuffer
+from replay_buffer import ReplayBuffer
 
 
 @dataclass
@@ -975,6 +975,7 @@ def main(args=None):
 
             # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
             scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
+            low_reward=0.2*low_reward  # 奖励缩放
             replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
 
             # 定期输出回放缓冲区大小与奖励
