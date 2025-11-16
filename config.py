@@ -16,15 +16,16 @@ from typing import Optional
 class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
-    progress_weight: float = 1.5                   # 前进进度奖励权重
-    efficiency_penalty: float = 0.05                # 效率惩罚系数（惩罚不必要的动作）
-    safety_weight: float = 0.5                      # 安全性奖励权重
+    progress_weight: float = 1.0                    # 前进进度奖励权重
+    efficiency_penalty: float = 0.08                # 效率惩罚系数（惩罚不必要的动作）
+    safety_weight: float = 1.0                      # 安全性奖励权重
     safety_sensitivity: float = 2.0                 # 安全敏感性系数（影响安全奖励计算）
     safety_clearance: float = 0.8                   # 安全距离阈值
+    collision_distance: float = 0.3                 # 碰撞距离阈值
     goal_bonus: float = 10.0                        # 到达最终目标的奖励
-    subgoal_bonus: float = 2.0                     # 到达子目标的奖励
-    collision_penalty: float = -10.0                # 碰撞惩罚
-    timeout_penalty: float = -5.0                  # 超时惩罚
+    subgoal_bonus: float = 1.5                      # 到达子目标的奖励
+    collision_penalty: float = -15.0                # 碰撞惩罚
+    timeout_penalty: float = -8.0                   # 超时惩罚
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -40,7 +41,7 @@ class HighLevelRewardConfig:
 
     path_progress_weight: float = 5.0               # 路径进度奖励权重
     global_progress_weight: float = 2.0             # 全局进度奖励权重
-    low_level_return_scale: float = 0.01            # 低层控制器回报的缩放因子（与归一化后奖励量级对齐）
+    low_level_return_scale: float = 0.1             # 低层控制器回报的缩放因子（与归一化后奖励量级对齐）
     subgoal_completion_bonus: float = 4.0           # 子目标完成奖励
     low_level_failure_penalty: float = -10.0        # 低层控制器失败的惩罚
     goal_bonus: float = 60.0                        # 到达最终目标的奖励
@@ -213,7 +214,7 @@ class TrainingConfig:
     episodes_per_epoch: int = 70                     # 每个周期的回合数
     max_steps: int = 350                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
-    training_iterations: int = 50                   # 每次训练的迭代次数
+    training_iterations: int = 20                   # 每次训练的迭代次数
     exploration_noise: float = 0.15                  # 探索噪声系数
     min_buffer_size: int = 1500                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
