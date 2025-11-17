@@ -17,7 +17,7 @@ from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, Tr
 from integration import HierarchicalNavigationSystem
 from rewards import compute_high_level_reward, compute_low_level_reward
 from robot_nav.SIM_ENV.sim import SIM
-from robot_nav.replay_buffer import ReplayBuffer
+from replay_buffer import ReplayBuffer
 
 
 @dataclass
@@ -215,6 +215,9 @@ class TD3ReplayAdapter:
         """从缓冲区采样批次数据"""
         states, actions, rewards, dones, next_states = self._buffer.sample_batch(batch_size)  # 采样批次数据
         return states, actions, rewards, dones, next_states  # 返回采样数据
+    def sample_sequences(self, batch_size: int, seq_len: int):
+        """新：序列采样接口，给 LSTM-TD3 用"""
+        return self._buffer.sample_sequences(batch_size, seq_len)
 
     def clear(self) -> None:
         """清空缓冲区"""
@@ -812,6 +815,8 @@ def main(args=None):
             )
             action = np.clip(action, -1.0, 1.0)  # 裁剪动作
 
+            policy_action = action.copy()  # ✨ 新增：保存一份“策略动作”，用来进 replay buffer
+
             # 转换为实际控制命令（未屏蔽的环境动作）
             env_lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))  # 线性速度命令
             env_ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))  # 角速度命令
@@ -974,9 +979,12 @@ def main(args=None):
             done = collision or goal or steps == config.max_steps - 1  # 终止条件
 
             # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
-            scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
+            #scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
             low_reward=0.2*low_reward  # 奖励缩放
-            replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
+            #replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)
+            
+            # ✅ 用 policy_action 作为 replay buffer 里的动作
+            replay_buffer.add(state, policy_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
 
             # 定期输出回放缓冲区大小与奖励
             if steps % 50 == 0:  # 每50步输出一次
