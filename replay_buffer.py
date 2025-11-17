@@ -239,4 +239,3 @@ class RolloutReplayBuffer(object):
         self.buffer.clear()
         self.buffer.append([])
         self.count = 0
-
