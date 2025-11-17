@@ -199,7 +199,8 @@ class LowLevelController:
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=actor_lr)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=critic_lr)
         run_name = f"runs/{model_name}_{int(time.time())}"
-        self.writer = SummaryWriter(log_dir=self.save_directory / run_name)
+        self.writer = SummaryWriter(comment=model_name)
+
 
         self.actor_hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
         self.total_it = 0
@@ -369,4 +370,3 @@ class LowLevelController:
             self.actor_optimizer.load_state_dict(checkpoint["actor_opt"])
         if "critic_opt" in checkpoint:
             self.critic_optimizer.load_state_dict(checkpoint["critic_opt"])
-
