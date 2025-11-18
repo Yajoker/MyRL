@@ -251,12 +251,12 @@ class HierarchicalNavigationSystem:
 
         # 通过低层控制器预测下一步动作（网络输出）
         action = self.low_level_controller.predict_action(low_level_state)  # 预测动作
-        normalized_action = np.clip(action, -1.0, 1.0)
 
-        # 将归一化动作映射为物理速度命令，仅在与环境交互前进行一次缩放
-        motion_cfg = self._integration_config.motion
-        linear_velocity = (normalized_action[0] + 1.0) * (motion_cfg.v_max / 2.0)
-        angular_velocity = normalized_action[1] * motion_cfg.omega_max
+        # 将网络输出映射为实际机器人可执行的速度命令
+        # 将线速度从 [-1,1] 映射为 [0,0.5]
+        linear_velocity = (action[0] + 1) / 4  # 线性速度
+        # 保持角速度在 [-1,1] 范围内
+        angular_velocity = action[1]  # 角速度
 
         # 应用速度缩放屏蔽以提高安全性
         linear_velocity, angular_velocity = self._apply_velocity_shielding(
@@ -265,8 +265,8 @@ class HierarchicalNavigationSystem:
             laser_scan,  # 激光数据
         )
 
-        # 记录当前归一化动作，供下一时刻作为历史动作特征
-        self.prev_action = normalized_action.tolist()
+        # 记录当前动作（用于下一次输入）
+        self.prev_action = [linear_velocity, angular_velocity]  # 更新上次动作
 
         # 返回控制命令
         return [linear_velocity, angular_velocity]  # 返回动作
