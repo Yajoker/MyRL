@@ -10,105 +10,178 @@ import itertools  # 迭代工具，用于高效循环操作
 import numpy as np
 
 class ReplayBuffer(object):
-    """
-    标准的经验回放缓冲区，用于离策略强化学习算法
-
-    存储（状态，动作，奖励，完成标志，下一状态）的元组，最多达到固定容量，
-    能够采样不相关的小批次数据进行训练
-    """
+    """经验回放缓冲区，支持单步和序列采样。"""
 
     def __init__(self, buffer_size, random_seed=123):
-        """
-        初始化回放缓冲区
+        """初始化回放缓冲区。
 
         参数:
-            buffer_size: 缓冲区中最多存储的转移样本数量
-            random_seed: 随机数生成器的种子
+            buffer_size: 最多存储的转移数量
+            random_seed: 随机种子
         """
-        self.buffer_size = buffer_size  # 缓冲区的最大容量
-        self.count = 0  # 当前缓冲区中的样本数量
-        self.buffer = deque()  # 使用双端队列存储经验样本
-        random.seed(random_seed)  # 设置随机种子以保证可重复性
+
+        self.buffer_size = int(buffer_size)
+        self.count = 0  # 包含当前未结束回合在内的转移数量
+        self._episodes = deque()  # 已完成的回合
+        self._current_episode = []  # 当前未完成回合
+        self.state_dim = None
+        self.action_dim = None
+        random.seed(random_seed)
+
+    # ------------------------------------------------------------------
+    # 基础操作
+    # ------------------------------------------------------------------
+    def _enforce_capacity(self):
+        """确保已完成的回合满足容量限制。"""
+
+        while self.count > self.buffer_size and self._episodes:
+            removed = self._episodes.popleft()
+            self.count -= len(removed)
+
+    def _finalize_episode(self):
+        """将当前回合放入缓冲区。"""
+
+        if self._current_episode:
+            self._episodes.append(list(self._current_episode))
+            self._current_episode.clear()
+            self._enforce_capacity()
 
     def add(self, s, a, r, t, s2):
-        """
-        向缓冲区添加一个转移样本
+        """添加一次转移。"""
 
-        参数:
-            s: 当前状态
-            a: 执行的动作
-            r: 获得的奖励
-            t: 完成标志（如果回合结束则为True）
-            s2: 下一个状态
-        """
-        # 将经验打包成元组
-        experience = (s, a, r, t, s2)
-        
-        # 如果缓冲区未满，直接添加到末尾
-        if self.count < self.buffer_size:
-            self.buffer.append(experience)
-            self.count += 1
-        else:
-            # 缓冲区已满，移除最旧的样本，添加新的样本（FIFO策略）
-            self.buffer.popleft()  # 移除队列最前端的样本
-            self.buffer.append(experience)  # 在队列末尾添加新样本
+        state = np.asarray(s, dtype=np.float32)
+        action = np.asarray(a, dtype=np.float32)
+        next_state = np.asarray(s2, dtype=np.float32)
+        reward = float(r)
+        done = float(t)
+
+        if self.state_dim is None:
+            self.state_dim = state.shape[-1]
+        if self.action_dim is None:
+            self.action_dim = action.shape[-1]
+
+        experience = (state, action, reward, done, next_state)
+        self._current_episode.append(experience)
+        self.count += 1
+
+        if done:
+            self._finalize_episode()
 
     def size(self):
-        """
-        获取缓冲区中当前元素的数量
+        """返回当前存储的转移数量。"""
 
-        返回:
-            当前缓冲区大小
-        """
         return self.count
 
+    def _iter_all_transitions(self):
+        """便利函数：迭代所有已完成和当前回合的转移。"""
+
+        for episode in self._episodes:
+            for exp in episode:
+                yield exp
+        for exp in self._current_episode:
+            yield exp
+
     def sample_batch(self, batch_size):
-        """
-        从缓冲区中采样一个批次的经验样本
+        """兼容旧接口的单步随机采样。"""
 
-        参数:
-            batch_size: 要采样的经验样本数量
+        transitions = list(self._iter_all_transitions())
+        if not transitions:
+            raise ValueError("Replay buffer is empty")
 
-        返回:
-            元组，包含批次的：状态、动作、奖励、完成标志、下一状态
-        """
-        # 如果请求的批次大小大于当前缓冲区大小，则采样所有可用样本
-        if self.count < batch_size:
-            batch = random.sample(self.buffer, self.count)
-        else:
-            batch = random.sample(self.buffer, batch_size)
+        batch_size = min(batch_size, len(transitions))
+        batch = random.sample(transitions, batch_size)
 
-        # 将采样的批次数据分别提取到不同的数组中
-        s_batch = np.array([_[0] for _ in batch])  # 状态批次
-        a_batch = np.array([_[1] for _ in batch])  # 动作批次
-        r_batch = np.array([_[2] for _ in batch])  # 奖励批次
-        t_batch = np.array([_[3] for _ in batch])  # 完成标志批次
-        s2_batch = np.array([_[4] for _ in batch])  # 下一状态批次
+        s_batch = np.array([_[0] for _ in batch])
+        a_batch = np.array([_[1] for _ in batch])
+        r_batch = np.array([_[2] for _ in batch])
+        t_batch = np.array([_[3] for _ in batch])
+        s2_batch = np.array([_[4] for _ in batch])
 
         return s_batch, a_batch, r_batch, t_batch, s2_batch
 
-    def return_buffer(self):
-        """
-        将整个缓冲区内容作为单独的数组返回
+    def sample_sequences(self, batch_size, sequence_length):
+        """随机采样定长序列。
 
-        返回:
-            元组，包含完整的：状态数组、动作数组、奖励数组、完成标志数组、下一状态数组
+        返回字典，包含状态、动作、奖励、终止标志、下一状态、掩码以及有效长度。
         """
-        # 提取缓冲区中所有样本的各个组成部分
-        s = np.array([_[0] for _ in self.buffer])  # 所有状态
-        a = np.array([_[1] for _ in self.buffer])  # 所有动作
-        r = np.array([_[2] for _ in self.buffer]).reshape(-1, 1)  # 所有奖励，重塑为列向量
-        t = np.array([_[3] for _ in self.buffer]).reshape(-1, 1)  # 所有完成标志，重塑为列向量
-        s2 = np.array([_[4] for _ in self.buffer])  # 所有下一状态
+
+        if self.state_dim is None or self.action_dim is None:
+            raise ValueError("Replay buffer does not contain any samples yet")
+
+        completed = [ep for ep in self._episodes if ep]
+        if self._current_episode:
+            completed.append(self._current_episode)
+
+        if not completed:
+            raise ValueError("Replay buffer does not have enough sequences")
+
+        seq_len = int(sequence_length)
+        batch_size = int(batch_size)
+
+        states = np.zeros((batch_size, seq_len, self.state_dim), dtype=np.float32)
+        next_states = np.zeros_like(states)
+        actions = np.zeros((batch_size, seq_len, self.action_dim), dtype=np.float32)
+        rewards = np.zeros((batch_size, seq_len, 1), dtype=np.float32)
+        dones = np.zeros((batch_size, seq_len, 1), dtype=np.float32)
+        mask = np.zeros((batch_size, seq_len), dtype=np.float32)
+        lengths = np.zeros(batch_size, dtype=np.int64)
+
+        for i in range(batch_size):
+            episode = random.choice(completed)
+            start = random.randint(0, len(episode) - 1)
+            length = 0
+            for t in range(seq_len):
+                idx = start + t
+                if idx >= len(episode):
+                    break
+                s, a, r, d, s2 = episode[idx]
+                states[i, t] = s
+                actions[i, t] = a
+                rewards[i, t, 0] = r
+                dones[i, t, 0] = d
+                next_states[i, t] = s2
+                mask[i, t] = 1.0
+                length += 1
+                if d >= 1.0:
+                    break
+            lengths[i] = length
+
+        if not mask.any():
+            raise ValueError("Failed to sample any valid transitions")
+
+        return {
+            "states": states,
+            "actions": actions,
+            "rewards": rewards,
+            "dones": dones,
+            "next_states": next_states,
+            "mask": mask,
+            "lengths": lengths,
+        }
+
+    def return_buffer(self):
+        """返回缓冲区全部内容。"""
+
+        transitions = list(self._iter_all_transitions())
+        if not transitions:
+            return np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+
+        s = np.array([_[0] for _ in transitions])
+        a = np.array([_[1] for _ in transitions])
+        r = np.array([_[2] for _ in transitions]).reshape(-1, 1)
+        t = np.array([_[3] for _ in transitions]).reshape(-1, 1)
+        s2 = np.array([_[4] for _ in transitions])
 
         return s, a, r, t, s2
 
     def clear(self):
-        """
-        清空缓冲区的所有内容
-        """
-        self.buffer.clear()  # 清空双端队列
-        self.count = 0  # 重置计数器
+        """清空缓冲区。"""
+
+        self._episodes.clear()
+        self._current_episode.clear()
+        self.count = 0
+        self.state_dim = None
+        self.action_dim = None
 
 
 class RolloutReplayBuffer(object):
