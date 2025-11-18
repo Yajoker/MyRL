@@ -243,7 +243,9 @@ class LowLevelController:
         """
         self.device = device
         self.action_dim = action_dim
-        self.max_action = max_action
+        self.max_action = float(max_action)
+        if not np.isclose(self.max_action, 1.0):
+            raise ValueError("max_action must be 1.0 to keep TD3 actions normalized in [-1, 1].")
         self.state_dim = state_dim
         self.max_lin_velocity = float(max_lin_velocity)
         self.max_ang_velocity = float(max_ang_velocity)
@@ -272,11 +274,22 @@ class LowLevelController:
             load_dir = load_directory if load_directory else save_directory
             self.load_model(filename=model_name, directory=load_dir)
 
-    def _scale_actor_output(self, raw_action: torch.Tensor) -> torch.Tensor:
-        """Convert the normalized Actor output to environment action space."""
-        lin_cmd = ((raw_action[..., 0] + 1.0) / 4.0).clamp(0.0, self.max_lin_velocity)
-        ang_cmd = raw_action[..., 1].clamp(-self.max_ang_velocity, self.max_ang_velocity)
-        return torch.stack((lin_cmd, ang_cmd), dim=-1)
+    def scale_action_for_env(self, action):
+        """Scale a normalized action ``a∈[-1,1]^2`` to ``(v, ω)`` commands."""
+
+        lin_scale = self.max_lin_velocity / 2.0
+        if isinstance(action, torch.Tensor):
+            clipped = action.clamp(-self.max_action, self.max_action)
+            lin_cmd = (clipped[..., 0] + 1.0) * lin_scale
+            ang_cmd = clipped[..., 1] * self.max_ang_velocity
+            return torch.stack((lin_cmd, ang_cmd), dim=-1)
+
+        action_arr = np.asarray(action, dtype=np.float32)
+        clipped = np.clip(action_arr, -self.max_action, self.max_action)
+        lin_cmd = (clipped[..., 0] + 1.0) * lin_scale
+        ang_cmd = clipped[..., 1] * self.max_ang_velocity
+        scaled = np.stack((lin_cmd, ang_cmd), axis=-1)
+        return scaled.astype(np.float32, copy=False)
 
     def process_observation(self, laser_scan, subgoal_distance, subgoal_angle, prev_action):
         """
@@ -301,12 +314,14 @@ class LowLevelController:
         norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
         norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
 
-        # 处理历史动作
-        lin_vel = prev_action[0] * 2  # 缩放到适当范围
-        ang_vel = (prev_action[1] + 1) / 2  # 缩放到[0, 1]范围
+        # 处理历史动作（已经是[-1,1]范围的归一化动作）
+        prev_action = np.asarray(prev_action, dtype=np.float32)
+        if prev_action.shape[-1] != 2:
+            raise ValueError("prev_action must contain 2 elements: [linear, angular].")
+        prev_action = np.clip(prev_action, -self.max_action, self.max_action)
 
         # 组合所有组件
-        state = laser_scan.tolist() + [norm_distance, norm_angle] + [lin_vel, ang_vel]
+        state = laser_scan.tolist() + [norm_distance, norm_angle] + prev_action.tolist()
 
         return np.array(state)
 
@@ -332,7 +347,8 @@ class LowLevelController:
         # 如果需要，添加探索噪声
         if add_noise:
             action += np.random.normal(0, noise_scale, size=self.action_dim)
-            # 裁剪动作到合法范围
+            action = np.clip(action, -self.max_action, self.max_action)
+        else:
             action = np.clip(action, -self.max_action, self.max_action)
 
         return action
@@ -368,18 +384,11 @@ class LowLevelController:
         # 获取带噪声的下一个动作并计算目标Q值（TD3技术）
         with torch.no_grad():
             next_action = self.actor_target(next_state)
-            next_action = self._scale_actor_output(next_action)
             noise = torch.FloatTensor(
                 np.random.normal(0, policy_noise, size=(batch_size, self.action_dim))
             ).to(self.device)
-            noise = noise.clamp(-noise_clip, noise_clip)  # 裁剪噪声
-            next_action = torch.stack(
-                (
-                    (next_action[..., 0] + noise[..., 0]).clamp(0.0, self.max_lin_velocity),
-                    (next_action[..., 1] + noise[..., 1]).clamp(-self.max_ang_velocity, self.max_ang_velocity),
-                ),
-                dim=-1,
-            )
+            noise = noise.clamp(-noise_clip, noise_clip)
+            next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
 
             target_q1, target_q2 = self.critic_target(next_state, next_action)
             target_q = torch.min(target_q1, target_q2)  # 取两个Q值的最小值（双Q学习）
@@ -398,8 +407,8 @@ class LowLevelController:
         actor_loss = None
         if self.iter_count % policy_freq == 0:
             # 计算Actor损失（最大化Q值）
-            scaled_action = self._scale_actor_output(self.actor(state))
-            actor_loss = -self.critic.forward(state, scaled_action)[0].mean()
+            actor_action = self.actor(state).clamp(-self.max_action, self.max_action)
+            actor_loss = -self.critic.forward(state, actor_action)[0].mean()
 
             # 更新Actor
             self.actor_optimizer.zero_grad()
