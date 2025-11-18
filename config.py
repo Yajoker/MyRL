@@ -16,16 +16,21 @@ from typing import Optional
 class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
-    progress_weight: float = 6.0                    # 前进进度奖励权重
-    efficiency_penalty: float = 0.02                # 效率惩罚系数（惩罚不必要的动作）
-    safety_weight: float = 0.5                      # 安全性奖励权重
-    safety_sensitivity: float = 0.5                # 安全敏感性系数（影响安全奖励计算）
-    safety_clearance: float = 0.8                   # 安全距离阈值
-    collision_distance: float = 0.3                 # 碰撞距离阈值
-    goal_bonus: float = 40.0                        # 到达最终目标的奖励
-    subgoal_bonus: float = 6                      # 到达子目标的奖励
-    collision_penalty: float = -25.0                # 碰撞惩罚
-    timeout_penalty: float = -30.0                   # 超时惩罚
+    # 1. 子目标进展相关
+    progress_weight: float = 4.0          # 略小一点，配合后面的缩放
+    efficiency_penalty: float = 0.01      # 每步轻微时间成本
+
+    # 2. 安全相关
+    safety_weight: float = 1.0            # 提高安全项权重
+    safety_sensitivity: float = 0.5       # 暂时保留但不使用（或直接删掉）
+    safety_clearance: float = 0.8
+    collision_distance: float = 0.3
+
+    # 3. 终局项：在低层只保留很小的局部效果
+    goal_bonus: float = 0.0               # 低层不再给终点奖励
+    subgoal_bonus: float = 0.0            # 子目标奖励交给高层
+    collision_penalty: float = -5.0       # 轻微局部惩罚
+    timeout_penalty: float = 0.0          # 不在低层惩罚超时
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -39,14 +44,19 @@ class LowLevelRewardConfig:
 class HighLevelRewardConfig:
     """Reward shaping coefficients for the high-level planner."""
 
-    path_progress_weight: float = 5.0               # 路径进度奖励权重
-    global_progress_weight: float = 2.0             # 全局进度奖励权重
-    low_level_return_scale: float = 0.1             # 低层控制器回报的缩放因子（与归一化后奖励量级对齐）
-    subgoal_completion_bonus: float = 4.0           # 子目标完成奖励
-    low_level_failure_penalty: float = -10.0        # 低层控制器失败的惩罚
-    goal_bonus: float = 60.0                        # 到达最终目标的奖励
-    collision_penalty: float = -50.0                # 碰撞惩罚
-    timeout_penalty: float = -25.0                  # 超时惩罚
+    # 1. 全局几何进展
+    path_progress_weight: float = 1.0       # window index 的权重
+    global_progress_weight: float = 4.0     # 到最终目标距离变化的权重（主导）
+
+    # 2. 低层执行质量
+    low_level_return_scale: float = 1.0     # 但注意我们会先对 low_level_return 做归一化
+    subgoal_completion_bonus: float = 2.0   # 子目标成功的小奖励
+    low_level_failure_penalty: float = -2.0 # “子目标期间失败”的轻微惩罚
+
+    # 3. 终局事件（只在高层定义一次）
+    goal_bonus: float = 80.0                # 大正奖励
+    collision_penalty: float = -80.0        # 大负奖励
+    timeout_penalty: float = -20.0          # 负但比碰撞轻
 
 
 @dataclass(frozen=True)
@@ -219,7 +229,6 @@ class TrainingConfig:
     min_buffer_size: int = 1500                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
-    sequence_length: int = 12                        # 序列训练长度
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
@@ -268,8 +277,6 @@ class TrainingConfig:
             raise ValueError("noise_clip must be non-negative")
         if self.policy_freq <= 0:
             raise ValueError("policy_freq must be positive")
-        if self.sequence_length <= 0:
-            raise ValueError("sequence_length must be positive")
 
 
 @dataclass(frozen=True)
