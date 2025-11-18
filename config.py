@@ -16,16 +16,16 @@ from typing import Optional
 class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
-    progress_weight: float = 1.0                    # 前进进度奖励权重
+    progress_weight: float = 2.0                    # 前进进度奖励权重
     efficiency_penalty: float = 0.02                # 效率惩罚系数（惩罚不必要的动作）
-    safety_weight: float = 1.0                      # 安全性奖励权重
-    safety_sensitivity: float = 2.0                 # 安全敏感性系数（影响安全奖励计算）
+    safety_weight: float = 0.5                      # 安全性奖励权重
+    safety_sensitivity: float = 0.5                # 安全敏感性系数（影响安全奖励计算）
     safety_clearance: float = 0.8                   # 安全距离阈值
     collision_distance: float = 0.3                 # 碰撞距离阈值
-    goal_bonus: float = 20.0                        # 到达最终目标的奖励
-    subgoal_bonus: float = 3.0                      # 到达子目标的奖励
-    collision_penalty: float = -15.0                # 碰撞惩罚
-    timeout_penalty: float = -7.0                   # 超时惩罚
+    goal_bonus: float = 40.0                        # 到达最终目标的奖励
+    subgoal_bonus: float = 6                      # 到达子目标的奖励
+    collision_penalty: float = -25.0                # 碰撞惩罚
+    timeout_penalty: float = -30.0                   # 超时惩罚
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
