@@ -278,8 +278,7 @@ def evaluate(
     for ep_idx in range(config.eval_episodes):  # 遍历每个评估情节
         system.reset()  # 重置系统状态
         latest_scan, distance, cos, sin, collision, goal, prev_action, _ = sim.reset()  # 重置仿真环境
-        prev_env_action = [0.0, 0.0]  # 上一次执行的物理动作
-        prev_policy_action = [0.0, 0.0]  # 上一次策略输出（归一化动作）
+        prev_action = [0.0, 0.0]  # 初始化动作
         current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标世界坐标
         robot_pose = get_robot_pose(sim)  # 获取机器人位姿
         eval_goal_pose = get_goal_pose(sim)  # 获取评估目标位姿
@@ -365,18 +364,13 @@ def evaluate(
                 latest_scan,  # 激光数据
                 subgoal_distance,  # 子目标距离
                 subgoal_angle,  # 子目标角度
-                prev_policy_action,  # 上次归一化动作
+                prev_action,  # 上次动作
             )
 
-            # 预测动作（无探索噪声），保持在归一化空间
+            # 预测动作（无探索噪声）
             action = system.low_level_controller.predict_action(state, add_noise=False)  # 预测动作（无噪声）
-            normalized_action = np.clip(action, -1.0, 1.0)
-            lin_cmd = float(
-                np.clip((normalized_action[0] + 1.0) * (config.max_lin_velocity / 2.0), 0.0, config.max_lin_velocity)
-            )  # 线性速度命令
-            ang_cmd = float(
-                np.clip(normalized_action[1] * config.max_ang_velocity, -config.max_ang_velocity, config.max_ang_velocity)
-            )  # 角速度命令
+            lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))  # 线性速度命令
+            ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))  # 角速度命令
             lin_cmd, ang_cmd = system.apply_velocity_shielding(lin_cmd, ang_cmd, latest_scan)  # 应用速度屏蔽
 
             # 执行动作
@@ -403,9 +397,9 @@ def evaluate(
                     current_subgoal_distance = float(relative_after[0])  # 使用相对距离
 
             action_delta: Optional[List[float]] = None  # 动作变化量
-            if prev_env_action is not None:  # 如果有上次物理动作
-                delta_lin = float(lin_cmd - prev_env_action[0])  # 线性速度变化
-                delta_ang = float(ang_cmd - prev_env_action[1])  # 角速度变化
+            if prev_action is not None:  # 如果有上次动作
+                delta_lin = float(lin_cmd - prev_action[0])  # 线性速度变化
+                delta_ang = float(ang_cmd - prev_action[1])  # 角速度变化
                 action_delta = [delta_lin, delta_ang]  # 动作变化量
 
             # 计算最小障碍物距离
@@ -452,8 +446,7 @@ def evaluate(
             # 更新统计
             episode_reward += low_reward  # 累加情节奖励
             steps += 1  # 步数加1
-            prev_env_action = [lin_cmd, ang_cmd]  # 更新上次物理动作
-            prev_policy_action = normalized_action.tolist()  # 更新上次归一化动作
+            prev_action = [lin_cmd, ang_cmd]  # 更新上次动作
 
             # 检查终止
             if collision:  # 如果碰撞
@@ -634,8 +627,7 @@ def main(args=None):
         system.current_subgoal = None  # 重置当前子目标
 
         latest_scan, distance, cos, sin, collision, goal, prev_action, _ = sim.reset()  # 重置仿真环境
-        prev_env_action = [0.0, 0.0]  # 上一次执行的物理动作
-        prev_policy_action = [0.0, 0.0]  # 上一次策略输出（归一化动作）
+        prev_action = [0.0, 0.0]  # 重置动作
         current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标世界坐标
 
         robot_pose = get_robot_pose(sim)  # 获取机器人位姿
@@ -802,30 +794,22 @@ def main(args=None):
                 latest_scan,  # 激光数据
                 subgoal_distance,  # 子目标距离
                 subgoal_angle,  # 子目标角度
-                prev_policy_action,  # 上次策略动作
+                prev_action,  # 上次动作
             )
 
-            # 预测动作（带探索噪声）并保持在归一化动作空间
+            # 预测动作（带探索噪声）
             action = system.low_level_controller.predict_action(  # 预测动作
                 state,
                 add_noise=True,  # 添加噪声
                 noise_scale=config.exploration_noise,  # 噪声尺度
             )
-            normalized_action = np.clip(action, -1.0, 1.0)  # 裁剪动作
-
-            policy_action = normalized_action.copy()  # ✨ 保存“策略动作”用于回放缓冲区
+            action = np.clip(action, -1.0, 1.0)  # 裁剪动作
+            
+            policy_action = action.copy()  # ✨ 新增：保存一份“策略动作”，用来进 replay buffer
 
             # 转换为实际控制命令（未屏蔽的环境动作）
-            env_lin_cmd = float(
-                np.clip((normalized_action[0] + 1.0) * (config.max_lin_velocity / 2.0), 0.0, config.max_lin_velocity)
-            )  # 线性速度命令
-            env_ang_cmd = float(
-                np.clip(
-                    normalized_action[1] * config.max_ang_velocity,
-                    -config.max_ang_velocity,
-                    config.max_ang_velocity,
-                )
-            )  # 角速度命令
+            env_lin_cmd = float(np.clip((action[0] + 1.0) / 4.0, 0.0, config.max_lin_velocity))  # 线性速度命令
+            env_ang_cmd = float(np.clip(action[1], -config.max_ang_velocity, config.max_ang_velocity))  # 角速度命令
             lin_cmd, ang_cmd = system.apply_velocity_shielding(env_lin_cmd, env_ang_cmd, latest_scan)  # 应用速度屏蔽
 
             # 执行动作
@@ -871,9 +855,9 @@ def main(args=None):
             system.current_subgoal = (post_subgoal_distance, post_subgoal_angle)  # 设置系统当前子目标
 
             action_delta: Optional[List[float]] = None  # 动作变化量
-            if executed_action is not None and prev_env_action is not None:  # 如果有执行动作和上次物理动作
-                delta_lin = float(executed_action[0] - prev_env_action[0])  # 线性速度变化
-                delta_ang = float(executed_action[1] - prev_env_action[1])  # 角速度变化
+            if executed_action is not None and prev_action is not None:  # 如果有执行动作和上次动作
+                delta_lin = float(executed_action[0] - prev_action[0])  # 线性速度变化
+                delta_ang = float(executed_action[1] - prev_action[1])  # 角速度变化
                 action_delta = [delta_lin, delta_ang]  # 动作变化量
 
             # 计算最小障碍物距离
@@ -973,13 +957,12 @@ def main(args=None):
                     current_subgoal_context.window_inside_steps += 1  # 累加窗口内部步数
 
             # 准备下一状态
-            next_env_action = [executed_action[0], executed_action[1]]  # 下一时刻执行的物理动作
-            next_policy_action = policy_action.tolist()  # 下一时刻历史策略动作
+            next_prev_action = [executed_action[0], executed_action[1]]  # 下一时刻上次动作
             next_state = system.low_level_controller.process_observation(  # 处理下一状态观测
                 latest_scan,  # 激光数据
                 post_subgoal_distance,  # 后子目标距离
                 post_subgoal_angle,  # 后子目标角度
-                next_policy_action,  # 下一时刻上次动作
+                next_prev_action,  # 下一时刻上次动作
             )
 
             # 检查终止条件
@@ -1003,8 +986,7 @@ def main(args=None):
                     f"Reward: {low_reward:7.2f} | Buffer: {buffer_size:6d}"
                 )
 
-            prev_env_action = next_env_action  # 更新上次物理动作
-            prev_policy_action = next_policy_action  # 更新上次策略动作
+            prev_action = next_prev_action  # 更新上次动作
             steps += 1  # 步数加1
 
         # ========== 情节结束处理 ==========
