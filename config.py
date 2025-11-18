@@ -16,7 +16,7 @@ from typing import Optional
 class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
-    progress_weight: float = 2.0                    # 前进进度奖励权重
+    progress_weight: float = 6.0                    # 前进进度奖励权重
     efficiency_penalty: float = 0.02                # 效率惩罚系数（惩罚不必要的动作）
     safety_weight: float = 0.5                      # 安全性奖励权重
     safety_sensitivity: float = 0.5                # 安全敏感性系数（影响安全奖励计算）
