@@ -110,7 +110,8 @@ class HierarchicalNavigationSystem:
         # 系统运行状态变量
         self.current_subgoal = None  # 当前子目标（距离、角度）
         self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标在世界坐标系中的位置
-        self.prev_action = [0.0, 0.0]  # 上一步执行的动作 [线速度, 角速度]
+        self.prev_policy_action = np.zeros(2, dtype=np.float32)  # 上一步策略输出（归一化）
+        self.prev_env_action = [0.0, 0.0]  # 上一步执行的物理动作 [线速度, 角速度]
         self.step_count = 0  # 总步数计数
         self.last_replanning_step = 0  # 上次重新规划的步数（用于事件触发判断）
         self.step_duration = step_duration  # 步长时间
@@ -246,17 +247,17 @@ class HierarchicalNavigationSystem:
             laser_scan,  # 激光数据
             self.current_subgoal[0],  # 子目标距离
             self.current_subgoal[1],  # 子目标角度
-            self.prev_action  # 上一步的动作（用于平滑控制）
+            self.prev_policy_action  # 上一步的策略动作（用于平滑控制）
         )
 
         # 通过低层控制器预测下一步动作（网络输出）
         action = self.low_level_controller.predict_action(low_level_state)  # 预测动作
+        policy_action = np.clip(action, -1.0, 1.0)
 
         # 将网络输出映射为实际机器人可执行的速度命令
-        # 将线速度从 [-1,1] 映射为 [0,0.5]
-        linear_velocity = (action[0] + 1) / 4  # 线性速度
-        # 保持角速度在 [-1,1] 范围内
-        angular_velocity = action[1]  # 角速度
+        env_action = self.low_level_controller.scale_action_for_env(policy_action)
+        linear_velocity = float(env_action[0])
+        angular_velocity = float(env_action[1])
 
         # 应用速度缩放屏蔽以提高安全性
         linear_velocity, angular_velocity = self._apply_velocity_shielding(
@@ -266,7 +267,8 @@ class HierarchicalNavigationSystem:
         )
 
         # 记录当前动作（用于下一次输入）
-        self.prev_action = [linear_velocity, angular_velocity]  # 更新上次动作
+        self.prev_env_action = [linear_velocity, angular_velocity]
+        self.prev_policy_action = policy_action.astype(np.float32, copy=False)
 
         # 返回控制命令
         return [linear_velocity, angular_velocity]  # 返回动作
@@ -544,7 +546,8 @@ class HierarchicalNavigationSystem:
         """
         self.current_subgoal = None  # 清空子目标
         self.current_subgoal_world = None  # 清空子目标世界坐标
-        self.prev_action = [0.0, 0.0]  # 重置上一步动作
+        self.prev_env_action = [0.0, 0.0]  # 重置上一步动作
+        self.prev_policy_action = np.zeros(2, dtype=np.float32)
         self.step_count = 0  # 步数归零
         self.last_replanning_step = 0  # 清除上次规划记录
         self.high_level_planner.current_subgoal = None  # 重置高层规划器子目标
