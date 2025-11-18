@@ -259,12 +259,6 @@ class LowLevelController:
             load_dir = load_directory if load_directory else save_directory
             self.load_model(filename=model_name, directory=load_dir)
 
-    def _scale_actor_output(self, raw_action: torch.Tensor) -> torch.Tensor:
-        """Convert the normalized Actor output to environment action space."""
-        lin_cmd = ((raw_action[..., 0] + 1.0) / 4.0).clamp(0.0, self.max_lin_velocity)
-        ang_cmd = raw_action[..., 1].clamp(-self.max_ang_velocity, self.max_ang_velocity)
-        return torch.stack((lin_cmd, ang_cmd), dim=-1)
-
     def process_observation(self, laser_scan, subgoal_distance, subgoal_angle, prev_action):
         """
         处理原始观测数据，转换为网络期望的状态向量
@@ -273,7 +267,7 @@ class LowLevelController:
             laser_scan: 原始激光雷达扫描数据
             subgoal_distance: 到子目标的距离
             subgoal_angle: 到子目标的角度
-            prev_action: 上一步的动作 [线速度, 角速度]
+            prev_action: 历史动作，已经归一化到[-1, 1]范围
 
         Returns:
             处理后的状态向量（numpy数组）
@@ -287,9 +281,9 @@ class LowLevelController:
         norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
         norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
 
-        # 处理历史动作
-        lin_vel = prev_action[0] * 2  # 缩放到适当范围
-        ang_vel = (prev_action[1] + 1) / 2  # 缩放到[0, 1]范围
+        # 处理历史动作（已经是归一化值，额外裁剪仅作为安全措施）
+        lin_vel = float(np.clip(prev_action[0], -1.0, 1.0))
+        ang_vel = float(np.clip(prev_action[1], -1.0, 1.0))
 
         # 组合所有组件
         state = laser_scan.tolist() + [norm_distance, norm_angle] + [lin_vel, ang_vel]
@@ -357,15 +351,9 @@ class LowLevelController:
         with torch.no_grad():
             # 目标 Actor 给出下一状态下的归一化动作
             next_action = self.actor_target(next_state)
-
-            # 在归一化动作空间中添加平滑噪声（policy smoothing）
-            noise = torch.normal(
-                mean=0.0,
-                std=policy_noise,
-                size=next_action.shape,
-                device=self.device,
-            )
-            noise = noise.clamp(-noise_clip, noise_clip)  # 裁剪噪声幅度
+            noise = torch.normal(0, policy_noise, size=next_action.shape, device=self.device)
+            noise = noise.clamp(-noise_clip, noise_clip)  # 裁剪噪声
+            next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
 
             # 得到加入噪声后的目标动作，并裁剪到合法范围 [-max_action, max_action]
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
@@ -388,9 +376,8 @@ class LowLevelController:
         actor_loss = None
         if self.iter_count % policy_freq == 0:
             # 计算Actor损失（最大化Q值）
-            # 这里同样在归一化动作空间中工作，直接使用 Actor 的输出作为 Critic 的输入。
-            actor_action = self.actor(state)
-            actor_loss = -self.critic.forward(state, actor_action)[0].mean()
+            policy_action = self.actor(state)
+            actor_loss = -self.critic(state, policy_action)[0].mean()
 
             # 更新Actor
             self.actor_optimizer.zero_grad()
