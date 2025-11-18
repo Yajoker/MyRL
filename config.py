@@ -219,6 +219,7 @@ class TrainingConfig:
     min_buffer_size: int = 1500                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
+    sequence_length: int = 12                        # 序列训练长度
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
@@ -267,6 +268,8 @@ class TrainingConfig:
             raise ValueError("noise_clip must be non-negative")
         if self.policy_freq <= 0:
             raise ValueError("policy_freq must be positive")
+        if self.sequence_length <= 0:
+            raise ValueError("sequence_length must be positive")
 
 
 @dataclass(frozen=True)

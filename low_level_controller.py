@@ -14,92 +14,80 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class LowLevelActorNetwork(nn.Module):
-    """
-    低层控制器的Actor网络
-    基于CNNTD3架构，处理激光雷达扫描数据、子目标信息和历史动作
-    输出机器人的线速度和角速度控制指令
-    """
+    """引入LSTM记忆的低层Actor网络。"""
 
-    def __init__(self, action_dim):
-        """初始化Actor网络
-
-        Args:
-            action_dim: 动作空间的维度，通常为2（线速度和角速度）
-        """
+    def __init__(self, action_dim, lstm_hidden_dim: int = 128, dropout_p: float = 0.1):
         super(LowLevelActorNetwork, self).__init__()
 
-        # CNN层用于处理激光雷达扫描数据
-        # 输入: 1通道的激光数据，输出: 4个特征图
         self.cnn1 = nn.Conv1d(1, 4, kernel_size=8, stride=4)
-        # 第二层CNN，输入4个特征图，输出8个特征图
         self.cnn2 = nn.Conv1d(4, 8, kernel_size=8, stride=4)
-        # 第三层CNN，输入8个特征图，输出4个特征图
         self.cnn3 = nn.Conv1d(8, 4, kernel_size=4, stride=2)
 
-        # 子目标信息嵌入层（距离和角度）
         self.subgoal_embed = nn.Linear(2, 10)
-
-        # 历史动作嵌入层
         self.action_embed = nn.Linear(2, 10)
 
-        # 全连接层
-        # 输入维度: 16(CNN输出) + 10(子目标) + 10(历史动作) = 36
-        self.layer_1 = nn.Linear(36, 400)
-        # 使用Kaiming初始化权重，适用于LeakyReLU激活函数
-        torch.nn.init.kaiming_uniform_(self.layer_1.weight, nonlinearity="leaky_relu")
+        self.feature_dim = 36
+        self.lstm_hidden_dim = lstm_hidden_dim
+        self.lstm = nn.LSTM(self.feature_dim, lstm_hidden_dim, batch_first=True)
+        self.dropout = nn.Dropout(p=dropout_p) if dropout_p > 0 else nn.Identity()
 
-        # 第二层全连接
-        self.layer_2 = nn.Linear(400, 300)
-        torch.nn.init.kaiming_uniform_(self.layer_2.weight, nonlinearity="leaky_relu")
-
-        # 输出层，生成动作
-        self.layer_3 = nn.Linear(300, action_dim)
-        # Tanh激活函数将输出限制在[-1, 1]范围内
+        self.fc1 = nn.Linear(lstm_hidden_dim, 256)
+        torch.nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity="leaky_relu")
+        self.fc2 = nn.Linear(256, action_dim)
         self.tanh = nn.Tanh()
 
-    def forward(self, s):
-        """
-        Actor网络的前向传播
+    def init_hidden(self, batch_size: int, device: torch.device):
+        """创建零初始化的LSTM隐状态。"""
 
-        Args:
-            s: 输入状态张量，形状为(batch_size, state_dim)
-               包含激光雷达数据、子目标信息和历史动作
+        h0 = torch.zeros(1, batch_size, self.lstm_hidden_dim, device=device)
+        c0 = torch.zeros(1, batch_size, self.lstm_hidden_dim, device=device)
+        return h0, c0
 
-        Returns:
-            动作张量，值在范围[-1, 1]内
-        """
-        # 如果输入是1维张量，增加batch维度
-        if len(s.shape) == 1:
+    def _encode_features(self, s: torch.Tensor) -> torch.Tensor:
+        """将原始状态编码为压缩特征。"""
+
+        laser = s[:, :-4]
+        subgoal = s[:, -4:-2]
+        prev_act = s[:, -2:]
+
+        laser = laser.unsqueeze(1)
+        l = F.leaky_relu(self.cnn1(laser))
+        l = F.leaky_relu(self.cnn2(l))
+        l = F.leaky_relu(self.cnn3(l))
+        l = l.flatten(start_dim=1)
+
+        g = F.leaky_relu(self.subgoal_embed(subgoal))
+        a = F.leaky_relu(self.action_embed(prev_act))
+        return torch.concat((l, g, a), dim=-1)
+
+    def forward(self, s: torch.Tensor, hidden=None, return_hidden: bool = False):
+        """按序列展开Actor网络。"""
+
+        if s.dim() == 1:
             s = s.unsqueeze(0)
 
-        # 分割状态张量的各个部分
-        laser = s[:, :-4]  # 激光雷达扫描数据
-        subgoal = s[:, -4:-2]  # 子目标信息（距离，角度）
-        prev_act = s[:, -2:]  # 历史动作（线速度，角速度）
+        was_sequence = s.dim() == 3
+        if not was_sequence:
+            s = s.unsqueeze(1)
 
-        # 处理激光雷达数据
-        laser = laser.unsqueeze(1)  # 增加通道维度
-        l = F.leaky_relu(self.cnn1(laser))  # 第一层CNN + LeakyReLU激活
-        l = F.leaky_relu(self.cnn2(l))  # 第二层CNN + LeakyReLU激活
-        l = F.leaky_relu(self.cnn3(l))  # 第三层CNN + LeakyReLU激活
-        l = l.flatten(start_dim=1)  # 展平特征图
+        batch_size, seq_len, _ = s.shape
+        flat = s.reshape(batch_size * seq_len, -1)
+        features = self._encode_features(flat).reshape(batch_size, seq_len, -1)
 
-        # 处理子目标信息
-        g = F.leaky_relu(self.subgoal_embed(subgoal))
+        if hidden is None or hidden[0].shape[1] != batch_size:
+            hidden = self.init_hidden(batch_size, s.device)
 
-        # 处理历史动作
-        a = F.leaky_relu(self.action_embed(prev_act))
+        lstm_out, next_hidden = self.lstm(features, hidden)
+        lstm_out = self.dropout(lstm_out)
+        out = F.leaky_relu(self.fc1(lstm_out))
+        actions = self.tanh(self.fc2(out))
 
-        # 拼接所有特征
-        s = torch.concat((l, g, a), dim=-1)
+        if not was_sequence:
+            actions = actions.squeeze(1)
 
-        # 全连接层处理
-        s = F.leaky_relu(self.layer_1(s))  # 第一层全连接 + LeakyReLU
-        s = F.leaky_relu(self.layer_2(s))  # 第二层全连接 + LeakyReLU
-        a = self.tanh(self.layer_3(s))  # 输出层 + Tanh激活
-
-        return a
-
+        if return_hidden:
+            return actions, next_hidden
+        return actions
 
 class LowLevelCriticNetwork(nn.Module):
     """
@@ -225,6 +213,8 @@ class LowLevelController:
             *,
             max_lin_velocity: float = 1.0,
             max_ang_velocity: float = 1.0,
+            lstm_hidden_dim: int = 128,
+            lstm_dropout: float = 0.1,
     ):
         """
         初始化低层控制器
@@ -249,8 +239,12 @@ class LowLevelController:
         self.max_ang_velocity = float(max_ang_velocity)
 
         # 初始化Actor网络和目标网络
-        self.actor = LowLevelActorNetwork(action_dim).to(device)
-        self.actor_target = LowLevelActorNetwork(action_dim).to(device)
+        self.actor = LowLevelActorNetwork(
+            action_dim, lstm_hidden_dim=lstm_hidden_dim, dropout_p=lstm_dropout
+        ).to(device)
+        self.actor_target = LowLevelActorNetwork(
+            action_dim, lstm_hidden_dim=lstm_hidden_dim, dropout_p=lstm_dropout
+        ).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())  # 复制初始权重
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
@@ -266,11 +260,17 @@ class LowLevelController:
         self.save_every = save_every  # 保存频率
         self.model_name = model_name  # 模型名称
         self.save_directory = save_directory  # 保存目录
+        self._eval_hidden_state = None  # 推理阶段的LSTM隐状态
 
         # 如果指定加载模型，则从文件加载
         if load_model:
             load_dir = load_directory if load_directory else save_directory
             self.load_model(filename=model_name, directory=load_dir)
+
+    def reset_hidden_state(self) -> None:
+        """清空推理时缓存的LSTM隐状态。"""
+
+        self._eval_hidden_state = None
 
     def _scale_actor_output(self, raw_action: torch.Tensor) -> torch.Tensor:
         """Convert the normalized Actor output to environment action space."""
@@ -327,7 +327,15 @@ class LowLevelController:
 
         # 通过Actor网络获取动作（不计算梯度）
         with torch.no_grad():
-            action = self.actor(state_tensor).cpu().numpy().flatten()
+            if self._eval_hidden_state is None:
+                self._eval_hidden_state = self.actor.init_hidden(batch_size=1, device=self.device)
+            action_tensor, hidden = self.actor(
+                state_tensor,
+                hidden=self._eval_hidden_state,
+                return_hidden=True,
+            )
+            self._eval_hidden_state = tuple(h.detach() for h in hidden)
+            action = action_tensor.cpu().numpy().flatten()
 
         # 如果需要，添加探索噪声
         if add_noise:
@@ -338,98 +346,91 @@ class LowLevelController:
         return action
 
     def update(self, replay_buffer, batch_size=64, discount=0.99, tau=0.005,
-               policy_noise=0.2, noise_clip=0.5, policy_freq=2):
-        """
-        使用经验回放缓冲区中的样本更新控制器参数
+               policy_noise=0.2, noise_clip=0.5, policy_freq=2, sequence_length: int = 10):
+        """使用序列经验回放样本更新网络参数。"""
 
-        Args:
-            replay_buffer: 包含经验样本的回放缓冲区
-            batch_size: 小批量大小
-            discount: 未来奖励的折扣因子
-            tau: 软更新参数
-            policy_noise: 添加到目标动作的噪声
-            noise_clip: 最大噪声幅度
-            policy_freq: Actor更新频率相对于Critic的频率
+        try:
+            batch = replay_buffer.sample_sequences(batch_size, sequence_length)
+        except ValueError:
+            return None
 
-        Returns:
-            包含损失信息的字典
-        """
-        # 从回放缓冲区采样一个小批量
-        # ReplayBuffer 返回的顺序为 (states, actions, rewards, dones, next_states)
-        state, action, reward, done, next_state = replay_buffer.sample(batch_size)
+        state = torch.FloatTensor(batch["states"]).to(self.device)
+        action = torch.FloatTensor(batch["actions"]).to(self.device)
+        reward = torch.FloatTensor(batch["rewards"]).to(self.device)
+        next_state = torch.FloatTensor(batch["next_states"]).to(self.device)
+        done = torch.FloatTensor(batch["dones"]).to(self.device)
+        mask = torch.FloatTensor(batch["mask"]).to(self.device).unsqueeze(-1)
 
-        # 转换为张量并移动到设备
-        state = torch.FloatTensor(state).to(self.device)
-        action = torch.FloatTensor(action).to(self.device)
-        reward = torch.FloatTensor(reward).to(self.device).reshape(-1, 1)
-        next_state = torch.FloatTensor(next_state).to(self.device)
-        done = torch.FloatTensor(done).to(self.device).reshape(-1, 1)
+        batch_total, seq_len, _ = state.shape
+        state_flat = state.reshape(batch_total * seq_len, -1)
+        next_state_flat = next_state.reshape(batch_total * seq_len, -1)
+        action_flat = action.reshape(batch_total * seq_len, -1)
+        mask_flat = mask.reshape(batch_total * seq_len, 1)
+        valid_steps = mask_flat.sum().clamp(min=1.0)
 
-        # 获取带噪声的下一个动作并计算目标Q值（TD3技术）
         with torch.no_grad():
-            next_action = self.actor_target(next_state)
-            next_action = self._scale_actor_output(next_action)
-            noise = torch.FloatTensor(
-                np.random.normal(0, policy_noise, size=(batch_size, self.action_dim))
-            ).to(self.device)
-            noise = noise.clamp(-noise_clip, noise_clip)  # 裁剪噪声
-            next_action = torch.stack(
-                (
-                    (next_action[..., 0] + noise[..., 0]).clamp(0.0, self.max_lin_velocity),
-                    (next_action[..., 1] + noise[..., 1]).clamp(-self.max_ang_velocity, self.max_ang_velocity),
-                ),
-                dim=-1,
-            )
+            target_action = self.actor_target(next_state)
+            target_action = self._scale_actor_output(target_action)
+            noise = torch.normal(
+                mean=0.0,
+                std=policy_noise,
+                size=target_action.shape,
+                device=self.device,
+            ).clamp(-noise_clip, noise_clip)
+            target_action = target_action + noise
+            target_action[..., 0] = target_action[..., 0].clamp(0.0, self.max_lin_velocity)
+            target_action[..., 1] = target_action[..., 1].clamp(-self.max_ang_velocity, self.max_ang_velocity)
+            target_action_flat = target_action.reshape(batch_total * seq_len, -1)
 
-            target_q1, target_q2 = self.critic_target(next_state, next_action)
-            target_q = torch.min(target_q1, target_q2)  # 取两个Q值的最小值（双Q学习）
-            target_q = reward + (1 - done) * discount * target_q  # 贝尔曼方程
+            target_q1, target_q2 = self.critic_target(next_state_flat, target_action_flat)
+            target_q = torch.min(target_q1, target_q2).reshape(batch_total, seq_len, 1)
+            target_q = reward + (1 - done) * discount * target_q
+            target_q = target_q * mask
 
-        # 计算当前Q值
-        current_q1, current_q2 = self.critic(state, action)
+        current_q1, current_q2 = self.critic(state_flat, action_flat)
+        current_q1 = current_q1.reshape(batch_total, seq_len, 1)
+        current_q2 = current_q2.reshape(batch_total, seq_len, 1)
 
-        # 计算Critic损失并更新
-        critic_loss = F.smooth_l1_loss(current_q1, target_q) + F.smooth_l1_loss(current_q2, target_q)
-        self.critic_optimizer.zero_grad()  # 清零梯度
-        critic_loss.backward()  # 反向传播
-        self.critic_optimizer.step()  # 更新参数
+        q1_loss = (F.smooth_l1_loss(current_q1, target_q, reduction='none') * mask).sum() / valid_steps
+        q2_loss = (F.smooth_l1_loss(current_q2, target_q, reduction='none') * mask).sum() / valid_steps
+        critic_loss = q1_loss + q2_loss
 
-        # 延迟策略更新（TD3技术）
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
+
         actor_loss = None
         if self.iter_count % policy_freq == 0:
-            # 计算Actor损失（最大化Q值）
-            scaled_action = self._scale_actor_output(self.actor(state))
-            actor_loss = -self.critic.forward(state, scaled_action)[0].mean()
+            actor_actions = self.actor(state)
+            scaled_actor_actions = self._scale_actor_output(actor_actions)
+            scaled_actor_flat = scaled_actor_actions.reshape(batch_total * seq_len, -1)
+            policy_q1 = self.critic(state_flat, scaled_actor_flat)[0].reshape(batch_total, seq_len, 1)
+            actor_loss = -(policy_q1 * mask).sum() / valid_steps
 
-            # 更新Actor
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             self.actor_optimizer.step()
 
-            # 软更新目标网络
             for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
                 target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
             for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
                 target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
-        # 增加迭代计数器
         self.iter_count += 1
 
-        # 记录到TensorBoard
         self.writer.add_scalar('Loss/critic', critic_loss.item(), self.iter_count)
         if actor_loss is not None:
             self.writer.add_scalar('Loss/actor', actor_loss.item(), self.iter_count)
 
-        # 如果需要，保存模型
         if self.save_every > 0 and self.iter_count % self.save_every == 0:
             self.save_model(filename=self.model_name, directory=self.save_directory)
 
-        # 返回损失信息
+        q_value = ((current_q1 * mask).sum() / valid_steps).item()
         return {
             'critic_loss': critic_loss.item(),
             'actor_loss': actor_loss.item() if actor_loss is not None else None,
-            'q_value': current_q1.mean().item()
+            'q_value': q_value,
         }
 
     def save_model(self, filename, directory):
@@ -465,5 +466,6 @@ class LowLevelController:
             self.critic.load_state_dict(torch.load(f"{directory}/{filename}_critic.pth"))
             self.critic_target.load_state_dict(torch.load(f"{directory}/{filename}_critic_target.pth"))
             print(f"模型已从 {directory}/{filename}_*.pth 加载")
+            self.reset_hidden_state()
         except FileNotFoundError as e:
             print(f"加载模型时出错: {e}")

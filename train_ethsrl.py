@@ -216,6 +216,10 @@ class TD3ReplayAdapter:
         states, actions, rewards, dones, next_states = self._buffer.sample_batch(batch_size)  # 采样批次数据
         return states, actions, rewards, dones, next_states  # 返回采样数据
 
+    def sample_sequences(self, batch_size: int, sequence_length: int):
+        """采样连续序列批次。"""
+        return self._buffer.sample_sequences(batch_size, sequence_length)
+
     def clear(self) -> None:
         """清空缓冲区"""
         self._buffer.clear()  # 清空缓冲区
@@ -1063,6 +1067,7 @@ def main(args=None):
                     policy_noise=0.2,  # 策略噪声
                     noise_clip=0.5,  # 噪声裁剪
                     policy_freq=2,   # 策略频率
+                    sequence_length=config.sequence_length,
                 )
             print("   ✅ Training completed")  # 训练完成信息
 
