@@ -18,10 +18,10 @@ class LowLevelRewardConfig:
 
     # 1. 子目标进展相关
     progress_weight: float = 4.0          # 略小一点，配合后面的缩放
-    efficiency_penalty: float = 0.01      # 每步轻微时间成本
+    efficiency_penalty: float = 0.03      # 每步轻微时间成本
 
     # 2. 安全相关
-    safety_weight: float = 1.0            # 提高安全项权重
+    safety_weight: float = 2.0            # 提高安全项权重
     safety_sensitivity: float = 0.5       # 暂时保留但不使用（或直接删掉）
     safety_clearance: float = 0.8
     collision_distance: float = 0.3
@@ -29,7 +29,7 @@ class LowLevelRewardConfig:
     # 3. 终局项：在低层只保留很小的局部效果
     goal_bonus: float = 0.0               # 低层不再给终点奖励
     subgoal_bonus: float = 0.0            # 子目标奖励交给高层
-    collision_penalty: float = -5.0       # 轻微局部惩罚
+    collision_penalty: float = -20.0       # 轻微局部惩罚
     timeout_penalty: float = 0.0          # 不在低层惩罚超时
 
     def __post_init__(self) -> None:  # type: ignore[override]
@@ -56,7 +56,7 @@ class HighLevelRewardConfig:
     # 3. 终局事件（只在高层定义一次）
     goal_bonus: float = 80.0                # 大正奖励
     collision_penalty: float = -80.0        # 大负奖励
-    timeout_penalty: float = -20.0          # 负但比碰撞轻
+    timeout_penalty: float = -50.0          # 负但比碰撞轻
 
 
 @dataclass(frozen=True)
