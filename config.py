@@ -1,11 +1,3 @@
-"""Centralised configuration dataclasses for the ETHSRL navigation stack.
-
-This module collects all hyper-parameters that need to stay in sync across
-integration, planning, control and training components.  By funnelling access
-through this single module we avoid duplicated defaults and keep "single source
-of truth" semantics for key limits and thresholds.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -17,13 +9,13 @@ class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
     # 1. 子目标进展相关
-    progress_weight: float = 4.0          # 略小一点，配合后面的缩放
+    progress_weight: float = 5.0          # 略小一点，配合后面的缩放
     efficiency_penalty: float = 0.03      # 每步轻微时间成本
 
     # 2. 安全相关
-    safety_weight: float = 2.0            # 提高安全项权重
+    safety_weight: float = 1.0            # 提高安全项权重
     safety_sensitivity: float = 0.5       # 暂时保留但不使用（或直接删掉）
-    safety_clearance: float = 0.8
+    safety_clearance: float = 0.6
     collision_distance: float = 0.3
 
     # 3. 终局项：在低层只保留很小的局部效果
@@ -226,7 +218,7 @@ class TrainingConfig:
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 20                   # 每次训练的迭代次数
     exploration_noise: float = 0.15                  # 探索噪声系数
-    min_buffer_size: int = 1500                     # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 0                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
