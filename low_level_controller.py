@@ -219,7 +219,7 @@ class LowLevelController:
             lr=3e-4,
             save_every=0,
             load_model=False,
-            save_directory=Path("ethsrl/models/low_level"),
+            save_directory=Path("myrl/models/low_level"),
             model_name="low_level_controller",
             load_directory=None,
             *,
@@ -384,9 +384,7 @@ class LowLevelController:
         # 获取带噪声的下一个动作并计算目标Q值（TD3技术）
         with torch.no_grad():
             next_action = self.actor_target(next_state)
-            noise = torch.FloatTensor(
-                np.random.normal(0, policy_noise, size=(batch_size, self.action_dim))
-            ).to(self.device)
+            noise = (torch.zeros_like(action)).data.normal_(0, policy_noise).to(self.device)
             noise = noise.clamp(-noise_clip, noise_clip)
             next_action = (next_action + noise).clamp(-self.max_action, self.max_action)
 
@@ -398,7 +396,7 @@ class LowLevelController:
         current_q1, current_q2 = self.critic(state, action)
 
         # 计算Critic损失并更新
-        critic_loss = F.smooth_l1_loss(current_q1, target_q) + F.smooth_l1_loss(current_q2, target_q)
+        critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(current_q2, target_q)
         self.critic_optimizer.zero_grad()  # 清零梯度
         critic_loss.backward()  # 反向传播
         self.critic_optimizer.step()  # 更新参数
