@@ -1,15 +1,3 @@
-"""奖励塑造工具函数（重构版），用于 ETHSRL+GP 分层导航栈。
-
-本文件只负责把「环境状态与事件」映射成两种标量奖励：
-- 低层奖励：给 TD3 actor–critic，用于学习“如何跟随当前子目标并避障”；
-- 高层奖励：给子目标网络的 RWR，用于学习“在什么状态下应该选什么子目标”。
-
-设计原则：
-1. 低层专注局部控制：子目标进展 + 避障 + （可选）轻微碰撞惩罚，不再自己定义终点 / 子目标的大奖励。
-2. 高层负责任务成败：全局目标进展 + 路径进展 + 低层执行质量 + 终局事件（成功/碰撞/超时）。
-3. 同一个语义只在一个层级被定义一次，避免冗余和相互打架。
-"""
-
 from typing import Dict, Optional, Tuple
 import numpy as np
 
@@ -96,7 +84,7 @@ def compute_low_level_reward(
         # 将碰撞惩罚缩小到局部尺度：避免与高层的大失败惩罚重复。
         # 建议在 config 里把 collision_penalty 设得比高层小很多，
         # 这里再乘一个系数进一步减弱。
-        terminal_reward = 0.2 * config.collision_penalty
+        terminal_reward = config.collision_penalty
 
     components["terminal"] = float(terminal_reward)
 
@@ -106,8 +94,8 @@ def compute_low_level_reward(
     total_reward = progress_reward + safety_reward + terminal_reward
 
     # 确保碰撞时 reward 不会被进度项刷成正值
-    if collision and not reached_goal:
-        total_reward = min(total_reward, terminal_reward)
+    #if collision and not reached_goal:
+    #    total_reward = min(total_reward, terminal_reward)
 
     return float(total_reward), components
 
