@@ -408,7 +408,7 @@ def evaluate(
             # 计算最小障碍物距离
             scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
             finite_scan = scan_arr[np.isfinite(scan_arr)]  # 有限值扫描
-            min_obstacle_distance = float(finite_scan.min()) if finite_scan.size else 8.0  # 最小障碍距离
+            min_obstacle_distance = float(np.percentile(finite_scan, 10)) if finite_scan.size else 8.0  # 最小障碍距离
             # 检查终止条件
             just_reached_subgoal = False  # 刚刚到达子目标标志
             if not current_subgoal_completed:  # 如果当前子目标未完成
@@ -867,7 +867,7 @@ def main(args=None):
             # 计算最小障碍物距离
             scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
             finite_scan = scan_arr[np.isfinite(scan_arr)]  # 有限值扫描
-            min_obstacle_distance = float(finite_scan.min()) if finite_scan.size else 8.0  # 最小障碍距离
+            min_obstacle_distance = float(np.percentile(finite_scan, 10)) if finite_scan.size else 8.0  # 最小障碍距离
             if current_subgoal_context is not None:  # 如果有当前子目标上下文
                 current_subgoal_context.min_dmin = min(  # 更新最小障碍距离
                     current_subgoal_context.min_dmin,
@@ -975,7 +975,7 @@ def main(args=None):
             # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
             scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
 
-            low_reward=0.2*low_reward  # 奖励缩放
+            #low_reward=0.2*low_reward  # 奖励缩放
             #replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
             # ✅ 用 policy_action 作为 replay buffer 里的动作
             replay_buffer.add(state, policy_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
