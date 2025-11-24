@@ -10,7 +10,7 @@ class LowLevelRewardConfig:
 
     # 1. 子目标进展相关
     progress_weight: float = 5.0          # 略小一点，配合后面的缩放
-    efficiency_penalty: float = 0.03      # 每步轻微时间成本
+    efficiency_penalty: float = 0.05      # 每步轻微时间成本
 
     # 2. 安全相关
     safety_weight: float = 1.0            # 提高安全项权重
@@ -22,7 +22,7 @@ class LowLevelRewardConfig:
     goal_bonus: float = 0.0               # 低层不再给终点奖励
     subgoal_bonus: float = 0.0            # 子目标奖励交给高层
     collision_penalty: float = -20.0       # 轻微局部惩罚
-    timeout_penalty: float = 0.0          # 不在低层惩罚超时
+    timeout_penalty: float = -10          # 不在低层惩罚超时
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -214,17 +214,17 @@ class TrainingConfig:
     batch_size: int = 64                             # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
-    max_steps: int = 350                             # 每个回合的最大步数
+    max_steps: int = 550                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 20                   # 每次训练的迭代次数
-    exploration_noise: float = 0.15                  # 探索噪声系数
+    exploration_noise: float = 0.17                  # 探索噪声系数
     min_buffer_size: int = 0                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
-    world_file: str = "env_b.yaml"                  # 环境配置文件
+    world_file: str = "env_a.yaml"                  # 环境配置文件
     waypoint_lookahead: int = 3                      # 高层使用的前瞻航点数
     global_plan_resolution: float = 0.25             # 全局规划分辨率
     global_plan_margin: float = 0.35                 # 全局规划安全裕度
