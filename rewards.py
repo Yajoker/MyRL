@@ -83,8 +83,10 @@ def compute_low_level_reward(
     if collision and not reached_goal:
         # 将碰撞惩罚缩小到局部尺度：避免与高层的大失败惩罚重复。
         # 建议在 config 里把 collision_penalty 设得比高层小很多，
-        # 这里再乘一个系数进一步减弱。
         terminal_reward = config.collision_penalty
+    elif timed_out and not reached_goal:
+        # 低层也对超时有一个小的局部惩罚
+        terminal_reward = config.timeout_penalty
 
     components["terminal"] = float(terminal_reward)
 
