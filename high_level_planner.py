@@ -541,7 +541,7 @@ class HighLevelPlanner:
     def process_goal_info(self, distance, cos_angle, sin_angle, waypoint_features=None):
         """将目标与航点特征组合成网络输入张量。"""
 
-        norm_distance = min(float(distance) / 10.0, 1.0)  # 归一化距离
+        norm_distance = min(float(distance) / 30.0, 1.0)  # 归一化距离
         base_features: List[float] = [norm_distance, float(cos_angle), float(sin_angle)]  # 基础特征
 
         tail_len = max(0, self.goal_feature_dim - 3)  # 计算尾部特征长度
@@ -820,7 +820,7 @@ class HighLevelPlanner:
         candidate_info: List[dict] = []
         active_window_radius: Optional[float] = None
 
-        base_radius = max(float(self.planner_config.window_radius), 0.3)
+        base_radius = max(float(self.planner_config.anchor_radius), 0.3)
 
         if not gaps:
             base_distance = float(np.clip(goal_distance, self.ogds_min_distance, self.ogds_max_distance))
