@@ -132,6 +132,13 @@ class PlannerConfig:
     ogds_front_angle: float = 2.6                    # 前方扇形范围（弧度）
     ogds_gap_min_width: float = 0.2                  # 最小间隙角宽（弧度）
 
+    # 目标–间隙引导的候选子目标生成（OGDS）
+    ogds_num_candidates: int = 7                     # 每次生成的候选子目标总数
+    ogds_min_distance: float = 0.8                   # 子目标距离下限（米）
+    ogds_max_distance: float = 2.5                   # 子目标距离上限（米）
+    ogds_front_angle: float = 2.6                    # 前方扇形范围（弧度）
+    ogds_gap_min_width: float = 0.2                  # 最小间隙角宽（弧度）
+
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
         if self.waypoint_lookahead <= 0:
