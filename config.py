@@ -139,6 +139,13 @@ class PlannerConfig:
     subgoal_distance_normalizer: float = 1.5         # 低层观测中的子目标距离归一化尺度
     use_path_tangent: bool = True                    # 是否使用窗口切线作为子目标基准方向
 
+    # 目标–间隙引导的候选子目标生成（OGDS）
+    ogds_num_candidates: int = 7                     # 每次生成的候选子目标总数
+    ogds_min_distance: float = 0.8                   # 子目标距离下限（米）
+    ogds_max_distance: float = 2.5                   # 子目标距离上限（米）
+    ogds_front_angle: float = 2.6                    # 前方扇形范围（弧度）
+    ogds_gap_min_width: float = 0.2                  # 最小间隙角宽（弧度）
+
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
         if self.resolution <= 0:
@@ -153,6 +160,16 @@ class PlannerConfig:
             raise ValueError("window_radius must be positive")
         if self.subgoal_distance_normalizer <= 0:
             raise ValueError("subgoal_distance_normalizer must be positive")
+        if self.ogds_num_candidates <= 0:
+            raise ValueError("ogds_num_candidates must be positive")
+        if self.ogds_min_distance <= 0:
+            raise ValueError("ogds_min_distance must be positive")
+        if self.ogds_max_distance <= 0:
+            raise ValueError("ogds_max_distance must be positive")
+        if self.ogds_front_angle <= 0:
+            raise ValueError("ogds_front_angle must be positive")
+        if self.ogds_gap_min_width <= 0:
+            raise ValueError("ogds_gap_min_width must be positive")
 
 
 @dataclass(frozen=True)
