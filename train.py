@@ -865,14 +865,13 @@ def main(args=None):
                 current_subgoal_context.steps += 1  # 累加步数
                 current_subgoal_context.subgoal_completed |= just_reached_subgoal  # 更新子目标完成标志
                 current_subgoal_context.last_goal_distance = distance  # 更新最后目标距离
-                # 构建下一状态向量
-                next_active_waypoints = system.get_active_waypoints(next_pose, include_indices=True)  # 获取下一时刻活动航点
+                # 构建下一状态向量（mapless 模式不再使用全局航点）
                 next_state_vector = system.high_level_planner.build_state_vector(  # 构建下一状态向量
                     latest_scan,  # 激光数据
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
-                    waypoints=next_active_waypoints,  # 下一时刻活动航点
+                    waypoints=None,  # mapless: 不再提供活动航点
                     robot_pose=next_pose,  # 下一时刻机器人位姿
                 )
                 current_subgoal_context.last_state = next_state_vector.astype(np.float32, copy=False)  # 更新最后状态
