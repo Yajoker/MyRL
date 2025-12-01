@@ -36,19 +36,10 @@ class LowLevelRewardConfig:
 class HighLevelRewardConfig:
     """Reward shaping coefficients for the high-level planner."""
 
-    # 1. 全局几何进展
-    path_progress_weight: float = 1.0       # window index 的权重
-    global_progress_weight: float = 4.0     # 到最终目标距离变化的权重（主导）
-
-    # 2. 低层执行质量
-    low_level_return_scale: float = 1.0     # 但注意我们会先对 low_level_return 做归一化
-    subgoal_completion_bonus: float = 2.0   # 子目标成功的小奖励
-    low_level_failure_penalty: float = -2.0 # “子目标期间失败”的轻微惩罚
-
-    # 3. 终局事件（只在高层定义一次）
-    goal_bonus: float = 80.0                # 大正奖励
-    collision_penalty: float = -80.0        # 大负奖励
-    timeout_penalty: float = -50.0          # 负但比碰撞轻
+    # 高层回报 Gi = alpha * Δd_global - beta_col * I[collision] - beta_time * T
+    alpha_global_progress: float = 4.0      # 到最终目标距离减少的权重
+    beta_collision: float = 80.0            # 碰撞惩罚权重
+    beta_time: float = 0.5                  # 时间步惩罚权重
 
 
 @dataclass(frozen=True)
@@ -129,30 +120,34 @@ class TriggerConfig:
 
 @dataclass(frozen=True)
 class PlannerConfig:
-    """Static global planning configuration."""
+    """High-level subgoal configuration for mapless navigation."""
 
-    resolution: float = 0.25                         # 路径规划分辨率
-    safety_margin: float = 0.35                      # 安全边界距离
-    waypoint_lookahead: int = 3                      # 前瞻路径点的数量
-    window_spacing: float = 2.0                      # 路径点窗口间距
-    window_radius: float = 0.6                       # 路径点窗口半径
-    subgoal_distance_normalizer: float = 1.5         # 低层观测中的子目标距离归一化尺度
-    use_path_tangent: bool = True                    # 是否使用窗口切线作为子目标基准方向
+    waypoint_lookahead: int = 3                      # 高层输入的前瞻占位维度
+    anchor_radius: float = 0.6                       # 子目标基准半径（用于距离/角度裁剪）
+
+    # 目标–间隙引导的候选子目标生成（OGDS）
+    ogds_num_candidates: int = 7                     # 每次生成的候选子目标总数
+    ogds_min_distance: float = 0.8                   # 子目标距离下限（米）
+    ogds_max_distance: float = 2.5                   # 子目标距离上限（米）
+    ogds_front_angle: float = 2.6                    # 前方扇形范围（弧度）
+    ogds_gap_min_width: float = 0.2                  # 最小间隙角宽（弧度）
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
-        if self.resolution <= 0:
-            raise ValueError("resolution must be positive")
-        if self.safety_margin < 0:
-            raise ValueError("safety_margin must be non-negative")
         if self.waypoint_lookahead <= 0:
             raise ValueError("waypoint_lookahead must be positive")
-        if self.window_spacing <= 0:
-            raise ValueError("window_spacing must be positive")
-        if self.window_radius <= 0:
-            raise ValueError("window_radius must be positive")
-        if self.subgoal_distance_normalizer <= 0:
-            raise ValueError("subgoal_distance_normalizer must be positive")
+        if self.anchor_radius <= 0:
+            raise ValueError("anchor_radius must be positive")
+        if self.ogds_num_candidates <= 0:
+            raise ValueError("ogds_num_candidates must be positive")
+        if self.ogds_min_distance <= 0:
+            raise ValueError("ogds_min_distance must be positive")
+        if self.ogds_max_distance <= 0:
+            raise ValueError("ogds_max_distance must be positive")
+        if self.ogds_front_angle <= 0:
+            raise ValueError("ogds_front_angle must be positive")
+        if self.ogds_gap_min_width <= 0:
+            raise ValueError("ogds_gap_min_width must be positive")
 
 
 @dataclass(frozen=True)
@@ -191,22 +186,6 @@ class SafetyCriticConfig:
 
 
 @dataclass(frozen=True)
-class WindowRuntimeConfig:
-    """Runtime rules for waypoint window tracking."""
-
-    margin: float = 0.15                             # 窗口边界裕度
-    step_limit: int = 80                             # 步数限制（在窗口内的最大步数）
-    clip_to_window: bool = False                     # 是否强制将子目标裁剪到窗口半径内
-
-    def __post_init__(self) -> None:  # type: ignore[override]
-        """数据类初始化后验证方法"""
-        if self.margin < 0:
-            raise ValueError("margin must be non-negative")
-        if self.step_limit <= 0:
-            raise ValueError("step_limit must be positive")
-
-
-@dataclass(frozen=True)
 class TrainingConfig:
     """End-to-end training and evaluation hyper-parameters."""
 
@@ -226,8 +205,6 @@ class TrainingConfig:
     save_every: int = 5                              # 保存模型的频率（每N个周期）
     world_file: str = "env_a.yaml"                  # 环境配置文件
     waypoint_lookahead: int = 3                      # 高层使用的前瞻航点数
-    global_plan_resolution: float = 0.25             # 全局规划分辨率
-    global_plan_margin: float = 0.35                 # 全局规划安全裕度
     discount: float = 0.99                           # 折扣因子
     tau: float = 0.005                               # 目标网络软更新系数
     policy_noise: float = 0.2                        # 策略噪声
@@ -279,7 +256,6 @@ class IntegrationConfig:
     trigger: TriggerConfig = field(default_factory=TriggerConfig)                 # 触发配置
     planner: PlannerConfig = field(default_factory=PlannerConfig)                 # 规划器配置
     safety_critic: SafetyCriticConfig = field(default_factory=SafetyCriticConfig) # Safety-Critic配置
-    window: WindowRuntimeConfig = field(default_factory=WindowRuntimeConfig)      # 窗口运行时配置
     low_level_reward: LowLevelRewardConfig = field(default_factory=LowLevelRewardConfig)  # 低层奖励配置
     high_level_reward: HighLevelRewardConfig = field(default_factory=HighLevelRewardConfig)  # 高层奖励配置
     training: TrainingConfig = field(default_factory=TrainingConfig)              # 训练配置
@@ -291,7 +267,6 @@ class IntegrationConfig:
         trigger: TriggerConfig | None = None,
         planner: PlannerConfig | None = None,
         safety_critic: SafetyCriticConfig | None = None,
-        window: WindowRuntimeConfig | None = None,
         low_level_reward: LowLevelRewardConfig | None = None,
         high_level_reward: HighLevelRewardConfig | None = None,
         training: TrainingConfig | None = None,
@@ -303,7 +278,6 @@ class IntegrationConfig:
             trigger=trigger or self.trigger,
             planner=planner or self.planner,
             safety_critic=safety_critic or self.safety_critic,
-            window=window or self.window,
             low_level_reward=low_level_reward or self.low_level_reward,
             high_level_reward=high_level_reward or self.high_level_reward,
             training=training or self.training,
@@ -352,7 +326,6 @@ __all__ = [
     "TriggerConfig",
     "PlannerConfig",
     "SafetyCriticConfig",
-    "WindowRuntimeConfig",
     "LowLevelRewardConfig",
     "HighLevelRewardConfig",
     "TrainingConfig",

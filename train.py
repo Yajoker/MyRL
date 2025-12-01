@@ -26,15 +26,6 @@ class SubgoalContext:
     steps: int = 0  # 子目标执行的步数
     subgoal_completed: bool = False  # 子目标是否完成
     last_state: Optional[np.ndarray] = None  # 最后的状态
-    start_window_index: Optional[int] = None  # 子目标开始时的活动窗口索引
-    target_window_index: Optional[int] = None  # 高层选择的目标窗口索引
-    start_window_distance: Optional[float] = None  # 初始窗口中心距离
-    last_window_index: Optional[int] = None  # 最近一次记录的窗口索引
-    last_window_distance: Optional[float] = None  # 最近一次记录的窗口距离
-    best_window_distance: Optional[float] = None  # 子目标执行期间达到的最小窗口距离
-    window_entered: bool = False  # 是否首次进入目标窗口
-    window_inside_steps: int = 0  # 在目标窗口内累计的步数
-    target_window_reached: bool = False  # 是否稳定到达目标窗口
     min_dmin: float = float("inf")  # 子目标执行期间观测到的最近障碍距离
     collision_occurred: bool = False  # 执行期间是否发生碰撞
     subgoal_angle_at_start: Optional[float] = None  # 子目标生成时的角度
@@ -92,25 +83,27 @@ def finalize_subgoal_transition(
     # 确定最后状态
     last_state = context.last_state if context.last_state is not None else context.start_state  # 使用最后状态或开始状态
 
+    collision_flag = collision or context.collision_occurred
+
     # 计算高层奖励
     reward, components = compute_high_level_reward(  # 调用高层奖励计算函数
         start_goal_distance=context.start_goal_distance,  # 开始目标距离
         end_goal_distance=context.last_goal_distance,  # 结束目标距离
-        subgoal_completed=context.subgoal_completed,  # 子目标完成标志
-        reached_goal=reached_goal,  # 是否到达目标
-        collision=collision,  # 是否碰撞
-        timed_out=timed_out,  # 是否超时
+        subgoal_step_count=context.steps,  # 子目标步数
+        collision=collision_flag,  # 是否碰撞
         config=high_cfg,  # 高层奖励配置
-        start_window_index=context.start_window_index,  # 开始窗口索引
-        end_window_index=context.last_window_index,  # 结束窗口索引
-        start_window_distance=context.start_window_distance,  # 开始窗口距离
-        best_window_distance=context.best_window_distance,  # 最佳窗口距离
-        end_window_distance=context.last_window_distance,  # 结束窗口距离
-        window_entered=context.window_entered,  # 窗口进入标志
-        window_inside_steps=context.window_inside_steps,  # 窗口内步数
-        target_window_index=context.target_window_index,  # 目标窗口索引
-        target_window_reached=context.target_window_reached,  # 目标窗口到达标志
-        low_level_return=context.low_level_return,  # 低层回报
+    )
+
+    components.update(
+        {
+            "start_global_distance": float(context.start_goal_distance),
+            "end_global_distance": float(context.last_goal_distance),
+            "subgoal_steps": float(context.steps),
+            "collision_flag": float(collision_flag),
+            "subgoal_completed": float(context.subgoal_completed),
+            "timed_out": float(timed_out),
+            "reached_goal": float(reached_goal),
+        }
     )
 
     # 将经验添加到缓冲区
@@ -283,7 +276,6 @@ def evaluate(
         current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标世界坐标
         robot_pose = get_robot_pose(sim)  # 获取机器人位姿
         eval_goal_pose = get_goal_pose(sim)  # 获取评估目标位姿
-        system.plan_global_route(robot_pose, eval_goal_pose, force=True)  # 强制规划全局路径
         done = False  # 终止标志
         steps = 0  # 步数计数器
         episode_reward = 0.0  # 情节奖励
@@ -292,9 +284,8 @@ def evaluate(
         # 单次评估情节循环
         while not done and steps < config.max_steps:  # 当未终止且未超时时循环
             robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-            system.plan_global_route(robot_pose, eval_goal_pose)  # 规划全局路径
-            active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)  # 获取活动航点
-            window_metrics = system.update_window_state(robot_pose, active_waypoints)  # 更新窗口状态
+            active_waypoints: list = []
+            window_metrics: dict = {}
             goal_info = [distance, cos, sin]  # 目标信息
 
             # 检查是否需要重新规划
@@ -305,11 +296,9 @@ def evaluate(
                     robot_pose,  # 机器人位姿
                     goal_info,  # 目标信息
                     current_step=steps,  # 当前步数
-                    window_metrics=window_metrics,  # 窗口指标
+                    window_metrics=None,  # 窗口指标
                 )
             )
-            if window_metrics.get("limit_exceeded", False):  # 如果窗口限制超限
-                should_replan = True  # 需要重新规划
 
             subgoal_distance: Optional[float] = None  # 子目标距离
             subgoal_angle: Optional[float] = None  # 子目标角度
@@ -324,11 +313,9 @@ def evaluate(
                     sin,  # 目标正弦
                     robot_pose=robot_pose,  # 机器人位姿
                     current_step=steps,  # 当前步数
-                    waypoints=active_waypoints,  # 活动航点
-                    window_metrics=window_metrics,  # 窗口指标
+                    waypoints=None,  # 活动航点
+                    window_metrics=None,  # 窗口指标
                 )
-                system.reset_window_tracking()  # 重置窗口跟踪
-                system.update_selected_waypoint(metadata.get("selected_waypoint"))  # 更新选择的航点
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
                 system.high_level_planner.event_trigger.reset_time(steps)  # 重置事件触发器时间
@@ -384,9 +371,7 @@ def evaluate(
 
             # 更新子目标距离
             next_pose = get_robot_pose(sim)  # 获取下一时刻机器人位姿
-            system.plan_global_route(next_pose, eval_goal_pose)  # 规划全局路径
-            next_waypoints = system.get_active_waypoints(next_pose, include_indices=True)  # 获取下一时刻活动航点
-            post_window_metrics = system.update_window_state(next_pose, next_waypoints)  # 更新窗口状态
+            post_window_metrics: dict = {}
             current_subgoal_distance = None  # 当前子目标距离
             if current_subgoal_world is not None:  # 如果有当前子目标世界坐标
                 next_pos = np.array(next_pose[:2], dtype=np.float32)  # 下一时刻位置
@@ -435,14 +420,6 @@ def evaluate(
                 reached_subgoal=just_reached_subgoal,  # 是否到达子目标
                 collision=collision,  # 是否碰撞
                 timed_out=timed_out,  # 是否超时
-                window_entered=post_window_metrics.get("entered", False),  # 窗口进入标志
-                window_inside=post_window_metrics.get("inside", False),  # 窗口内部标志
-                window_limit_exceeded=post_window_metrics.get("limit_exceeded", False),  # 窗口限制超限
-                prev_window_distance=post_window_metrics.get("prev_distance"),  # 前一个窗口距离
-                current_window_distance=post_window_metrics.get("distance"),  # 当前窗口距离
-                window_radius=post_window_metrics.get("radius"),  # 窗口半径
-                current_subgoal_angle=subgoal_alignment_angle,  # 当前子目标角度
-                action_delta=action_delta,  # 动作变化量
                 config=low_cfg,  # 低层奖励配置
             )
 
@@ -568,13 +545,7 @@ def main(args=None):
     print(f"   • Max steps per episode: {config.max_steps}")  # 每情节最大步数
     print(f"   • Train every {config.train_every_n_episodes} episodes")  # 训练频率
     print(f"   • World file: {world_path}")  # 世界文件路径
-    print(
-        "   • Global planner: res={:.2f} m, margin={:.2f} m, lookahead={}".format(  # 全局规划器参数
-            config.global_plan_resolution,  # 分辨率
-            config.global_plan_margin,  # 安全边界
-            config.waypoint_lookahead,  # 前瞻航点数
-        )
-    )
+    print("   • Global planner: disabled (mapless mode)")  # 全局规划器关闭，启用无图导航
     if config.save_every > 0:  # 如果设置了保存频率
         print(f"   • Save models every {config.save_every} episodes")  # 保存模型频率
     else:
@@ -586,10 +557,7 @@ def main(args=None):
     system = HierarchicalNavigationSystem(  # 创建分层导航系统
         device=device,  # 设备
         subgoal_threshold=config.subgoal_radius,  # 子目标阈值
-        world_file=world_path,  # 世界文件
-        global_plan_resolution=config.global_plan_resolution,  # 全局规划分辨率
-        global_plan_margin=config.global_plan_margin,  # 全局规划安全边界
-        waypoint_lookahead=config.waypoint_lookahead,  # 航点前瞻数量
+        waypoint_lookahead=config.waypoint_lookahead,  # 航点前瞻数量（对 mapless 分支无影响）
         integration_config=integration_config,  # 集成配置
     )
     replay_buffer = TD3ReplayAdapter(  # 创建回放缓冲区适配器
@@ -637,7 +605,6 @@ def main(args=None):
 
         robot_pose = get_robot_pose(sim)  # 获取机器人位姿
         episode_goal_pose = get_goal_pose(sim)  # 获取情节目标位姿
-        system.plan_global_route(robot_pose, episode_goal_pose, force=True)  # 强制规划全局路径
 
         steps = 0  # 步数计数器
         episode_reward = 0.0  # 情节奖励
@@ -647,10 +614,8 @@ def main(args=None):
         # ========== 单次情节循环 ==========
         while not done and steps < config.max_steps:  # 当未终止且未超时时循环
             robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-            system.plan_global_route(robot_pose, episode_goal_pose)  # 规划全局路径
-            active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)  # 获取活动航点
-            window_metrics = system.update_window_state(robot_pose, active_waypoints)  # 更新窗口状态
-            waypoint_sequence = active_waypoints  # 航点序列
+            window_metrics: dict = {}
+            waypoint_sequence: list = []
             goal_info = [distance, cos, sin]  # 目标信息
 
             # 检查是否需要重新规划子目标
@@ -661,11 +626,9 @@ def main(args=None):
                     robot_pose,  # 机器人位姿
                     goal_info,  # 目标信息
                     current_step=steps,  # 当前步数
-                    window_metrics=window_metrics,  # 窗口指标
+                    window_metrics=None,  # 窗口指标
                 )
             )
-            if window_metrics.get("limit_exceeded", False):  # 如果窗口限制超限
-                should_replan = True  # 需要重新规划
 
             metadata = {}  # 元数据字典
             subgoal_distance = None  # 子目标距离
@@ -711,11 +674,9 @@ def main(args=None):
                     sin,  # 目标正弦
                     robot_pose=robot_pose,  # 机器人位姿
                     current_step=steps,  # 当前步数
-                    waypoints=active_waypoints,  # 活动航点
-                    window_metrics=window_metrics,  # 窗口指标
+                    waypoints=None,  # 活动航点
+                    window_metrics=None,  # 窗口指标
                 )
-                system.reset_window_tracking()  # 重置窗口跟踪
-                system.update_selected_waypoint(metadata.get("selected_waypoint"))  # 更新选择的航点
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
                 system.high_level_planner.event_trigger.reset_time(steps)  # 重置事件触发器时间
@@ -733,10 +694,6 @@ def main(args=None):
                 )
 
                 # 创建新的子目标上下文
-                meta_metrics = metadata.get("window_metrics", {}) if metadata else {}  # 元数据指标
-                start_window_index = meta_metrics.get("index")  # 开始窗口索引
-                start_window_distance = meta_metrics.get("distance")  # 开始窗口距离
-                target_window_index = metadata.get("selected_waypoint")  # 目标窗口索引
                 distance_adjust_action = float(metadata.get("distance_adjust_applied", 0.0)) if metadata else 0.0  # 距离调整动作
                 angle_offset_action = float(metadata.get("angle_offset_applied", 0.0)) if metadata else 0.0  # 角度偏移动作
                 anchor_distance = metadata.get("anchor_distance", subgoal_distance)  # 锚点距离
@@ -753,12 +710,6 @@ def main(args=None):
                     steps=0,  # 步数
                     subgoal_completed=False,  # 子目标完成标志
                     last_state=start_state.astype(np.float32, copy=False),  # 最后状态
-                    start_window_index=int(start_window_index) if start_window_index is not None else None,  # 开始窗口索引
-                    target_window_index=int(target_window_index) if target_window_index is not None else None,  # 目标窗口索引
-                    start_window_distance=float(start_window_distance) if start_window_distance is not None else None,  # 开始窗口距离
-                    last_window_index=int(start_window_index) if start_window_index is not None else None,  # 最后窗口索引
-                    last_window_distance=float(start_window_distance) if start_window_distance is not None else None,  # 最后窗口距离
-                    best_window_distance=float(start_window_distance) if start_window_distance is not None else None,  # 最佳窗口距离
                     subgoal_angle_at_start=float(subgoal_angle) if subgoal_angle is not None else None,  # 子目标开始角度
                     base_distance=float(anchor_distance) if anchor_distance is not None else None,  # 基础距离
                     base_angle=float(anchor_angle) if anchor_angle is not None else None,  # 基础角度
@@ -824,9 +775,7 @@ def main(args=None):
 
             # 更新子目标距离
             next_pose = get_robot_pose(sim)  # 获取下一时刻机器人位姿
-            system.plan_global_route(next_pose, episode_goal_pose)  # 规划全局路径
-            next_active_waypoints = system.get_active_waypoints(next_pose, include_indices=True)  # 获取下一时刻活动航点
-            post_window_metrics = system.update_window_state(next_pose, next_active_waypoints)  # 更新窗口状态
+            post_window_metrics: dict = {}
             current_subgoal_distance = None  # 当前子目标距离
             if current_subgoal_world is not None:  # 如果有当前子目标世界坐标
                 next_pos = np.array(next_pose[:2], dtype=np.float32)  # 下一时刻位置
@@ -902,14 +851,6 @@ def main(args=None):
                 reached_subgoal=just_reached_subgoal,  # 是否到达子目标
                 collision=collision,  # 是否碰撞
                 timed_out=timed_out,  # 是否超时
-                window_entered=post_window_metrics.get("entered", False),  # 窗口进入标志
-                window_inside=post_window_metrics.get("inside", False),  # 窗口内部标志
-                window_limit_exceeded=post_window_metrics.get("limit_exceeded", False),  # 窗口限制超限
-                prev_window_distance=post_window_metrics.get("prev_distance"),  # 前一个窗口距离
-                current_window_distance=post_window_metrics.get("distance"),  # 当前窗口距离
-                window_radius=post_window_metrics.get("radius"),  # 窗口半径
-                current_subgoal_angle=subgoal_alignment_angle,  # 当前子目标角度
-                action_delta=action_delta,  # 动作变化量
                 config=low_reward_cfg,  # 低层奖励配置
             )
 
@@ -935,30 +876,6 @@ def main(args=None):
                     robot_pose=next_pose,  # 下一时刻机器人位姿
                 )
                 current_subgoal_context.last_state = next_state_vector.astype(np.float32, copy=False)  # 更新最后状态
-                idx_metric = post_window_metrics.get("index") if post_window_metrics else None  # 索引指标
-                dist_metric = post_window_metrics.get("distance") if post_window_metrics else None  # 距离指标
-                if idx_metric is not None:  # 如果有索引指标
-                    idx_val = int(idx_metric)  # 索引值
-                    current_subgoal_context.last_window_index = idx_val  # 更新最后窗口索引
-                    if current_subgoal_context.start_window_index is None:  # 如果开始窗口索引为None
-                        current_subgoal_context.start_window_index = idx_val  # 设置开始窗口索引
-                    target_idx = current_subgoal_context.target_window_index  # 目标窗口索引
-                    if (
-                        target_idx is not None  # 如果有目标窗口索引
-                        and idx_val >= target_idx  # 且当前索引大于等于目标索引
-                        and post_window_metrics.get("inside", False)  # 且在窗口内部
-                    ):
-                        current_subgoal_context.target_window_reached = True  # 标记目标窗口到达
-                if dist_metric is not None:  # 如果有距离指标
-                    dist_val = float(dist_metric)  # 距离值
-                    current_subgoal_context.last_window_distance = dist_val  # 更新最后窗口距离
-                    best = current_subgoal_context.best_window_distance  # 最佳窗口距离
-                    if best is None or dist_val < best:  # 如果当前距离更小
-                        current_subgoal_context.best_window_distance = dist_val  # 更新最佳窗口距离
-                if post_window_metrics.get("entered", False):  # 如果进入窗口
-                    current_subgoal_context.window_entered = True  # 标记窗口进入
-                if post_window_metrics.get("inside", False):  # 如果在窗口内部
-                    current_subgoal_context.window_inside_steps += 1  # 累加窗口内部步数
 
             # 准备下一状态
             next_policy_action = policy_action.astype(np.float32, copy=False)
