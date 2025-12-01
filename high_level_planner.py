@@ -15,7 +15,6 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from config import PlannerConfig, SafetyCriticConfig, TriggerConfig
-from global_planner import WaypointWindow
 
 
 class SubgoalNetwork(nn.Module):
@@ -583,48 +582,163 @@ class HighLevelPlanner:
         return np.array([world_x, world_y], dtype=np.float32)  # 返回世界坐标
 
     def build_waypoint_features(self, waypoints, robot_pose) -> List[float]:
-        """构建航点特征向量"""
-        active_features = [0.0] * self.active_window_feature_dim  # 活动窗口特征
-        sequence_features: List[float] = []  # 序列特征
+        """当前版本不使用全局航点，返回零特征占位。"""
+        active_features = [0.0] * self.active_window_feature_dim
+        sequence_features = [0.0] * (self.per_window_feature_dim * self.waypoint_lookahead)
+        return active_features + sequence_features
 
-        if robot_pose is None:
-            # 如果没有机器人位姿，填充默认值
-            sequence_features.extend([0.0] * self.per_window_feature_dim * self.waypoint_lookahead)
-            return active_features + sequence_features
+    def _extract_gaps_from_lidar(
+        self,
+        laser_scan: np.ndarray,
+        front_angle: Optional[float] = None,
+    ) -> List[Tuple[float, float, float]]:
+        """从激光雷达数据中提取前方可通行的间隙。
 
-        for idx in range(self.waypoint_lookahead):
-            window: Optional[WaypointWindow] = None
-            if waypoints is not None and idx < len(waypoints):
-                entry = waypoints[idx]
-                if isinstance(entry, tuple) and len(entry) == 2:
-                    window = entry[1]  # 提取窗口对象
-                elif isinstance(entry, WaypointWindow):
-                    window = entry  # 直接使用窗口对象
-                else:
-                    waypoint_vec = np.asarray(entry, dtype=np.float32)
-                    window = WaypointWindow(center=waypoint_vec, radius=0.0)  # 创建默认窗口
+        Args:
+            laser_scan: 原始激光雷达距离数组。
+            front_angle: 可选的前方视场角（弧度）。
 
-            if window is not None:
-                centre = np.asarray(window.center, dtype=np.float32)  # 窗口中心
-                distance, angle = self._world_to_relative(robot_pose, centre)  # 转换为相对坐标
-                norm_distance = min(distance / 10.0, 1.0)  # 归一化距离
-                cos_rel = math.cos(angle)  # 余弦值
-                sin_rel = math.sin(angle)  # 正弦值
-                norm_radius = min(float(window.radius) / 5.0, 1.0)  # 归一化半径
-                sequence_features.extend([norm_distance, cos_rel, sin_rel, norm_radius])  # 添加序列特征
-                margin = (distance - float(window.radius)) / max(float(window.radius), 1e-3)  # 计算边界
-                margin = float(np.clip(margin, -1.0, 1.0))  # 裁剪边界值
-                inside_flag = 1.0 if distance <= float(window.radius) else 0.0  # 是否在窗口内标志
-                if idx == 0:
-                    active_features = [norm_distance, cos_rel, sin_rel, norm_radius, inside_flag, margin]  # 活动窗口特征
-            else:
-                sequence_features.extend([0.0, 0.0, 0.0, 0.0])  # 填充默认值
+        Returns:
+            间隙列表，每个元素为 (theta_start, theta_end, gap_distance)。
+        """
 
-        total_expected = self.per_window_feature_dim * self.waypoint_lookahead  # 期望总特征数
-        if len(sequence_features) < total_expected:
-            sequence_features.extend([0.0] * (total_expected - len(sequence_features)))  # 填充剩余特征
+        scan = np.asarray(laser_scan, dtype=np.float32)
+        if scan.size == 0:
+            return []
 
-        return active_features + sequence_features  # 返回完整特征向量
+        # 处理无效值：NaN 视为被阻塞，Inf 视为远处空旷
+        scan = np.copy(scan)
+        scan[np.isnan(scan)] = 0.0
+        scan[np.isinf(scan)] = 10.0
+
+        num_rays = scan.shape[0]
+        angles = np.linspace(-math.pi, math.pi, num=num_rays, endpoint=False)
+
+        front_span = float(front_angle) if front_angle is not None else float(self.ogds_front_angle)
+        half_span = max(front_span * 0.5, 0.0)
+        front_mask = (angles >= -half_span) & (angles <= half_span)
+        if not np.any(front_mask):
+            return []
+
+        sub_scan = scan[front_mask]
+        sub_angles = angles[front_mask]
+
+        distance_threshold = max(self.event_trigger.safety_trigger_distance, 1e-3)
+        free_mask = sub_scan > distance_threshold
+
+        gaps: List[Tuple[float, float, float]] = []
+        start_idx: Optional[int] = None
+        for idx, is_free in enumerate(free_mask):
+            if is_free and start_idx is None:
+                start_idx = idx
+            elif not is_free and start_idx is not None:
+                end_idx = idx - 1
+                theta_start = float(sub_angles[start_idx])
+                theta_end = float(sub_angles[end_idx])
+                if (theta_end - theta_start) >= self.ogds_gap_min_width:
+                    gap_distance = float(np.nanmedian(sub_scan[start_idx : end_idx + 1]))
+                    gaps.append((theta_start, theta_end, gap_distance))
+                start_idx = None
+
+        # 末尾区间收尾
+        if start_idx is not None:
+            theta_start = float(sub_angles[start_idx])
+            theta_end = float(sub_angles[-1])
+            if (theta_end - theta_start) >= self.ogds_gap_min_width:
+                gap_distance = float(np.nanmedian(sub_scan[start_idx:]))
+                gaps.append((theta_start, theta_end, gap_distance))
+
+        return gaps
+
+    def _generate_ogds_candidates(
+        self,
+        *,
+        laser_scan: np.ndarray,
+        goal_distance: float,
+        goal_cos: float,
+        goal_sin: float,
+        robot_pose: np.ndarray,
+    ) -> Tuple[List[dict], Optional[int], Optional[float]]:
+        """生成基于目标–间隙引导的候选子目标集合。"""
+
+        theta_goal = math.atan2(goal_sin, goal_cos)
+        gaps = self._extract_gaps_from_lidar(laser_scan)
+
+        candidate_info: List[dict] = []
+        active_window_radius: Optional[float] = None
+
+        base_radius = max(float(self.planner_config.anchor_radius), 0.3)
+
+        if not gaps:
+            base_distance = float(np.clip(goal_distance, self.ogds_min_distance, self.ogds_max_distance))
+            world_xy = self._relative_to_world(robot_pose, base_distance, theta_goal)
+            candidate_info.append(
+                {
+                    "index": None,
+                    "window": None,
+                    "position": world_xy,
+                    "distance": base_distance,
+                    "angle": theta_goal,
+                    "radius": base_radius,
+                }
+            )
+            return candidate_info, None, base_radius
+
+        weights: List[float] = []
+        sigma = max(self.ogds_front_angle, 1e-3)
+        for theta_start, theta_end, gap_distance in gaps:
+            theta_center = 0.5 * (theta_start + theta_end)
+            delta_goal = theta_center - theta_goal
+            width = max(theta_end - theta_start, 1e-6)
+            distance_term = max(min(gap_distance, self.ogds_max_distance), self.ogds_min_distance)
+            weight = width * math.exp(-(delta_goal ** 2) / (sigma ** 2)) * distance_term
+            weights.append(weight)
+
+        total_weight = float(sum(weights))
+        if total_weight <= 0.0:
+            weights = [1.0 for _ in gaps]
+            total_weight = float(len(gaps))
+
+        num_candidates = max(1, int(self.ogds_num_candidates))
+        counts = [1 for _ in gaps]
+        remaining = num_candidates - len(gaps)
+        if remaining > 0:
+            probabilities = np.asarray(weights, dtype=np.float32) / total_weight
+            expected = probabilities * float(remaining)
+            floor_counts = np.floor(expected).astype(int)
+            counts = [c + int(f) for c, f in zip(counts, floor_counts)]
+            allocated = int(floor_counts.sum())
+            leftover = remaining - allocated
+            if leftover > 0:
+                order = list(np.argsort(-probabilities))
+                for idx in order[:leftover]:
+                    counts[int(idx)] += 1
+
+        for (theta_start, theta_end, gap_distance), gap_count in zip(gaps, counts):
+            if gap_count <= 0:
+                continue
+            step = (theta_end - theta_start) / float(gap_count + 1)
+            for i in range(gap_count):
+                theta = theta_start + step * float(i + 1)
+                distance = min(gap_distance * 0.7, self.ogds_max_distance)
+                distance = float(np.clip(distance, self.ogds_min_distance, self.ogds_max_distance))
+                distance = min(distance, float(goal_distance)) if np.isfinite(goal_distance) else distance
+                world_xy = self._relative_to_world(robot_pose, distance, theta)
+                candidate_info.append(
+                    {
+                        "index": None,
+                        "window": None,
+                        "position": world_xy,
+                        "distance": distance,
+                        "angle": theta,
+                        "radius": base_radius,
+                    }
+                )
+
+        if candidate_info:
+            active_window_radius = float(np.mean([entry.get("radius", base_radius) for entry in candidate_info]))
+
+        return candidate_info, None, active_window_radius
 
     def _extract_gaps_from_lidar(
         self,
@@ -973,13 +1087,6 @@ class HighLevelPlanner:
         trigger_new_subgoal = time_ready and (safe_trigger or progress_trigger)
 
         # 如果触发，重置时间计数器
-        if window_metrics:
-            if window_metrics.get("limit_exceeded", False):  # 窗口限制超限
-                trigger_new_subgoal = True
-            if window_metrics.get("entered", False):  # 进入新窗口
-                # 新窗口被进入，刷新进度基准以避免重复触发
-                self.event_trigger.reset_progress(goal_distance, current_step)
-
         if trigger_new_subgoal:
             self.event_trigger.reset_time(current_step)  # 重置触发时间
 
@@ -1042,39 +1149,7 @@ class HighLevelPlanner:
         candidate_info = []  # 候选航点信息
         active_window_index: Optional[int] = None  # 活动窗口索引
         active_window_radius: Optional[float] = None  # 活动窗口半径
-        if robot_pose is not None and waypoints:
-            for entry in waypoints:
-                if isinstance(entry, tuple) and len(entry) == 2:
-                    idx = int(entry[0]) if entry[0] is not None else None  # 索引
-                    window_obj = entry[1]  # 窗口对象
-                elif isinstance(entry, WaypointWindow):
-                    idx = None
-                    window_obj = entry  # 窗口对象
-                else:
-                    idx = None
-                    waypoint_vec = np.asarray(entry, dtype=np.float32)
-                    window_obj = WaypointWindow(center=waypoint_vec, radius=0.0)  # 创建默认窗口
-
-                if not isinstance(window_obj, WaypointWindow):
-                    continue
-
-                centre = np.asarray(window_obj.center, dtype=np.float32)  # 窗口中心
-                rel_dist, rel_angle = self._world_to_relative(robot_pose, centre)  # 相对坐标
-                candidate_info.append(
-                    {
-                        "index": idx,  # 索引
-                        "window": window_obj,  # 窗口对象
-                        "position": centre,  # 位置
-                        "distance": rel_dist,  # 距离
-                        "angle": rel_angle,  # 角度
-                        "radius": float(window_obj.radius),  # 半径
-                    }
-                )
-
-            if candidate_info:
-                active_window_index = candidate_info[0]["index"]  # 活动窗口索引
-                active_window_radius = candidate_info[0]["radius"]  # 活动窗口半径
-        elif robot_pose is not None:
+        if robot_pose is not None:
             candidate_info, active_window_index, active_window_radius = self._generate_ogds_candidates(
                 laser_scan=np.asarray(laser_scan, dtype=np.float32),
                 goal_distance=float(goal_distance),
@@ -1182,10 +1257,6 @@ class HighLevelPlanner:
         # 重置进度基准（新子目标意味着重新开始进度跟踪）
         progress_step = current_step if current_step is not None else 0
         self.event_trigger.reset_progress(goal_distance, progress_step)
-
-        if active_window_index is None and window_metrics:
-            active_window_index = window_metrics.get("index")  # 从窗口指标获取索引
-            active_window_radius = window_metrics.get("radius")  # 从窗口指标获取半径
 
         metadata = {
             "selected_waypoint": selected_index,  # 选择的航点
