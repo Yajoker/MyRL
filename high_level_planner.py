@@ -410,6 +410,7 @@ class HighLevelPlanner:
         trigger_cfg = trigger_config or TriggerConfig()  # 触发器配置
         planner_cfg = planner_config or PlannerConfig()  # 规划器配置
         self.safety_config = safety_config or SafetyCriticConfig()  # 安全评估配置
+        self.planner_config = planner_cfg
 
         # 设置参数，优先使用传入参数，否则使用配置默认值
         if subgoal_reach_threshold is None:
@@ -477,6 +478,13 @@ class HighLevelPlanner:
         self.last_goal_direction = 0.0  # 上次目标方向角度
         self.current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标的世界坐标[x, y]
         self.subgoal_hidden: Optional[torch.Tensor] = None  # GRU隐状态
+
+        # 目标–间隙引导的候选生成参数
+        self.ogds_num_candidates = planner_cfg.ogds_num_candidates
+        self.ogds_min_distance = planner_cfg.ogds_min_distance
+        self.ogds_max_distance = planner_cfg.ogds_max_distance
+        self.ogds_front_angle = planner_cfg.ogds_front_angle
+        self.ogds_gap_min_width = planner_cfg.ogds_gap_min_width
 
         # 如果请求则加载预训练模型
         if load_model:
@@ -617,6 +625,159 @@ class HighLevelPlanner:
             sequence_features.extend([0.0] * (total_expected - len(sequence_features)))  # 填充剩余特征
 
         return active_features + sequence_features  # 返回完整特征向量
+
+    def _extract_gaps_from_lidar(
+        self,
+        laser_scan: np.ndarray,
+        front_angle: Optional[float] = None,
+    ) -> List[Tuple[float, float, float]]:
+        """从激光雷达数据中提取前方可通行的间隙。
+
+        Args:
+            laser_scan: 原始激光雷达距离数组。
+            front_angle: 可选的前方视场角（弧度）。
+
+        Returns:
+            间隙列表，每个元素为 (theta_start, theta_end, gap_distance)。
+        """
+
+        scan = np.asarray(laser_scan, dtype=np.float32)
+        if scan.size == 0:
+            return []
+
+        # 处理无效值：NaN 视为被阻塞，Inf 视为远处空旷
+        scan = np.copy(scan)
+        scan[np.isnan(scan)] = 0.0
+        scan[np.isinf(scan)] = 10.0
+
+        num_rays = scan.shape[0]
+        angles = np.linspace(-math.pi, math.pi, num=num_rays, endpoint=False)
+
+        front_span = float(front_angle) if front_angle is not None else float(self.ogds_front_angle)
+        half_span = max(front_span * 0.5, 0.0)
+        front_mask = (angles >= -half_span) & (angles <= half_span)
+        if not np.any(front_mask):
+            return []
+
+        sub_scan = scan[front_mask]
+        sub_angles = angles[front_mask]
+
+        distance_threshold = max(self.event_trigger.safety_trigger_distance, 1e-3)
+        free_mask = sub_scan > distance_threshold
+
+        gaps: List[Tuple[float, float, float]] = []
+        start_idx: Optional[int] = None
+        for idx, is_free in enumerate(free_mask):
+            if is_free and start_idx is None:
+                start_idx = idx
+            elif not is_free and start_idx is not None:
+                end_idx = idx - 1
+                theta_start = float(sub_angles[start_idx])
+                theta_end = float(sub_angles[end_idx])
+                if (theta_end - theta_start) >= self.ogds_gap_min_width:
+                    gap_distance = float(np.nanmedian(sub_scan[start_idx : end_idx + 1]))
+                    gaps.append((theta_start, theta_end, gap_distance))
+                start_idx = None
+
+        # 末尾区间收尾
+        if start_idx is not None:
+            theta_start = float(sub_angles[start_idx])
+            theta_end = float(sub_angles[-1])
+            if (theta_end - theta_start) >= self.ogds_gap_min_width:
+                gap_distance = float(np.nanmedian(sub_scan[start_idx:]))
+                gaps.append((theta_start, theta_end, gap_distance))
+
+        return gaps
+
+    def _generate_ogds_candidates(
+        self,
+        *,
+        laser_scan: np.ndarray,
+        goal_distance: float,
+        goal_cos: float,
+        goal_sin: float,
+        robot_pose: np.ndarray,
+    ) -> Tuple[List[dict], Optional[int], Optional[float]]:
+        """生成基于目标–间隙引导的候选子目标集合。"""
+
+        theta_goal = math.atan2(goal_sin, goal_cos)
+        gaps = self._extract_gaps_from_lidar(laser_scan)
+
+        candidate_info: List[dict] = []
+        active_window_radius: Optional[float] = None
+
+        base_radius = max(float(self.planner_config.window_radius), 0.3)
+
+        if not gaps:
+            base_distance = float(np.clip(goal_distance, self.ogds_min_distance, self.ogds_max_distance))
+            world_xy = self._relative_to_world(robot_pose, base_distance, theta_goal)
+            candidate_info.append(
+                {
+                    "index": None,
+                    "window": None,
+                    "position": world_xy,
+                    "distance": base_distance,
+                    "angle": theta_goal,
+                    "radius": base_radius,
+                }
+            )
+            return candidate_info, None, base_radius
+
+        weights: List[float] = []
+        sigma = max(self.ogds_front_angle, 1e-3)
+        for theta_start, theta_end, gap_distance in gaps:
+            theta_center = 0.5 * (theta_start + theta_end)
+            delta_goal = theta_center - theta_goal
+            width = max(theta_end - theta_start, 1e-6)
+            distance_term = max(min(gap_distance, self.ogds_max_distance), self.ogds_min_distance)
+            weight = width * math.exp(-(delta_goal ** 2) / (sigma ** 2)) * distance_term
+            weights.append(weight)
+
+        total_weight = float(sum(weights))
+        if total_weight <= 0.0:
+            weights = [1.0 for _ in gaps]
+            total_weight = float(len(gaps))
+
+        num_candidates = max(1, int(self.ogds_num_candidates))
+        counts = [1 for _ in gaps]
+        remaining = num_candidates - len(gaps)
+        if remaining > 0:
+            probabilities = np.asarray(weights, dtype=np.float32) / total_weight
+            expected = probabilities * float(remaining)
+            floor_counts = np.floor(expected).astype(int)
+            counts = [c + int(f) for c, f in zip(counts, floor_counts)]
+            allocated = int(floor_counts.sum())
+            leftover = remaining - allocated
+            if leftover > 0:
+                order = list(np.argsort(-probabilities))
+                for idx in order[:leftover]:
+                    counts[int(idx)] += 1
+
+        for (theta_start, theta_end, gap_distance), gap_count in zip(gaps, counts):
+            if gap_count <= 0:
+                continue
+            step = (theta_end - theta_start) / float(gap_count + 1)
+            for i in range(gap_count):
+                theta = theta_start + step * float(i + 1)
+                distance = min(gap_distance * 0.7, self.ogds_max_distance)
+                distance = float(np.clip(distance, self.ogds_min_distance, self.ogds_max_distance))
+                distance = min(distance, float(goal_distance)) if np.isfinite(goal_distance) else distance
+                world_xy = self._relative_to_world(robot_pose, distance, theta)
+                candidate_info.append(
+                    {
+                        "index": None,
+                        "window": None,
+                        "position": world_xy,
+                        "distance": distance,
+                        "angle": theta,
+                        "radius": base_radius,
+                    }
+                )
+
+        if candidate_info:
+            active_window_radius = float(np.mean([entry.get("radius", base_radius) for entry in candidate_info]))
+
+        return candidate_info, None, active_window_radius
 
     def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, waypoints=None, robot_pose=None):
         """构造高层规划器训练所需的状态向量"""
@@ -913,6 +1074,14 @@ class HighLevelPlanner:
             if candidate_info:
                 active_window_index = candidate_info[0]["index"]  # 活动窗口索引
                 active_window_radius = candidate_info[0]["radius"]  # 活动窗口半径
+        elif robot_pose is not None:
+            candidate_info, active_window_index, active_window_radius = self._generate_ogds_candidates(
+                laser_scan=np.asarray(laser_scan, dtype=np.float32),
+                goal_distance=float(goal_distance),
+                goal_cos=float(goal_cos),
+                goal_sin=float(goal_sin),
+                robot_pose=np.asarray(robot_pose, dtype=np.float32),
+            )
 
         selected_index = None  # 选择的索引
         final_distance: float  # 最终距离

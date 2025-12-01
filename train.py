@@ -568,13 +568,7 @@ def main(args=None):
     print(f"   • Max steps per episode: {config.max_steps}")  # 每情节最大步数
     print(f"   • Train every {config.train_every_n_episodes} episodes")  # 训练频率
     print(f"   • World file: {world_path}")  # 世界文件路径
-    print(
-        "   • Global planner: res={:.2f} m, margin={:.2f} m, lookahead={}".format(  # 全局规划器参数
-            config.global_plan_resolution,  # 分辨率
-            config.global_plan_margin,  # 安全边界
-            config.waypoint_lookahead,  # 前瞻航点数
-        )
-    )
+    print("   • Global planner: disabled (mapless mode)")  # 全局规划器关闭，启用无图导航
     if config.save_every > 0:  # 如果设置了保存频率
         print(f"   • Save models every {config.save_every} episodes")  # 保存模型频率
     else:
@@ -586,10 +580,10 @@ def main(args=None):
     system = HierarchicalNavigationSystem(  # 创建分层导航系统
         device=device,  # 设备
         subgoal_threshold=config.subgoal_radius,  # 子目标阈值
-        world_file=world_path,  # 世界文件
-        global_plan_resolution=config.global_plan_resolution,  # 全局规划分辨率
-        global_plan_margin=config.global_plan_margin,  # 全局规划安全边界
-        waypoint_lookahead=config.waypoint_lookahead,  # 航点前瞻数量
+        world_file=None,  # Mapless 模式：不创建全局规划器
+        global_plan_resolution=config.global_plan_resolution,  # 保留参数以兼容接口
+        global_plan_margin=config.global_plan_margin,  # 保留参数以兼容接口
+        waypoint_lookahead=config.waypoint_lookahead,  # 航点前瞻数量（对 mapless 分支无影响）
         integration_config=integration_config,  # 集成配置
     )
     replay_buffer = TD3ReplayAdapter(  # 创建回放缓冲区适配器
@@ -637,7 +631,8 @@ def main(args=None):
 
         robot_pose = get_robot_pose(sim)  # 获取机器人位姿
         episode_goal_pose = get_goal_pose(sim)  # 获取情节目标位姿
-        system.plan_global_route(robot_pose, episode_goal_pose, force=True)  # 强制规划全局路径
+        # Mapless 模式下不生成全局路径；调用会立即返回空航点
+        system.plan_global_route(robot_pose, episode_goal_pose, force=True)
 
         steps = 0  # 步数计数器
         episode_reward = 0.0  # 情节奖励
@@ -647,7 +642,8 @@ def main(args=None):
         # ========== 单次情节循环 ==========
         while not done and steps < config.max_steps:  # 当未终止且未超时时循环
             robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-            system.plan_global_route(robot_pose, episode_goal_pose)  # 规划全局路径
+            # Mapless 模式：全局规划器为空，调用将直接返回
+            system.plan_global_route(robot_pose, episode_goal_pose)
             active_waypoints = system.get_active_waypoints(robot_pose, include_indices=True)  # 获取活动航点
             window_metrics = system.update_window_state(robot_pose, active_waypoints)  # 更新窗口状态
             waypoint_sequence = active_waypoints  # 航点序列
