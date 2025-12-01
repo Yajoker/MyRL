@@ -289,6 +289,21 @@ class HierarchicalNavigationSystem:
         self.high_level_planner.reset_subgoal_hidden()  # 清空子目标网络隐状态
         self._cached_window_info = {}
 
+    # ------------------------------------------------------------------
+    # 兼容旧接口的空实现（mapless 模式下不会使用全局航点/窗口）
+    # ------------------------------------------------------------------
+    def plan_global_route(self, *_, **__):
+        """为兼容性保留的占位方法：mapless 模式下不执行任何操作。"""
+        return []
+
+    def get_active_waypoints(self, *_, **__):
+        """为兼容性保留的占位方法：返回空列表以避免 AttributeError。"""
+        return []
+
+    def update_window_state(self, *_, **__):
+        """为兼容性保留的占位方法：返回空 dict 以保持调用方稳定。"""
+        return {}
+
 
 def create_navigation_system(
         load_models: bool = False,
