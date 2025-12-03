@@ -6,11 +6,11 @@ import numpy as np
 import torch
 
 # 导入自定义模块
-from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, TrainingConfig
+from config import ConfigBundle, HighLevelCostConfig, HighLevelRewardConfig, LowLevelRewardConfig, TrainingConfig
 from integration import HierarchicalNavigationSystem
-from rewards import compute_high_level_reward, compute_low_level_reward
+from rewards import compute_high_level_reward, compute_low_level_reward, compute_step_safety_cost
 from robot_nav.SIM_ENV.sim import SIM
-from replay_buffer import ReplayBuffer
+from replay_buffer import HighLevelReplayBuffer, ReplayBuffer
 
 
 @dataclass
@@ -32,6 +32,8 @@ class SubgoalContext:
     base_distance: Optional[float] = None  # Safety-Critic几何：锚点距离
     base_angle: Optional[float] = None  # Safety-Critic几何：锚点角度
     anchor_radius: Optional[float] = None  # Safety-Critic几何：窗口半径
+    short_cost_sum: float = 0.0  # 短期安全成本累计
+    near_obstacle_steps: int = 0  # 近障碍步数
 
 
 def compute_subgoal_world(robot_pose: Tuple[float, float, float], distance: float, angle: float) -> np.ndarray:
@@ -54,13 +56,15 @@ def compute_subgoal_world(robot_pose: Tuple[float, float, float], distance: floa
 
 def finalize_subgoal_transition(
     context: Optional[SubgoalContext],
-    buffer: List[Tuple[np.ndarray, np.ndarray, float, np.ndarray, float]],
+    buffer,
     high_cfg: HighLevelRewardConfig,
+    high_cost_cfg: HighLevelCostConfig,
+    danger_distance: float,
     done: bool,
     reached_goal: bool,
     collision: bool,
     timed_out: bool,
-) -> Optional[Tuple[dict, Optional[Tuple[np.ndarray, np.ndarray, float]]]]:
+) -> Optional[Tuple[dict, Optional[Tuple[Tuple[np.ndarray, np.ndarray, float], Tuple[np.ndarray, np.ndarray, float]]]]]:
     """结束当前子目标并生成高层训练样本.
 
     Args:
@@ -107,17 +111,16 @@ def finalize_subgoal_transition(
     )
 
     # 将经验添加到缓冲区
-    buffer.append(  # 向缓冲区添加经验元组
-        (
-            context.start_state.astype(np.float32, copy=False),  # 开始状态
-            context.action.astype(np.float32, copy=False),  # 子目标动作
-            float(reward),  # 奖励值
-            last_state.astype(np.float32, copy=False),  # 结束状态
-            float(done),  # 终止标志
-        )
+    buffer.add(
+        context.start_state.astype(np.float32, copy=False),
+        context.action.astype(np.float32, copy=False),
+        float(reward),
+        float(done),
+        last_state.astype(np.float32, copy=False),
     )
 
     risk_sample: Optional[Tuple[np.ndarray, np.ndarray, float]] = None  # 风险样本初始化为None
+    cost_sample: Optional[Tuple[np.ndarray, np.ndarray, float]] = None
 
     target_distance = context.min_dmin  # 目标距离为最小障碍距离
     if collision or context.collision_occurred:  # 如果发生碰撞
@@ -132,18 +135,31 @@ def finalize_subgoal_transition(
         )
         anchor_radius = float(context.anchor_radius) if context.anchor_radius is not None else 0.0  # 锚点半径
         subgoal_geom = np.array([base_distance, base_angle, anchor_radius], dtype=np.float32)  # 子目标几何信息
-        risk_sample = (  # 创建风险样本
-            context.start_state.astype(np.float32, copy=False),  # 开始状态
-            subgoal_geom,  # 子目标几何信息
-            float(target_distance),  # 目标距离
+        risk_sample = (
+            context.start_state.astype(np.float32, copy=False),
+            subgoal_geom,
+            float(target_distance),
         )
 
-    return components, risk_sample  # 返回奖励组件和风险样本
+        # 长期成本标签：碰撞成本 + 近障碍步数成本
+        cost_value = (
+            high_cost_cfg.lambda_col * float(collision_flag)
+            + high_cost_cfg.lambda_near * float(context.near_obstacle_steps)
+        )
+        if context.short_cost_sum:
+            cost_value = float(context.short_cost_sum)
+        cost_sample = (
+            context.start_state.astype(np.float32, copy=False),
+            subgoal_geom,
+            float(cost_value),
+        )
+
+    return components, (risk_sample, cost_sample)
 
 
 def maybe_train_high_level(
     planner,
-    buffer: List[Tuple[np.ndarray, np.ndarray, float, np.ndarray, float]],
+    buffer: HighLevelReplayBuffer,
     batch_size: int,
 ) -> Optional[dict]:
     """当缓存样本足够时触发一次高层更新.
@@ -157,20 +173,10 @@ def maybe_train_high_level(
         训练指标字典或None
     """
 
-    # 检查缓冲区是否足够
-    if len(buffer) < batch_size:  # 如果缓冲区样本数小于批次大小
-        return None  # 返回None
+    if buffer.size() < batch_size:
+        return None
 
-    # 提取批次数据
-    batch = buffer[:batch_size]  # 取前batch_size个样本
-    del buffer[:batch_size]  # 移除已使用的样本
-
-    # 组织批次数据
-    states = np.stack([entry[0] for entry in batch])  # 堆叠状态
-    actions = np.stack([entry[1] for entry in batch])  # 堆叠动作
-    rewards = np.array([entry[2] for entry in batch], dtype=np.float32)  # 奖励数组
-    next_states = np.stack([entry[3] for entry in batch])  # 下一状态数组
-    dones = np.array([entry[4] for entry in batch], dtype=np.float32)  # 终止标志数组
+    states, actions, rewards, dones, next_states = buffer.sample(batch_size)
 
     # 更新规划器
     metrics = planner.update_planner(states, actions, rewards, dones, next_states, batch_size=batch_size)  # 更新高层规划器
@@ -588,7 +594,9 @@ def main(args=None):
     # 奖励配置初始化
     low_reward_cfg = bundle.low_level_reward  # 低层奖励配置
     high_reward_cfg = bundle.high_level_reward  # 高层奖励配置
-    high_level_buffer: List[Tuple[np.ndarray, np.ndarray, float, np.ndarray, float]] = []  # 高层缓冲区
+    trigger_cfg = integration_config.trigger
+    high_cost_cfg = bundle.high_level_cost  # 高层成本配置
+    high_level_buffer = HighLevelReplayBuffer(buffer_size=config.buffer_size, random_seed=config.random_seed or 666)
     current_subgoal_context: Optional[SubgoalContext] = None  # 当前子目标上下文
 
     # ========== 主训练循环 ==========
@@ -640,18 +648,27 @@ def main(args=None):
                     current_subgoal_context,  # 当前子目标上下文
                     high_level_buffer,  # 高层缓冲区
                     high_reward_cfg,  # 高层奖励配置
+                    high_cost_cfg,
+                    trigger_cfg.safety_trigger_distance,
                     done=False,  # 未终止
                     reached_goal=False,  # 未到达目标
                     collision=False,  # 未碰撞
                     timed_out=False,  # 未超时
                 )
                 if finalize_result is not None:  # 如果有结果
-                    finalize_components, risk_sample = finalize_result  # 解包结果
-                    if risk_sample is not None:  # 如果有风险样本
-                        system.high_level_planner.store_safety_sample(*risk_sample)  # 存储安全样本
-                        system.high_level_planner.maybe_update_safety_critic(  # 可能更新安全评估器
-                            batch_size=safety_cfg.update_batch_size  # 批次大小
-                        )
+                    finalize_components, risk_and_cost_samples = finalize_result  # 解包结果
+                    if risk_and_cost_samples is not None:
+                        risk_sample, cost_sample = risk_and_cost_samples
+                        if risk_sample is not None:  # 如果有风险样本
+                            system.high_level_planner.store_safety_sample(*risk_sample)  # 存储安全样本
+                            system.high_level_planner.maybe_update_safety_critic(  # 可能更新安全评估器
+                                batch_size=safety_cfg.update_batch_size  # 批次大小
+                            )
+                        if cost_sample is not None:
+                            system.high_level_planner.store_cost_sample(*cost_sample)
+                            system.high_level_planner.maybe_update_cost_critic(
+                                batch_size=high_cost_cfg.update_batch_size
+                            )
                     metrics = maybe_train_high_level(  # 可能训练高层
                         system.high_level_planner,  # 高层规划器
                         high_level_buffer,  # 高层缓冲区
@@ -822,6 +839,16 @@ def main(args=None):
                     current_subgoal_context.min_dmin,
                     min_obstacle_distance,
                 )
+                step_cost = compute_step_safety_cost(
+                    min_obstacle_distance,
+                    collision,
+                    lambda_col=high_cost_cfg.lambda_col,
+                    lambda_near=high_cost_cfg.lambda_near,
+                    danger_distance=trigger_cfg.safety_trigger_distance,
+                )
+                current_subgoal_context.short_cost_sum += step_cost
+                if min_obstacle_distance <= trigger_cfg.safety_trigger_distance:
+                    current_subgoal_context.near_obstacle_steps += 1
                 if collision:  # 如果碰撞
                     current_subgoal_context.collision_occurred = True  # 标记碰撞发生
 
@@ -914,22 +941,31 @@ def main(args=None):
         timed_out_episode = not goal and not collision and steps >= config.max_steps  # 超时情节判断
 
         # 完成最后一个子目标
-        finalize_result = finalize_subgoal_transition(  # 完成子目标转换
-            current_subgoal_context,  # 当前子目标上下文
-            high_level_buffer,  # 高层缓冲区
-            high_reward_cfg,  # 高层奖励配置
-            done=True,  # 终止
-            reached_goal=goal,  # 到达目标
-            collision=collision,  # 碰撞
-            timed_out=timed_out_episode,  # 超时
-        )
+    finalize_result = finalize_subgoal_transition(  # 完成子目标转换
+        current_subgoal_context,  # 当前子目标上下文
+        high_level_buffer,  # 高层缓冲区
+        high_reward_cfg,  # 高层奖励配置
+        high_cost_cfg,
+        trigger_cfg.safety_trigger_distance,
+        done=True,  # 终止
+        reached_goal=goal,  # 到达目标
+        collision=collision,  # 碰撞
+        timed_out=timed_out_episode,  # 超时
+    )
         if finalize_result is not None:  # 如果有结果
-            finalize_components, risk_sample = finalize_result  # 解包结果
-            if risk_sample is not None:  # 如果有风险样本
-                system.high_level_planner.store_safety_sample(*risk_sample)  # 存储安全样本
-                system.high_level_planner.maybe_update_safety_critic(  # 可能更新安全评估器
-                    batch_size=safety_cfg.update_batch_size  # 批次大小
-                )
+            finalize_components, risk_and_cost_samples = finalize_result  # 解包结果
+            if risk_and_cost_samples is not None:
+                risk_sample, cost_sample = risk_and_cost_samples
+                if risk_sample is not None:  # 如果有风险样本
+                    system.high_level_planner.store_safety_sample(*risk_sample)  # 存储安全样本
+                    system.high_level_planner.maybe_update_safety_critic(  # 可能更新安全评估器
+                        batch_size=safety_cfg.update_batch_size  # 批次大小
+                    )
+                if cost_sample is not None:
+                    system.high_level_planner.store_cost_sample(*cost_sample)
+                    system.high_level_planner.maybe_update_cost_critic(
+                        batch_size=high_cost_cfg.update_batch_size
+                    )
             metrics = maybe_train_high_level(  # 可能训练高层
                 system.high_level_planner,  # 高层规划器
                 high_level_buffer,  # 高层缓冲区

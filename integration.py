@@ -80,6 +80,7 @@ class HierarchicalNavigationSystem:
             trigger_config=trigger_cfg,  # 触发器配置
             planner_config=planner_cfg,  # 规划器配置
             safety_config=safety_cfg,  # 安全评估配置
+            high_level_cost_config=self._integration_config.high_level_cost,  # 长期成本配置
         )
 
         # 初始化低层控制器（负责执行动作）
@@ -106,6 +107,7 @@ class HierarchicalNavigationSystem:
         self.subgoal_threshold = subgoal_threshold  # 子目标到达阈值
         self.waypoint_lookahead = waypoint_lookahead  # 航点前瞻数量
         self._cached_window_info: Dict[str, object] = {}  # 占位，保持接口兼容
+        self.last_linear_velocity: float = 0.0
 
     def step(self, laser_scan, goal_distance, goal_cos, goal_sin, robot_pose, goal_position=None):
         """
@@ -157,6 +159,7 @@ class HierarchicalNavigationSystem:
                 current_step=self.step_count,  # 当前步数
                 waypoints=None,  # 航点候选（mapless模式）
                 window_metrics=None,  # 窗口指标
+                current_speed=self.last_linear_velocity,  # 近期执行的线速度
             )
             planner_world = self.high_level_planner.current_subgoal_world  # 规划器中的子目标世界坐标
             self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world,
@@ -218,6 +221,8 @@ class HierarchicalNavigationSystem:
             angular_velocity,  # 角速度
             laser_scan,  # 激光数据
         )
+
+        self.last_linear_velocity = float(linear_velocity)
 
         # 记录当前动作（用于下一次输入）
         self.prev_env_action = [linear_velocity, angular_velocity]
