@@ -140,9 +140,31 @@ def compute_high_level_reward(
     return float(total_reward), components
 
 
+# ================================================================
+#  短期安全成本计算（供高层成本/安全统计使用）
+# ================================================================
+def compute_step_safety_cost(
+    min_obstacle_distance: float,
+    collision: bool,
+    *,
+    lambda_col: float,
+    lambda_near: float,
+    danger_distance: float,
+) -> float:
+    """Compute the per-step safety cost used by SEN/CostCritic supervision."""
+
+    cost = 0.0
+    if collision:
+        cost += float(lambda_col)
+    if min_obstacle_distance <= danger_distance:
+        cost += float(lambda_near)
+    return float(cost)
+
+
 __all__ = [
     "LowLevelRewardConfig",
     "HighLevelRewardConfig",
     "compute_low_level_reward",
     "compute_high_level_reward",
+    "compute_step_safety_cost",
 ]

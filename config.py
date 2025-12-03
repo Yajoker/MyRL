@@ -164,6 +164,9 @@ class SafetyCriticConfig:
     max_buffer_size: int = 4096                      # Safety-Critic样本缓冲区最大容量
     target_clip_min: float = 0.0                     # 风险监督目标的最小裁剪值
     target_clip_max: float = 6.0                     # 风险监督目标的最大裁剪值
+    short_horizon: int = 20                          # rollout 步数 H（解释短期安全标签）
+    safe_distance_base: float = 0.5                  # d0：基础安全距离
+    safe_distance_kv: float = 0.5                    # kv：速度相关的安全距离增量
 
     def __post_init__(self) -> None:  # type: ignore[override]
         if self.progress_weight < 0:
@@ -184,6 +187,21 @@ class SafetyCriticConfig:
             raise ValueError("target_clip_min must be non-negative")
         if self.target_clip_max <= self.target_clip_min:
             raise ValueError("target_clip_max must be greater than target_clip_min")
+
+
+@dataclass(frozen=True)
+class HighLevelCostConfig:
+    """Configuration for the long-horizon high-level cost critic (Q_c^H)."""
+
+    gamma_H: float = 1.0
+    lambda_col: float = 1.0
+    lambda_near: float = 0.2
+    safe_cost_threshold: float = 2.0
+    aux_align_weight: float = 0.3
+    update_batch_size: int = 64
+    min_buffer_size: int = 256
+    max_buffer_size: int = 4096
+    lr: float = 1e-3
 
 
 @dataclass(frozen=True)
@@ -257,6 +275,7 @@ class IntegrationConfig:
     trigger: TriggerConfig = field(default_factory=TriggerConfig)                 # 触发配置
     planner: PlannerConfig = field(default_factory=PlannerConfig)                 # 规划器配置
     safety_critic: SafetyCriticConfig = field(default_factory=SafetyCriticConfig) # Safety-Critic配置
+    high_level_cost: HighLevelCostConfig = field(default_factory=HighLevelCostConfig)  # 长期成本Critic配置
     low_level_reward: LowLevelRewardConfig = field(default_factory=LowLevelRewardConfig)  # 低层奖励配置
     high_level_reward: HighLevelRewardConfig = field(default_factory=HighLevelRewardConfig)  # 高层奖励配置
     training: TrainingConfig = field(default_factory=TrainingConfig)              # 训练配置
@@ -268,6 +287,7 @@ class IntegrationConfig:
         trigger: TriggerConfig | None = None,
         planner: PlannerConfig | None = None,
         safety_critic: SafetyCriticConfig | None = None,
+        high_level_cost: HighLevelCostConfig | None = None,
         low_level_reward: LowLevelRewardConfig | None = None,
         high_level_reward: HighLevelRewardConfig | None = None,
         training: TrainingConfig | None = None,
@@ -279,6 +299,7 @@ class IntegrationConfig:
             trigger=trigger or self.trigger,
             planner=planner or self.planner,
             safety_critic=safety_critic or self.safety_critic,
+            high_level_cost=high_level_cost or self.high_level_cost,
             low_level_reward=low_level_reward or self.low_level_reward,
             high_level_reward=high_level_reward or self.high_level_reward,
             training=training or self.training,
@@ -319,6 +340,11 @@ class ConfigBundle:
         """便捷属性：直接访问安全评估模型配置"""
         return self.integration.safety_critic
 
+    @property
+    def high_level_cost(self) -> HighLevelCostConfig:
+        """便捷属性：直接访问高层成本评估配置"""
+        return self.integration.high_level_cost
+
 
 # 模块导出列表
 __all__ = [
@@ -327,6 +353,7 @@ __all__ = [
     "TriggerConfig",
     "PlannerConfig",
     "SafetyCriticConfig",
+    "HighLevelCostConfig",
     "LowLevelRewardConfig",
     "HighLevelRewardConfig",
     "TrainingConfig",

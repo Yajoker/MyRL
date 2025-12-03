@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from config import PlannerConfig, SafetyCriticConfig, TriggerConfig
+from config import HighLevelCostConfig, PlannerConfig, SafetyCriticConfig, TriggerConfig
 
 
 class SubgoalNetwork(nn.Module):
@@ -179,6 +179,48 @@ class SafetyCritic(nn.Module):
         return risk.squeeze(-1)  # 去掉最后一维
 
 
+class CostCritic(nn.Module):
+    """Long-horizon cost critic predicting cumulative safety cost for a subgoal."""
+
+    def __init__(self, belief_dim=90, goal_info_dim=3, geom_dim=3, hidden_dim=192):
+        super().__init__()
+
+        self.cnn1 = nn.Conv1d(1, 8, kernel_size=5, stride=2)
+        self.cnn2 = nn.Conv1d(8, 16, kernel_size=3, stride=2)
+        self.cnn3 = nn.Conv1d(16, 8, kernel_size=3, stride=1)
+
+        self.goal_embed = nn.Linear(goal_info_dim, 64)
+        self.subgoal_embed = nn.Linear(geom_dim, 16)
+
+        cnn_output_dim = self._get_cnn_output_dim(belief_dim)
+        self.fc1 = nn.Linear(cnn_output_dim + 64 + 16, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.output_head = nn.Linear(hidden_dim // 2, 1)
+
+    def _get_cnn_output_dim(self, belief_dim: int) -> int:
+        x = torch.zeros(1, 1, belief_dim)
+        x = self.cnn1(x)
+        x = self.cnn2(x)
+        x = self.cnn3(x)
+        return x.numel()
+
+    def forward(self, belief_state, goal_info, subgoal_geom):
+        laser = belief_state.unsqueeze(1)
+        x = F.relu(self.cnn1(laser))
+        x = F.relu(self.cnn2(x))
+        x = F.relu(self.cnn3(x))
+        x = x.flatten(start_dim=1)
+
+        g = F.relu(self.goal_embed(goal_info))
+        geom = F.relu(self.subgoal_embed(subgoal_geom))
+
+        combined = torch.cat((x, g, geom), dim=1)
+        x = F.relu(self.fc1(combined))
+        x = F.relu(self.fc2(x))
+        cost = F.softplus(self.output_head(x))
+        return cost.squeeze(-1)
+
+
 class EventTrigger:
     """事件触发器类，基于多种条件决定何时生成新子目标"""
 
@@ -255,6 +297,30 @@ class EventTrigger:
         if np.isnan(min_obstacle_dist):  # 检查距离是否为NaN
             return False
         return min_obstacle_dist <= self.safety_trigger_distance  # 距离小于等于安全阈值则触发
+
+    def subgoal_reached(self, dist_to_subgoal: Optional[float]) -> bool:
+        """是否已经进入子目标半径内。"""
+
+        return dist_to_subgoal is not None and dist_to_subgoal <= self.subgoal_reach_threshold
+
+    def global_progress_stagnant(self, goal_distance: float, current_step: int) -> bool:
+        """检测全局进展停滞：长时间未取得显著距离改进。"""
+
+        if not np.isfinite(goal_distance):
+            return False
+
+        epsilon = max(self.progress_epsilon, self._config.progress_epsilon_ratio * goal_distance)
+        if self.best_goal_distance is None:
+            self.best_goal_distance = goal_distance
+            self.last_progress_step = current_step
+            return False
+
+        if goal_distance + epsilon < self.best_goal_distance:
+            self.best_goal_distance = goal_distance
+            self.last_progress_step = current_step
+            return False
+
+        return (current_step - self.last_progress_step) >= self.stagnation_steps
 
     def reset_progress(self, goal_distance: float, current_step: int) -> None:
         """在生成新子目标时重置进度基准。"""
@@ -386,6 +452,7 @@ class HighLevelPlanner:
         trigger_config: Optional[TriggerConfig] = None,
         planner_config: Optional[PlannerConfig] = None,
         safety_config: Optional[SafetyCriticConfig] = None,
+        high_level_cost_config: Optional[HighLevelCostConfig] = None,
         rwr_temperature: float = 2.0,
         rwr_min_temperature: float = 0.4,
         rwr_temperature_decay: float = 0.999,
@@ -409,6 +476,7 @@ class HighLevelPlanner:
         trigger_cfg = trigger_config or TriggerConfig()  # 触发器配置
         planner_cfg = planner_config or PlannerConfig()  # 规划器配置
         self.safety_config = safety_config or SafetyCriticConfig()  # 安全评估配置
+        self.cost_config = high_level_cost_config or HighLevelCostConfig()
         self.planner_config = planner_cfg
 
         # 设置参数，优先使用传入参数，否则使用配置默认值
@@ -458,11 +526,19 @@ class HighLevelPlanner:
         self.optimizer = torch.optim.Adam(self.subgoal_network.parameters(), lr=3e-4)  # Adam优化器
         self.safety_optimizer = torch.optim.Adam(self.safety_critic.parameters(), lr=3e-4)  # 安全评估优化器
         self.safety_loss_fn = nn.MSELoss()  # 安全评估损失函数
+        self.cost_critic = CostCritic(
+            belief_dim=belief_dim,
+            goal_info_dim=self.goal_feature_dim,
+        ).to(self.device)
+        self.cost_optimizer = torch.optim.Adam(self.cost_critic.parameters(), lr=self.cost_config.lr)
         self.writer = SummaryWriter(comment=model_name)  # TensorBoard记录器，用于可视化训练过程
         self.iter_count = 0  # 迭代计数器，记录训练步数
         self.safety_update_count = 0  # 安全评估更新计数
         self.safety_sample_count = 0  # 安全评估样本计数
         self._safety_buffer: List[Tuple[np.ndarray, np.ndarray, float]] = []  # 安全评估样本缓冲区
+        self._cost_buffer: List[Tuple[np.ndarray, np.ndarray, float]] = []
+        self.cost_sample_count = 0
+        self.cost_update_count = 0
         self.model_name = model_name  # 模型名称
         self.save_directory = save_directory  # 保存目录
 
@@ -974,6 +1050,83 @@ class HighLevelPlanner:
             'safety_target_mean': avg_target,  # 平均目标值
         }
 
+    def store_cost_sample(self, state_vector: np.ndarray, subgoal_geom: np.ndarray, cost: float) -> None:
+        """缓存一次长期成本监督样本。"""
+
+        state_arr = np.asarray(state_vector, dtype=np.float32)
+        geom_arr = np.asarray(subgoal_geom, dtype=np.float32)
+        clipped_cost = float(np.clip(cost, 0.0, np.finfo(np.float32).max))
+        self._cost_buffer.append((state_arr, geom_arr, clipped_cost))
+        self.cost_sample_count += 1
+
+        overflow = len(self._cost_buffer) - self.cost_config.max_buffer_size
+        if overflow > 0:
+            del self._cost_buffer[:overflow]
+
+    def maybe_update_cost_critic(self, batch_size: Optional[int] = None) -> Optional[dict]:
+        """在样本足够时执行一次长期成本 Critic 的更新。"""
+
+        batch = batch_size or self.cost_config.update_batch_size
+        required = max(self.cost_config.min_buffer_size, batch)
+        if len(self._cost_buffer) < required:
+            return None
+
+        samples = self._cost_buffer[:batch]
+        del self._cost_buffer[:batch]
+
+        states = np.stack([entry[0] for entry in samples])
+        geoms = np.stack([entry[1] for entry in samples])
+        costs = np.array([entry[2] for entry in samples], dtype=np.float32)
+        return self.update_cost_critic(states, geoms, costs)
+
+    def update_cost_critic(self, states: np.ndarray, subgoal_geoms: np.ndarray, targets: np.ndarray) -> dict:
+        """优化长期成本 Critic，使其拟合子目标周期内的累计安全成本。"""
+
+        self.cost_critic.train()
+
+        tensor_states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+        tensor_geoms = torch.as_tensor(subgoal_geoms, dtype=torch.float32, device=self.device)
+        tensor_targets = torch.as_tensor(targets, dtype=torch.float32, device=self.device)
+
+        goal_feature_dim = self.goal_feature_dim
+        laser_dim = tensor_states.shape[1] - goal_feature_dim
+        laser_scans = tensor_states[:, :laser_dim]
+        goal_info = tensor_states[:, laser_dim:]
+
+        preds = self.cost_critic(laser_scans, goal_info, tensor_geoms)
+
+        with torch.no_grad():
+            safety_preds = self.safety_critic(laser_scans, goal_info, tensor_geoms)
+
+        loss_main = F.mse_loss(preds, tensor_targets)
+        loss_aux = self.cost_config.aux_align_weight * F.mse_loss(preds, safety_preds)
+        loss = loss_main + loss_aux
+
+        self.cost_optimizer.zero_grad()
+        loss.backward()
+        self.cost_optimizer.step()
+
+        self.cost_update_count += 1
+        return {
+            "cost_loss": float(loss.item()),
+            "cost_loss_main": float(loss_main.item()),
+            "cost_loss_aux": float(loss_aux.item()),
+            "update_step": self.cost_update_count,
+        }
+
+    def predict_long_term_cost(self, laser_tensor, goal_tensor, geom_tensor) -> float:
+        """推理阶段预测长期安全成本。"""
+
+        if self.cost_sample_count < self.cost_config.min_buffer_size:
+            return 0.0
+
+        self.cost_critic.eval()
+        with torch.no_grad():
+            cost_pred = self.cost_critic(
+                laser_tensor.unsqueeze(0), goal_tensor.unsqueeze(0), geom_tensor.unsqueeze(0)
+            )
+        return float(cost_pred.item())
+
     def predict_safety_risk(self, laser_tensor: torch.Tensor, goal_tensor: torch.Tensor, subgoal_geom: Sequence[float]) -> float:
         """基于当前状态与候选子目标预测未来风险距离值。"""
 
@@ -1028,6 +1181,18 @@ class HighLevelPlanner:
 
         return deficit + normalised  # 返回风险惩罚值
 
+    def _is_short_safe(self, predicted_distance: float, current_speed: float = 0.0) -> bool:
+        """Check whether predicted clearance satisfies the dynamic SEN threshold."""
+
+        threshold = self.safety_config.safe_distance_base + self.safety_config.safe_distance_kv * abs(
+            float(current_speed)
+        )
+        if math.isnan(predicted_distance):
+            return False
+        if math.isinf(predicted_distance):
+            return True
+        return float(predicted_distance) >= threshold
+
     def check_triggers(
         self,
         laser_scan,
@@ -1073,18 +1238,12 @@ class HighLevelPlanner:
         else:
             self.event_trigger.last_subgoal = None
 
-        # 核心触发条件检查
-        safe_trigger = self.event_trigger.safe_distance_trigger(min_obstacle_dist)  # 安全距离触发
-        progress_trigger = self.event_trigger.intelligent_progress_trigger(  # 智能进度触发
-            dist_to_subgoal=dist_to_subgoal,
-            current_step=current_step,
-            subgoal_angle=subgoal_angle,
-            laser_scan=laser_scan,
-            min_obstacle_dist=min_obstacle_dist,
-        )
+        safe_trigger = self.event_trigger.safe_distance_trigger(min_obstacle_dist)
+        progress_trigger = self.event_trigger.global_progress_stagnant(goal_distance, current_step)
+        subgoal_trigger = self.event_trigger.subgoal_reached(dist_to_subgoal)
 
-        # 最终触发决策：时间间隔满足 AND (安全触发 OR 进度触发)
-        trigger_new_subgoal = time_ready and (safe_trigger or progress_trigger)
+        # 最终触发决策：时间间隔满足 AND (安全/进度/到达 任一触发)
+        trigger_new_subgoal = time_ready and (safe_trigger or progress_trigger or subgoal_trigger)
 
         # 如果触发，重置时间计数器
         if trigger_new_subgoal:
@@ -1102,6 +1261,7 @@ class HighLevelPlanner:
         current_step: Optional[int] = None,
         waypoints=None,
         window_metrics: Optional[dict] = None,
+        current_speed: Optional[float] = None,
     ):
         """
         基于当前状态生成新子目标
@@ -1165,6 +1325,7 @@ class HighLevelPlanner:
 
         anchor_info = None  # 锚点信息
         scored_candidates: List[dict] = []  # 评分候选列表
+        speed_for_safety = float(current_speed) if current_speed is not None else 0.0
         if candidate_info:
             reachable: List[dict] = []  # 可达候选
             fallback: List[dict] = []  # 回退候选
@@ -1183,12 +1344,17 @@ class HighLevelPlanner:
 
             evaluated = reachable if reachable else fallback  # 优先使用可达候选
 
+            short_safe_candidates: List[dict] = []
+
             for info in evaluated:
                 radius = max(info.get("radius", 0.0), 1e-3)  # 半径
                 subgoal_geom = [float(info["distance"]), float(info["angle"]), float(radius)]  # 子目标几何信息
                 predicted_distance = self.predict_safety_risk(
                     laser_tensor, goal_tensor, subgoal_geom  # 预测风险距离
                 )
+                is_short_safe = self._is_short_safe(predicted_distance, speed_for_safety)
+                geom_tensor = torch.as_tensor(np.asarray(subgoal_geom, dtype=np.float32), device=self.device)
+                cost_val = self.predict_long_term_cost(laser_tensor, goal_tensor, geom_tensor)
                 risk_val = self._convert_distance_to_risk_penalty(predicted_distance)  # 风险值
                 progress_val = self._compute_progress_score(
                     float(info["distance"]), float(info["angle"]), float(radius)  # 进度得分
@@ -1196,16 +1362,26 @@ class HighLevelPlanner:
                 score_val = (
                     self.safety_config.progress_weight * progress_val  # 进度权重
                     - self.safety_config.risk_weight * risk_val  # 风险权重
+                    - self.cost_config.lambda_near * float(cost_val)
                 )
                 scored = dict(info)
                 scored["risk"] = float(risk_val)  # 风险值
                 scored["predicted_min_distance"] = float(predicted_distance)  # 预测最小距离
                 scored["progress"] = float(progress_val)  # 进度值
                 scored["score"] = float(score_val)  # 总分
+                scored["short_safe"] = bool(is_short_safe)
+                scored["long_cost"] = float(cost_val)
                 scored_candidates.append(scored)  # 添加到评分候选列表
+                if is_short_safe:
+                    short_safe_candidates.append(scored)
 
-            if scored_candidates:
-                anchor_info = max(scored_candidates, key=lambda entry: entry["score"])  # 选择得分最高的候选
+            preferred = short_safe_candidates if short_safe_candidates else scored_candidates
+            long_safe = [info for info in preferred if info.get("long_cost", 0.0) <= self.cost_config.safe_cost_threshold]
+            candidate_pool = long_safe if long_safe else preferred
+
+            if candidate_pool:
+                anchor_info = max(candidate_pool, key=lambda entry: entry["score"])  # 选择得分最高的候选
+                scored_candidates = candidate_pool
 
         # 找不到可行解就回退到原来的第一个候选
         if anchor_info is None and candidate_info:

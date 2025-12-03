@@ -6,6 +6,7 @@
 import random
 from collections import deque  # 双端队列，用于高效地添加和删除元素
 import itertools  # 迭代工具，用于高效循环操作
+from typing import Deque, Tuple
 
 import numpy as np
 
@@ -248,3 +249,56 @@ class RolloutReplayBuffer(object):
         """
         self.buffer.clear()  # 清空双端队列
         self.count = 0  # 重置回合计数器
+
+
+class HighLevelReplayBuffer:
+    """Simple replay buffer for high-level (state, action, reward, done, next_state) tuples."""
+
+    def __init__(self, buffer_size: int, random_seed: int = 666) -> None:
+        self._buffer: Deque[Tuple[np.ndarray, np.ndarray, float, float, np.ndarray]] = deque(maxlen=buffer_size)
+        random.seed(random_seed)
+
+    def add(self, state, action, reward, done, next_state) -> None:
+        state_arr = np.asarray(state, dtype=np.float32)
+        action_arr = np.asarray(action, dtype=np.float32)
+        next_state_arr = np.asarray(next_state, dtype=np.float32)
+        reward_val = float(reward)
+        done_val = float(done)
+        self._buffer.append((state_arr, action_arr, reward_val, done_val, next_state_arr))
+
+    def size(self) -> int:
+        return len(self._buffer)
+
+    def sample(self, batch_size: int):
+        batch = random.sample(self._buffer, min(batch_size, len(self._buffer)))
+        states = np.stack([entry[0] for entry in batch])
+        actions = np.stack([entry[1] for entry in batch])
+        rewards = np.array([entry[2] for entry in batch], dtype=np.float32)
+        dones = np.array([entry[3] for entry in batch], dtype=np.float32)
+        next_states = np.stack([entry[4] for entry in batch])
+        return states, actions, rewards, dones, next_states
+
+    def clear(self) -> None:
+        self._buffer.clear()
+
+
+class CostReplayBuffer:
+    """Replay buffer for long-horizon cost critic supervision."""
+
+    def __init__(self, max_size: int):
+        self._buffer: Deque[Tuple[np.ndarray, np.ndarray, float]] = deque(maxlen=max_size)
+
+    def add(self, state, geom, cost) -> None:
+        state_arr = np.asarray(state, dtype=np.float32)
+        geom_arr = np.asarray(geom, dtype=np.float32)
+        self._buffer.append((state_arr, geom_arr, float(cost)))
+
+    def sample(self, batch_size: int):
+        batch = random.sample(self._buffer, min(batch_size, len(self._buffer)))
+        states = np.stack([entry[0] for entry in batch])
+        geoms = np.stack([entry[1] for entry in batch])
+        costs = np.array([entry[2] for entry in batch], dtype=np.float32)
+        return states, geoms, costs
+
+    def __len__(self) -> int:
+        return len(self._buffer)
