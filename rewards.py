@@ -152,17 +152,16 @@ def compute_step_safety_cost(
     min_obstacle_distance: float,
     collision: bool,
     *,
-    lambda_col: float,
-    lambda_near: float,
+    config: HighLevelRewardConfig,
     danger_distance: float,
 ) -> float:
-    """Compute the per-step safety cost used by SEN/CostCritic supervision."""
+    """Compute the per-step safety cost using high-level reward weights."""
 
     cost = 0.0
     if collision:
-        cost += float(lambda_col)
+        cost += float(config.lambda_col)
     if min_obstacle_distance <= danger_distance:
-        cost += float(lambda_near)
+        cost += float(config.lambda_near)
     return float(cost)
 
 

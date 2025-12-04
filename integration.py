@@ -48,7 +48,6 @@ class HierarchicalNavigationSystem:
         motion_cfg = self._integration_config.motion  # 运动配置
         trigger_cfg = self._integration_config.trigger  # 触发器配置
         planner_cfg = self._integration_config.planner  # 规划器配置
-        safety_cfg = self._integration_config.safety_critic  # 安全评估配置
 
         # 将显式参数与集中配置结合
         if step_duration is None:
@@ -79,8 +78,6 @@ class HierarchicalNavigationSystem:
             waypoint_lookahead=waypoint_lookahead,  # 航点前瞻数量
             trigger_config=trigger_cfg,  # 触发器配置
             planner_config=planner_cfg,  # 规划器配置
-            safety_config=safety_cfg,  # 安全评估配置
-            high_level_cost_config=self._integration_config.high_level_cost,  # 长期成本配置
         )
 
         # 初始化低层控制器（负责执行动作）

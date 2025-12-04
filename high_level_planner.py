@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
-from config import HighLevelCostConfig, PlannerConfig, TriggerConfig
+from config import PlannerConfig, TriggerConfig
 
 
 class HighLevelValueNet(nn.Module):
@@ -171,11 +171,10 @@ class HighLevelPlanner:
         *,
         trigger_config: Optional[TriggerConfig] = None,
         planner_config: Optional[PlannerConfig] = None,
-        high_level_cost_config: Optional[HighLevelCostConfig] = None,
     ) -> None:
         trigger_cfg = trigger_config or TriggerConfig()
         planner_cfg = planner_config or PlannerConfig()
-        self.cost_config = high_level_cost_config or HighLevelCostConfig()
+        self.planner_config = planner_cfg
 
         if subgoal_reach_threshold is None:
             subgoal_reach_threshold = trigger_cfg.subgoal_reach_threshold
@@ -216,10 +215,13 @@ class HighLevelPlanner:
         self.last_goal_direction: float = 0.0
         self.subgoal_hidden = None
 
-        self.ogds_min_distance = planner_cfg.ogds_min_distance
-        self.ogds_max_distance = planner_cfg.ogds_max_distance
-        self.ogds_gap_min_width = planner_cfg.ogds_gap_min_width
-        self.ogds_num_candidates = planner_cfg.ogds_num_candidates
+        self.frontier_min_distance = planner_cfg.frontier_min_dist
+        self.frontier_max_distance = planner_cfg.frontier_max_dist
+        self.frontier_gap_min_width = planner_cfg.frontier_gap_min_width
+        self.frontier_num_candidates = planner_cfg.frontier_num_candidates
+        self.consistency_lambda = planner_cfg.consistency_lambda
+        self.consistency_sigma_r = planner_cfg.consistency_sigma_r
+        self.consistency_sigma_theta = planner_cfg.consistency_sigma_theta
 
         if load_model:
             load_dir = load_directory if load_directory else save_directory
@@ -331,12 +333,12 @@ class HighLevelPlanner:
     # ------------------------- 子目标生成 -------------------------
     def _generate_frontier_candidates(self, laser_scan: np.ndarray, goal_distance: float, goal_cos: float, goal_sin: float) -> List[Tuple[float, float]]:
         scan = np.asarray(laser_scan, dtype=np.float32)
-        scan = np.nan_to_num(scan, nan=0.0, posinf=self.ogds_max_distance, neginf=0.0)
+        scan = np.nan_to_num(scan, nan=0.0, posinf=self.frontier_max_distance, neginf=0.0)
 
         n = scan.shape[0]
         angles = np.linspace(-math.pi, math.pi, n, endpoint=False)
 
-        frontier_dist = max(self.ogds_min_distance, 0.8 * self.ogds_max_distance)
+        frontier_dist = max(self.frontier_min_distance, 0.8 * self.frontier_max_distance)
         mask = scan >= frontier_dist
 
         candidates: List[Tuple[float, float]] = []
@@ -350,21 +352,21 @@ class HighLevelPlanner:
                 i += 1
             end = i
             width = angles[end] - angles[start]
-            if abs(width) >= self.ogds_gap_min_width:
+            if abs(width) >= self.frontier_gap_min_width:
                 mid = (start + end) // 2
                 dist = float(scan[mid])
                 theta = float(angles[mid])
-                r = float(np.clip(dist * 0.8, self.ogds_min_distance, self.ogds_max_distance))
+                r = float(np.clip(dist * 0.8, self.frontier_min_distance, self.frontier_max_distance))
                 candidates.append((r, theta))
             i += 1
 
         goal_dir = math.atan2(goal_sin, goal_cos)
-        r_goal = float(np.clip(goal_distance, self.ogds_min_distance, self.ogds_max_distance))
+        r_goal = float(np.clip(goal_distance, self.frontier_min_distance, self.frontier_max_distance))
         candidates.append((r_goal, goal_dir))
 
-        if len(candidates) > self.ogds_num_candidates:
+        if len(candidates) > self.frontier_num_candidates:
             candidates.sort(key=lambda g: -math.cos(g[1] - goal_dir))
-            candidates = candidates[: self.ogds_num_candidates]
+            candidates = candidates[: self.frontier_num_candidates]
 
         return candidates
 
@@ -374,12 +376,12 @@ class HighLevelPlanner:
         if not candidates:
             goal_distance, goal_cos, goal_sin = goal_info
             goal_dir = math.atan2(goal_sin, goal_cos)
-            r = max(self.ogds_min_distance, min(goal_distance, self.ogds_max_distance))
+            r = max(self.frontier_min_distance, min(goal_distance, self.frontier_max_distance))
             return r, goal_dir
 
         self.value_net.eval()
         scan = np.asarray(laser_scan, dtype=np.float32)
-        scan = np.nan_to_num(scan, nan=0.0, posinf=self.ogds_max_distance, neginf=0.0)
+        scan = np.nan_to_num(scan, nan=0.0, posinf=self.frontier_max_distance, neginf=0.0)
 
         laser_t = torch.as_tensor(scan[None, :], dtype=torch.float32, device=self.device)
         dummy_waypoints = self.build_waypoint_features(waypoints=None, robot_pose=None)
@@ -395,9 +397,9 @@ class HighLevelPlanner:
 
         if self.current_subgoal is not None:
             last_r, last_theta = self.current_subgoal
-            lambda_cons = 0.5
-            sigma_r = 1.0
-            sigma_theta = 0.5
+            lambda_cons = self.consistency_lambda
+            sigma_r = self.consistency_sigma_r
+            sigma_theta = self.consistency_sigma_theta
             bonuses = []
             for (r, theta) in candidates:
                 dr = (r - last_r) / sigma_r

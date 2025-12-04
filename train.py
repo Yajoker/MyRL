@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 # 导入自定义模块
-from config import ConfigBundle, HighLevelCostConfig, HighLevelRewardConfig, LowLevelRewardConfig, TrainingConfig
+from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, TrainingConfig
 from integration import HierarchicalNavigationSystem
 from rewards import compute_high_level_reward, compute_low_level_reward, compute_step_safety_cost
 from robot_nav.SIM_ENV.sim import SIM
@@ -468,7 +468,6 @@ def main(args=None):
     bundle = ConfigBundle()  # 配置包
     config = bundle.training  # 训练配置
     integration_config = bundle.integration  # 集成配置
-    safety_cfg = bundle.safety_critic  # 安全评估配置
 
     raw_world = Path(config.world_file)  # 世界文件路径
     base_dir = Path(__file__).resolve().parent  # 基础目录
@@ -557,7 +556,6 @@ def main(args=None):
     low_reward_cfg = bundle.low_level_reward  # 低层奖励配置
     high_reward_cfg = bundle.high_level_reward  # 高层奖励配置
     trigger_cfg = integration_config.trigger
-    high_cost_cfg = bundle.high_level_cost  # 高层成本配置
     high_level_buffer = HighLevelReplayBuffer(buffer_size=config.buffer_size, random_seed=config.random_seed or 666)
     current_subgoal_context: Optional[SubgoalContext] = None  # 当前子目标上下文
 
@@ -781,8 +779,7 @@ def main(args=None):
                 step_cost = compute_step_safety_cost(
                     min_obstacle_distance,
                     collision,
-                    lambda_col=high_cost_cfg.lambda_col,
-                    lambda_near=high_cost_cfg.lambda_near,
+                    config=high_reward_cfg,
                     danger_distance=trigger_cfg.safety_trigger_distance,
                 )
                 current_subgoal_context.short_cost_sum += step_cost
