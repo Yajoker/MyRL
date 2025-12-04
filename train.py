@@ -769,21 +769,20 @@ def main(args=None):
 
             # 计算最小障碍物距离
             scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
-            finite_scan = scan_arr[np.isfinite(scan_arr)]  # 有限值扫描
-            min_obstacle_distance = float(np.percentile(finite_scan, 10)) if finite_scan.size else 8.0  # 最小障碍距离
+            risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+            min_obstacle_distance = float(d_percentile) if np.isfinite(d_percentile) else 8.0  # 最小障碍距离
             if current_subgoal_context is not None:  # 如果有当前子目标上下文
                 current_subgoal_context.min_dmin = min(  # 更新最小障碍距离
                     current_subgoal_context.min_dmin,
                     min_obstacle_distance,
                 )
                 step_cost = compute_step_safety_cost(
-                    min_obstacle_distance,
+                    risk_index,
                     collision,
                     config=high_reward_cfg,
-                    danger_distance=trigger_cfg.safety_trigger_distance,
                 )
                 current_subgoal_context.short_cost_sum += step_cost
-                if min_obstacle_distance <= trigger_cfg.safety_trigger_distance:
+                if risk_index >= trigger_cfg.risk_near_threshold:
                     current_subgoal_context.near_obstacle_steps += 1
                 if collision:  # 如果碰撞
                     current_subgoal_context.collision_occurred = True  # 标记碰撞发生

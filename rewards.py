@@ -148,20 +148,12 @@ def compute_high_level_reward(
 # ================================================================
 #  短期安全成本计算（供高层成本/安全统计使用）
 # ================================================================
-def compute_step_safety_cost(
-    min_obstacle_distance: float,
-    collision: bool,
-    *,
-    config: HighLevelRewardConfig,
-    danger_distance: float,
-) -> float:
-    """Compute the per-step safety cost using high-level reward weights."""
+def compute_step_safety_cost(risk_index: float, collision: bool, *, config: HighLevelRewardConfig) -> float:
+    """Compute the per-step safety cost using the unified risk index."""
 
-    cost = 0.0
+    cost = float(config.lambda_near) * float(max(risk_index, 0.0))
     if collision:
         cost += float(config.lambda_col)
-    if min_obstacle_distance <= danger_distance:
-        cost += float(config.lambda_near)
     return float(cost)
 
 

@@ -91,10 +91,21 @@ class TriggerConfig:
     subgoal_reach_threshold: float = 0.4             # 子目标到达判定阈值
     stagnation_steps: int = 30                       # 停滞步数阈值（检测是否卡住）
     stagnation_turn_threshold: float = 3.5           # 累计转向阈值（弧度）
-    progress_epsilon: float = 0.1                    # 进度变化最小阈值下限（采用窗口比例时的兜底值）
-    progress_epsilon_ratio: float = 0.02             # 进度阈值相对于窗口半径的比例
+    # 进度阈值：Δd_min(d) = eps_abs + eps_rel * d
+    progress_epsilon_abs: float = 0.2                # 绝对改善下限（米）
+    progress_epsilon_rel: float = 0.05               # 相对改善比例
+
+    # 触发节奏：下限 + 上限
     min_interval: float = 1.2                        # 最小触发间隔时间（秒，优先使用步数配置）
     min_step_interval: int = 10                      # 最小触发间隔步数
+    max_interval: float = 3.6                        # 最大触发间隔时间（秒，优先使用步数配置）
+    max_step_interval: int = 30                      # 最大触发间隔步数
+
+    # 风险判定：统一 risk_index
+    risk_alpha: float = 0.6                          # min 与分位数加权
+    risk_trigger_threshold: float = 0.8              # 事件触发阈值
+    risk_near_threshold: float = 0.3                 # 近障计数阈值（奖励用）
+    risk_percentile: float = 10.0                    # 计算分位数使用的百分位
     window_inside_hold: int = 3                      # 进入窗口后至少驻留的步数
     subgoal_smoothing_alpha: float = 0.7             # 子目标EMA平滑系数
 
@@ -108,14 +119,28 @@ class TriggerConfig:
             raise ValueError("stagnation_steps must be positive")
         if self.stagnation_turn_threshold < 0:
             raise ValueError("stagnation_turn_threshold must be non-negative")
-        if self.progress_epsilon < 0:
-            raise ValueError("progress_epsilon must be non-negative")
-        if self.progress_epsilon_ratio < 0:
-            raise ValueError("progress_epsilon_ratio must be non-negative")
+        if self.progress_epsilon_abs < 0:
+            raise ValueError("progress_epsilon_abs must be non-negative")
+        if self.progress_epsilon_rel < 0:
+            raise ValueError("progress_epsilon_rel must be non-negative")
         if self.min_interval < 0:
             raise ValueError("min_interval must be non-negative")
         if self.min_step_interval <= 0:
             raise ValueError("min_step_interval must be positive")
+        if self.max_interval < 0:
+            raise ValueError("max_interval must be non-negative")
+        if self.max_step_interval <= 0:
+            raise ValueError("max_step_interval must be positive")
+        if self.max_step_interval < self.min_step_interval:
+            raise ValueError("max_step_interval must be >= min_step_interval")
+        if self.risk_alpha < 0 or self.risk_alpha > 1:
+            raise ValueError("risk_alpha must be in [0, 1]")
+        if self.risk_trigger_threshold < 0:
+            raise ValueError("risk_trigger_threshold must be non-negative")
+        if self.risk_near_threshold < 0:
+            raise ValueError("risk_near_threshold must be non-negative")
+        if self.risk_percentile <= 0 or self.risk_percentile >= 100:
+            raise ValueError("risk_percentile must be in (0, 100)")
         if self.window_inside_hold < 0:
             raise ValueError("window_inside_hold must be non-negative")
         if not 0.0 <= self.subgoal_smoothing_alpha < 1.0:

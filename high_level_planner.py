@@ -64,7 +64,6 @@ class EventTrigger:
         step_duration: float,
         min_interval: Optional[float] = None,
         subgoal_reach_threshold: Optional[float] = None,
-        progress_epsilon: Optional[float] = None,
     ) -> None:
         self._config = config
         self.safety_trigger_distance = config.safety_trigger_distance
@@ -72,8 +71,13 @@ class EventTrigger:
             subgoal_reach_threshold if subgoal_reach_threshold is not None else config.subgoal_reach_threshold
         )
         self.stagnation_steps = max(1, int(config.stagnation_steps))
-        self.progress_epsilon = progress_epsilon if progress_epsilon is not None else config.progress_epsilon
         self.step_duration = float(step_duration)
+        self.progress_abs = float(config.progress_epsilon_abs)
+        self.progress_rel = float(config.progress_epsilon_rel)
+        self.risk_alpha = float(config.risk_alpha)
+        self.risk_trigger_threshold = float(config.risk_trigger_threshold)
+        self.risk_near_threshold = float(config.risk_near_threshold)
+        self.risk_percentile = float(config.risk_percentile)
 
         if min_interval is not None and min_interval > 0:
             self.min_interval = float(min_interval)
@@ -85,16 +89,20 @@ class EventTrigger:
 
         if self.step_duration > 0:
             self.min_step_interval = max(1, int(math.ceil(self.min_interval / self.step_duration)))
+            self.max_step_interval = max(1, int(math.ceil(config.max_interval / self.step_duration)))
         else:
             self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
+            self.max_step_interval = max(1, int(getattr(config, "max_step_interval", 1)))
 
         self.last_trigger_step = -self.min_step_interval
-        self.last_subgoal: Optional[np.ndarray] = None
         self.best_goal_distance: Optional[float] = None
         self.last_progress_step = 0
 
-    def safe_distance_trigger(self, min_obstacle_dist: float) -> bool:
-        return np.isfinite(min_obstacle_dist) and min_obstacle_dist <= self.safety_trigger_distance
+    def _delta_progress_min(self, reference_distance: float) -> float:
+        return self.progress_abs + self.progress_rel * max(reference_distance, 0.0)
+
+    def risk_trigger(self, risk_index: float) -> bool:
+        return risk_index >= self.risk_trigger_threshold
 
     def subgoal_reached(self, dist_to_subgoal: Optional[float]) -> bool:
         return dist_to_subgoal is not None and dist_to_subgoal <= self.subgoal_reach_threshold
@@ -103,13 +111,15 @@ class EventTrigger:
         if not np.isfinite(goal_distance):
             return False
 
-        epsilon = max(self.progress_epsilon, self._config.progress_epsilon_ratio * goal_distance)
         if self.best_goal_distance is None:
             self.best_goal_distance = goal_distance
             self.last_progress_step = current_step
             return False
 
-        if goal_distance + epsilon < self.best_goal_distance:
+        improvement = self.best_goal_distance - goal_distance
+        threshold = self._delta_progress_min(self.best_goal_distance)
+
+        if improvement >= threshold:
             self.best_goal_distance = goal_distance
             self.last_progress_step = current_step
             return False
@@ -131,7 +141,8 @@ class EventTrigger:
             self.best_goal_distance = goal_distance
             self.last_progress_step = current_step
             return
-        if goal_distance + self.progress_epsilon < self.best_goal_distance:
+        improvement = self.best_goal_distance - goal_distance
+        if improvement >= self._delta_progress_min(self.best_goal_distance):
             self.best_goal_distance = goal_distance
             self.last_progress_step = current_step
 
@@ -140,15 +151,17 @@ class EventTrigger:
             return False
         return (current_step - self.last_progress_step) >= self.stagnation_steps
 
-    def time_based_trigger(self, current_step: int) -> bool:
+    def can_replan(self, current_step: int) -> bool:
         return current_step - self.last_trigger_step >= self.min_step_interval
+
+    def time_upper_bound(self, current_step: int) -> bool:
+        return current_step - self.last_trigger_step >= self.max_step_interval
 
     def reset_time(self, current_step: int) -> None:
         self.last_trigger_step = current_step
 
     def reset_state(self) -> None:
         self.last_trigger_step = -self.min_step_interval
-        self.last_subgoal = None
         self.best_goal_distance = None
         self.last_progress_step = 0
 
@@ -295,37 +308,48 @@ class HighLevelPlanner:
             state_tensor = torch.cat((laser_tensor, goal_tensor))
         return state_tensor.cpu().numpy()
 
+    def compute_risk_index(self, laser_scan: np.ndarray) -> Tuple[float, float, float]:
+        scan = np.asarray(laser_scan, dtype=np.float32)
+        finite_scan = scan[np.isfinite(scan)]
+        if finite_scan.size == 0:
+            return 0.0, float("inf"), float("inf")
+
+        d_min = float(np.min(finite_scan))
+        percentile = float(np.percentile(finite_scan, self.event_trigger.risk_percentile))
+        safe_d = max(self.event_trigger.safety_trigger_distance, 1e-6)
+
+        r_min = max(0.0, (safe_d - d_min) / safe_d)
+        r_p = max(0.0, (safe_d - percentile) / safe_d)
+        alpha = self.event_trigger.risk_alpha
+        risk_index = min(1.0, alpha * r_min + (1.0 - alpha) * r_p)
+        return risk_index, d_min, percentile
+
     # ------------------------- 事件触发 -------------------------
     def check_triggers(
         self,
         laser_scan,
         robot_pose,
         goal_info,
-        min_obstacle_dist=None,
         current_step: int = 0,
         window_metrics: Optional[dict] = None,
     ) -> bool:
-        time_ready = self.event_trigger.time_based_trigger(current_step)
+        if not self.event_trigger.can_replan(current_step):
+            return False
 
         goal_distance = float(goal_info[0]) if goal_info else float("inf")
         laser_scan = np.asarray(laser_scan, dtype=np.float32)
-        if min_obstacle_dist is None:
-            valid_scans = laser_scan[np.isfinite(laser_scan)]
-            min_obstacle_dist = np.min(valid_scans) if valid_scans.size > 0 else float("inf")
 
+        risk_index, _, _ = self.compute_risk_index(laser_scan)
         self.event_trigger.update_progress(goal_distance, current_step)
 
         dist_to_subgoal, _ = self.get_relative_subgoal(robot_pose)
-        if dist_to_subgoal is not None:
-            self.event_trigger.last_subgoal = np.asarray(self.current_subgoal_world, dtype=np.float32).tolist()
-        else:
-            self.event_trigger.last_subgoal = None
 
-        safe_trigger = self.event_trigger.safe_distance_trigger(min_obstacle_dist)
-        progress_trigger = self.event_trigger.global_progress_stagnant(goal_distance, current_step)
-        subgoal_trigger = self.event_trigger.subgoal_reached(dist_to_subgoal)
+        time_event = self.event_trigger.time_upper_bound(current_step)
+        risk_event = self.event_trigger.risk_trigger(risk_index)
+        progress_event = self.event_trigger.global_progress_stagnant(goal_distance, current_step)
+        subgoal_event = self.event_trigger.subgoal_reached(dist_to_subgoal)
 
-        trigger_new_subgoal = time_ready and (safe_trigger or progress_trigger or subgoal_trigger)
+        trigger_new_subgoal = time_event or risk_event or progress_event or subgoal_event
         if trigger_new_subgoal:
             self.event_trigger.reset_time(current_step)
         return trigger_new_subgoal
@@ -440,10 +464,8 @@ class HighLevelPlanner:
         self.last_goal_direction = math.atan2(goal_sin, goal_cos)
         if world_target is not None:
             self.current_subgoal_world = world_target
-            self.event_trigger.last_subgoal = world_target.tolist()
         else:
             self.current_subgoal_world = None
-            self.event_trigger.last_subgoal = None
 
         progress_step = current_step if current_step is not None else 0
         self.event_trigger.reset_progress(goal_distance, progress_step)
