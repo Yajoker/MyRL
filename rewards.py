@@ -1,6 +1,6 @@
 from typing import Dict, Optional, Tuple
+
 import numpy as np
-from typing import Dict, Optional, Tuple
 
 from config import HighLevelRewardConfig, LowLevelRewardConfig
 
@@ -113,9 +113,11 @@ def compute_high_level_reward(
     collision: bool,
     *,
     config: HighLevelRewardConfig,
-    **kwargs,  # 忽略所有其他低层输入
+    short_cost_sum: float = 0.0,
+    near_obstacle_steps: int = 0,
+    **kwargs,
 ) -> Tuple[float, Dict[str, float]]:
-    """计算高层规划器的奖励（供 RWR 作为样本权重使用）。
+    """计算高层规划器的奖励，统一进展、安全与时间成本。
 
     设计目标：
     - 按简化公式 Gi = alpha * Δd_global - beta_col * I[collision] - beta_time * T
@@ -128,36 +130,30 @@ def compute_high_level_reward(
     progress_reward = config.alpha_global_progress * float(delta_global)
     components["global_progress"] = float(progress_reward)
 
-    # 碰撞惩罚（子目标执行期间是否发生碰撞）
     collision_penalty = config.beta_collision if collision else 0.0
     components["collision_penalty"] = float(-collision_penalty)
 
-    # 时间成本（子目标执行步数）
     time_penalty = config.beta_time * float(max(subgoal_step_count, 0))
     components["time_penalty"] = float(-time_penalty)
 
-    total_reward = progress_reward - collision_penalty - time_penalty
+    safety_cost = config.gamma_short_cost * float(short_cost_sum)
+    near_penalty = config.gamma_near_steps * float(max(near_obstacle_steps, 0))
+    components["safety_cost"] = float(-safety_cost)
+    components["near_steps"] = float(-near_penalty)
+
+    total_reward = progress_reward - collision_penalty - time_penalty - safety_cost - near_penalty
     return float(total_reward), components
 
 
 # ================================================================
 #  短期安全成本计算（供高层成本/安全统计使用）
 # ================================================================
-def compute_step_safety_cost(
-    min_obstacle_distance: float,
-    collision: bool,
-    *,
-    lambda_col: float,
-    lambda_near: float,
-    danger_distance: float,
-) -> float:
-    """Compute the per-step safety cost used by SEN/CostCritic supervision."""
+def compute_step_safety_cost(risk_index: float, collision: bool, *, config: HighLevelRewardConfig) -> float:
+    """Compute the per-step safety cost using the unified risk index."""
 
-    cost = 0.0
+    cost = float(config.lambda_near) * float(max(risk_index, 0.0))
     if collision:
-        cost += float(lambda_col)
-    if min_obstacle_distance <= danger_distance:
-        cost += float(lambda_near)
+        cost += float(config.lambda_col)
     return float(cost)
 
 
