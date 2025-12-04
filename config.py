@@ -40,6 +40,8 @@ class HighLevelRewardConfig:
     alpha_global_progress: float = 4.0      # 到最终目标距离减少的权重
     beta_collision: float = 80.0            # 碰撞惩罚权重
     beta_time: float = 0.5                  # 时间步惩罚权重
+    gamma_short_cost: float = 1.0           # 子目标执行期间的累计安全成本权重
+    gamma_near_steps: float = 0.5           # 近障碍步数权重
 
 
 @dataclass(frozen=True)
