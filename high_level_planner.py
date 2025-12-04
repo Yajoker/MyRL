@@ -366,9 +366,11 @@ class HighLevelPlanner:
         )
 
     def should_replan(self, flags: TriggerFlags) -> bool:
+        if flags.risk or flags.subgoal_reached:
+            return True
         if not flags.time_ready:
             return False
-        return flags.time_over or flags.progress_stagnant or flags.risk or flags.subgoal_reached
+        return flags.time_over or flags.progress_stagnant
 
     # ------------------------- 子目标生成 -------------------------
     def _generate_frontier_candidates(self, laser_scan: np.ndarray, goal_distance: float, goal_cos: float, goal_sin: float) -> List[Tuple[float, float]]:
