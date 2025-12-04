@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 # 导入自定义模块
-from config import ConfigBundle, HighLevelCostConfig, HighLevelRewardConfig, LowLevelRewardConfig, TrainingConfig
+from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, TrainingConfig
 from integration import HierarchicalNavigationSystem
 from rewards import compute_high_level_reward, compute_low_level_reward, compute_step_safety_cost
 from robot_nav.SIM_ENV.sim import SIM
@@ -18,7 +18,7 @@ class SubgoalContext:
     """高层子目标生命周期内的统计上下文"""
 
     start_state: np.ndarray  # 子目标开始时的状态
-    action: np.ndarray  # 选择的子目标调整量 [距离系数, 角度偏移]
+    action: np.ndarray  # 选择的子目标几何 [距离, 角度]
     world_target: np.ndarray  # 子目标的全局坐标
     start_goal_distance: float  # 开始时的目标距离
     last_goal_distance: float  # 最后的目标距离
@@ -29,9 +29,6 @@ class SubgoalContext:
     min_dmin: float = float("inf")  # 子目标执行期间观测到的最近障碍距离
     collision_occurred: bool = False  # 执行期间是否发生碰撞
     subgoal_angle_at_start: Optional[float] = None  # 子目标生成时的角度
-    base_distance: Optional[float] = None  # Safety-Critic几何：锚点距离
-    base_angle: Optional[float] = None  # Safety-Critic几何：锚点角度
-    anchor_radius: Optional[float] = None  # Safety-Critic几何：窗口半径
     short_cost_sum: float = 0.0  # 短期安全成本累计
     near_obstacle_steps: int = 0  # 近障碍步数
 
@@ -58,13 +55,11 @@ def finalize_subgoal_transition(
     context: Optional[SubgoalContext],
     buffer,
     high_cfg: HighLevelRewardConfig,
-    high_cost_cfg: HighLevelCostConfig,
-    danger_distance: float,
     done: bool,
     reached_goal: bool,
     collision: bool,
     timed_out: bool,
-) -> Optional[Tuple[dict, Optional[Tuple[Tuple[np.ndarray, np.ndarray, float], Tuple[np.ndarray, np.ndarray, float]]]]]:
+) -> Optional[Tuple[dict, None]]:
     """结束当前子目标并生成高层训练样本.
 
     Args:
@@ -77,7 +72,7 @@ def finalize_subgoal_transition(
         timed_out: 是否超时
         
     Returns:
-        包含奖励分量字典及可选风险样本的元组，或None
+        包含奖励分量字典的元组，或None
     """
 
     # 检查上下文有效性
@@ -96,6 +91,8 @@ def finalize_subgoal_transition(
         subgoal_step_count=context.steps,  # 子目标步数
         collision=collision_flag,  # 是否碰撞
         config=high_cfg,  # 高层奖励配置
+        short_cost_sum=context.short_cost_sum,
+        near_obstacle_steps=context.near_obstacle_steps,
     )
 
     components.update(
@@ -119,42 +116,7 @@ def finalize_subgoal_transition(
         last_state.astype(np.float32, copy=False),
     )
 
-    risk_sample: Optional[Tuple[np.ndarray, np.ndarray, float]] = None  # 风险样本初始化为None
-    cost_sample: Optional[Tuple[np.ndarray, np.ndarray, float]] = None
-
-    target_distance = context.min_dmin  # 目标距离为最小障碍距离
-    if collision or context.collision_occurred:  # 如果发生碰撞
-        target_distance = 0.0  # 目标距离设为0
-
-    if np.isfinite(target_distance):  # 如果目标距离是有限值
-        base_distance = float(context.base_distance) if context.base_distance is not None else 0.0  # 基础距离
-        base_angle = (
-            float(context.base_angle)
-            if context.base_angle is not None
-            else float(context.subgoal_angle_at_start or 0.0)  # 基础角度
-        )
-        anchor_radius = float(context.anchor_radius) if context.anchor_radius is not None else 0.0  # 锚点半径
-        subgoal_geom = np.array([base_distance, base_angle, anchor_radius], dtype=np.float32)  # 子目标几何信息
-        risk_sample = (
-            context.start_state.astype(np.float32, copy=False),
-            subgoal_geom,
-            float(target_distance),
-        )
-
-        # 长期成本标签：碰撞成本 + 近障碍步数成本
-        cost_value = (
-            high_cost_cfg.lambda_col * float(collision_flag)
-            + high_cost_cfg.lambda_near * float(context.near_obstacle_steps)
-        )
-        if context.short_cost_sum:
-            cost_value = float(context.short_cost_sum)
-        cost_sample = (
-            context.start_state.astype(np.float32, copy=False),
-            subgoal_geom,
-            float(cost_value),
-        )
-
-    return components, (risk_sample, cost_sample)
+    return components, None
 
 
 def maybe_train_high_level(
@@ -294,16 +256,17 @@ def evaluate(
             window_metrics: dict = {}
             goal_info = [distance, cos, sin]  # 目标信息
 
+            trigger_flags = system.high_level_planner.check_triggers(
+                latest_scan,  # 最新激光数据
+                robot_pose,  # 机器人位姿
+                goal_info,  # 目标信息
+                current_step=steps,  # 当前步数
+                window_metrics=None,  # 窗口指标
+            )
             # 检查是否需要重新规划
             should_replan = (
                 system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
-                or system.high_level_planner.check_triggers(  # 或触发器条件满足
-                    latest_scan,  # 最新激光数据
-                    robot_pose,  # 机器人位姿
-                    goal_info,  # 目标信息
-                    current_step=steps,  # 当前步数
-                    window_metrics=None,  # 窗口指标
-                )
+                or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
             )
 
             subgoal_distance: Optional[float] = None  # 子目标距离
@@ -324,7 +287,8 @@ def evaluate(
                 )
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
-                system.high_level_planner.event_trigger.reset_time(steps)  # 重置事件触发器时间
+                # 仅在成功生成新子目标后重置事件触发时间
+                system.high_level_planner.event_trigger.reset_time(steps)
                 if current_subgoal_world is None:  # 如果没有子目标世界坐标
                     current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)  # 计算子目标世界坐标
                 current_subgoal_completed = False  # 重置子目标完成标志
@@ -506,7 +470,6 @@ def main(args=None):
     bundle = ConfigBundle()  # 配置包
     config = bundle.training  # 训练配置
     integration_config = bundle.integration  # 集成配置
-    safety_cfg = bundle.safety_critic  # 安全评估配置
 
     raw_world = Path(config.world_file)  # 世界文件路径
     base_dir = Path(__file__).resolve().parent  # 基础目录
@@ -595,7 +558,6 @@ def main(args=None):
     low_reward_cfg = bundle.low_level_reward  # 低层奖励配置
     high_reward_cfg = bundle.high_level_reward  # 高层奖励配置
     trigger_cfg = integration_config.trigger
-    high_cost_cfg = bundle.high_level_cost  # 高层成本配置
     high_level_buffer = HighLevelReplayBuffer(buffer_size=config.buffer_size, random_seed=config.random_seed or 666)
     current_subgoal_context: Optional[SubgoalContext] = None  # 当前子目标上下文
 
@@ -626,16 +588,17 @@ def main(args=None):
             waypoint_sequence: list = []
             goal_info = [distance, cos, sin]  # 目标信息
 
+            trigger_flags = system.high_level_planner.check_triggers(
+                latest_scan,  # 最新激光数据
+                robot_pose,  # 机器人位姿
+                goal_info,  # 目标信息
+                current_step=steps,  # 当前步数
+                window_metrics=None,  # 窗口指标
+            )
             # 检查是否需要重新规划子目标
             should_replan = (
                 system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
-                or system.high_level_planner.check_triggers(  # 或触发器条件满足
-                    latest_scan,  # 最新激光数据
-                    robot_pose,  # 机器人位姿
-                    goal_info,  # 目标信息
-                    current_step=steps,  # 当前步数
-                    window_metrics=None,  # 窗口指标
-                )
+                or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
             )
 
             metadata = {}  # 元数据字典
@@ -648,27 +611,13 @@ def main(args=None):
                     current_subgoal_context,  # 当前子目标上下文
                     high_level_buffer,  # 高层缓冲区
                     high_reward_cfg,  # 高层奖励配置
-                    high_cost_cfg,
-                    trigger_cfg.safety_trigger_distance,
                     done=False,  # 未终止
                     reached_goal=False,  # 未到达目标
                     collision=False,  # 未碰撞
                     timed_out=False,  # 未超时
                 )
                 if finalize_result is not None:  # 如果有结果
-                    finalize_components, risk_and_cost_samples = finalize_result  # 解包结果
-                    if risk_and_cost_samples is not None:
-                        risk_sample, cost_sample = risk_and_cost_samples
-                        if risk_sample is not None:  # 如果有风险样本
-                            system.high_level_planner.store_safety_sample(*risk_sample)  # 存储安全样本
-                            system.high_level_planner.maybe_update_safety_critic(  # 可能更新安全评估器
-                                batch_size=safety_cfg.update_batch_size  # 批次大小
-                            )
-                        if cost_sample is not None:
-                            system.high_level_planner.store_cost_sample(*cost_sample)
-                            system.high_level_planner.maybe_update_cost_critic(
-                                batch_size=high_cost_cfg.update_batch_size
-                            )
+                    finalize_components, _ = finalize_result  # 解包结果
                     metrics = maybe_train_high_level(  # 可能训练高层
                         system.high_level_planner,  # 高层规划器
                         high_level_buffer,  # 高层缓冲区
@@ -696,7 +645,8 @@ def main(args=None):
                 )
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
-                system.high_level_planner.event_trigger.reset_time(steps)  # 重置事件触发器时间
+                # 生成新的子目标后统一重置事件触发时间
+                system.high_level_planner.event_trigger.reset_time(steps)
                 if current_subgoal_world is None:  # 如果没有子目标世界坐标
                     current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)  # 计算子目标世界坐标
 
@@ -711,15 +661,9 @@ def main(args=None):
                 )
 
                 # 创建新的子目标上下文
-                distance_adjust_action = float(metadata.get("distance_adjust_applied", 0.0)) if metadata else 0.0  # 距离调整动作
-                angle_offset_action = float(metadata.get("angle_offset_applied", 0.0)) if metadata else 0.0  # 角度偏移动作
-                anchor_distance = metadata.get("anchor_distance", subgoal_distance)  # 锚点距离
-                anchor_angle = metadata.get("anchor_angle", subgoal_angle)  # 锚点角度
-                anchor_radius = metadata.get("anchor_radius") if metadata else None  # 锚点半径
-
                 current_subgoal_context = SubgoalContext(  # 创建子目标上下文
                     start_state=start_state.astype(np.float32, copy=False),  # 开始状态
-                    action=np.array([distance_adjust_action, angle_offset_action], dtype=np.float32),  # 动作
+                    action=np.array([subgoal_distance, subgoal_angle], dtype=np.float32),  # 子目标几何
                     world_target=current_subgoal_world,  # 世界目标
                     start_goal_distance=distance,  # 开始目标距离
                     last_goal_distance=distance,  # 最后目标距离
@@ -728,9 +672,6 @@ def main(args=None):
                     subgoal_completed=False,  # 子目标完成标志
                     last_state=start_state.astype(np.float32, copy=False),  # 最后状态
                     subgoal_angle_at_start=float(subgoal_angle) if subgoal_angle is not None else None,  # 子目标开始角度
-                    base_distance=float(anchor_distance) if anchor_distance is not None else None,  # 基础距离
-                    base_angle=float(anchor_angle) if anchor_angle is not None else None,  # 基础角度
-                    anchor_radius=float(anchor_radius) if anchor_radius is not None else None,  # 锚点半径
                 )
                 scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
                 finite_scan = scan_arr[np.isfinite(scan_arr)]  # 有限值扫描
@@ -832,22 +773,20 @@ def main(args=None):
 
             # 计算最小障碍物距离
             scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
-            finite_scan = scan_arr[np.isfinite(scan_arr)]  # 有限值扫描
-            min_obstacle_distance = float(np.percentile(finite_scan, 10)) if finite_scan.size else 8.0  # 最小障碍距离
+            risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+            min_obstacle_distance = float(d_percentile) if np.isfinite(d_percentile) else 8.0  # 最小障碍距离
             if current_subgoal_context is not None:  # 如果有当前子目标上下文
                 current_subgoal_context.min_dmin = min(  # 更新最小障碍距离
                     current_subgoal_context.min_dmin,
                     min_obstacle_distance,
                 )
                 step_cost = compute_step_safety_cost(
-                    min_obstacle_distance,
+                    risk_index,
                     collision,
-                    lambda_col=high_cost_cfg.lambda_col,
-                    lambda_near=high_cost_cfg.lambda_near,
-                    danger_distance=trigger_cfg.safety_trigger_distance,
+                    config=high_reward_cfg,
                 )
                 current_subgoal_context.short_cost_sum += step_cost
-                if min_obstacle_distance <= trigger_cfg.safety_trigger_distance:
+                if risk_index >= trigger_cfg.risk_near_threshold:
                     current_subgoal_context.near_obstacle_steps += 1
                 if collision:  # 如果碰撞
                     current_subgoal_context.collision_occurred = True  # 标记碰撞发生
@@ -941,31 +880,17 @@ def main(args=None):
         timed_out_episode = not goal and not collision and steps >= config.max_steps  # 超时情节判断
 
         # 完成最后一个子目标
-    finalize_result = finalize_subgoal_transition(  # 完成子目标转换
-        current_subgoal_context,  # 当前子目标上下文
-        high_level_buffer,  # 高层缓冲区
-        high_reward_cfg,  # 高层奖励配置
-        high_cost_cfg,
-        trigger_cfg.safety_trigger_distance,
-        done=True,  # 终止
-        reached_goal=goal,  # 到达目标
-        collision=collision,  # 碰撞
-        timed_out=timed_out_episode,  # 超时
-    )
+        finalize_result = finalize_subgoal_transition(  # 完成子目标转换
+            current_subgoal_context,  # 当前子目标上下文
+            high_level_buffer,  # 高层缓冲区
+            high_reward_cfg,  # 高层奖励配置
+            done=True,  # 终止
+            reached_goal=goal,  # 到达目标
+            collision=collision,  # 碰撞
+            timed_out=timed_out_episode,  # 超时
+        )
         if finalize_result is not None:  # 如果有结果
-            finalize_components, risk_and_cost_samples = finalize_result  # 解包结果
-            if risk_and_cost_samples is not None:
-                risk_sample, cost_sample = risk_and_cost_samples
-                if risk_sample is not None:  # 如果有风险样本
-                    system.high_level_planner.store_safety_sample(*risk_sample)  # 存储安全样本
-                    system.high_level_planner.maybe_update_safety_critic(  # 可能更新安全评估器
-                        batch_size=safety_cfg.update_batch_size  # 批次大小
-                    )
-                if cost_sample is not None:
-                    system.high_level_planner.store_cost_sample(*cost_sample)
-                    system.high_level_planner.maybe_update_cost_critic(
-                        batch_size=high_cost_cfg.update_batch_size
-                    )
+            finalize_components, _ = finalize_result  # 解包结果
             metrics = maybe_train_high_level(  # 可能训练高层
                 system.high_level_planner,  # 高层规划器
                 high_level_buffer,  # 高层缓冲区

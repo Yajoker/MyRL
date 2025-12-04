@@ -48,7 +48,6 @@ class HierarchicalNavigationSystem:
         motion_cfg = self._integration_config.motion  # 运动配置
         trigger_cfg = self._integration_config.trigger  # 触发器配置
         planner_cfg = self._integration_config.planner  # 规划器配置
-        safety_cfg = self._integration_config.safety_critic  # 安全评估配置
 
         # 将显式参数与集中配置结合
         if step_duration is None:
@@ -79,8 +78,6 @@ class HierarchicalNavigationSystem:
             waypoint_lookahead=waypoint_lookahead,  # 航点前瞻数量
             trigger_config=trigger_cfg,  # 触发器配置
             planner_config=planner_cfg,  # 规划器配置
-            safety_config=safety_cfg,  # 安全评估配置
-            high_level_cost_config=self._integration_config.high_level_cost,  # 长期成本配置
         )
 
         # 初始化低层控制器（负责执行动作）
@@ -132,17 +129,19 @@ class HierarchicalNavigationSystem:
 
         goal_info = [goal_distance, goal_cos, goal_sin]  # 目标信息
 
+        trigger_flags = self.high_level_planner.check_triggers(
+            laser_scan,  # 激光数据
+            robot_pose,  # 机器人位姿
+            goal_info,  # 目标信息
+            current_step=self.step_count,  # 当前步数
+            window_metrics=None,  # 窗口指标
+        )
+
         # 标志位：是否需要重新生成子目标
-        if self.current_subgoal_world is None:
-            should_replan = True  # 没有子目标时需要重新规划
-        else:
-            should_replan = self.high_level_planner.check_triggers(
-                laser_scan,  # 激光数据
-                robot_pose,  # 机器人位姿
-                goal_info,  # 目标信息
-                current_step=self.step_count,  # 当前步数
-                window_metrics=None,  # 窗口指标
-            )
+        should_replan = (
+            self.current_subgoal_world is None  # 没有子目标时需要重新规划
+            or self.high_level_planner.should_replan(trigger_flags)
+        )
 
         subgoal_distance: Optional[float] = None  # 子目标距离
         subgoal_angle: Optional[float] = None  # 子目标角度
@@ -165,7 +164,8 @@ class HierarchicalNavigationSystem:
             self.current_subgoal_world = None if planner_world is None else np.asarray(planner_world,
                                                                                        dtype=np.float32)  # 更新当前子目标世界坐标
             self.last_replanning_step = self.step_count  # 记录上次重新规划步数
-            self.high_level_planner.event_trigger.reset_time(self.step_count)  # 重置事件触发器时间
+            # 仅在成功生成新子目标后重置事件触发时间
+            self.high_level_planner.event_trigger.reset_time(self.step_count)
         else:
             planner_world = self.high_level_planner.current_subgoal_world  # 规划器中的子目标世界坐标
             if planner_world is not None:
@@ -289,7 +289,6 @@ class HierarchicalNavigationSystem:
         self.last_replanning_step = 0  # 清除上次规划记录
         self.high_level_planner.current_subgoal = None  # 重置高层规划器子目标
         self.high_level_planner.current_subgoal_world = None  # 重置高层规划器子目标世界坐标
-        self.high_level_planner.event_trigger.last_subgoal = None  # 重置事件触发器上次子目标
         self.high_level_planner.event_trigger.reset_state()  # 重置事件触发器状态
         self.high_level_planner.reset_subgoal_hidden()  # 清空子目标网络隐状态
         self._cached_window_info = {}
