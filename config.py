@@ -40,6 +40,10 @@ class HighLevelRewardConfig:
     alpha_global_progress: float = 4.0      # 到最终目标距离减少的权重
     beta_collision: float = 80.0            # 碰撞惩罚权重
     beta_time: float = 0.5                  # 时间步惩罚权重
+    gamma_short_cost: float = 1.0           # 子目标执行期间的累计安全成本权重
+    gamma_near_steps: float = 0.5           # 近障碍步数权重
+    lambda_col: float = 1.0                 # 每步安全成本中的碰撞权重
+    lambda_near: float = 0.2                # 每步安全成本中的近障碍权重
 
 
 @dataclass(frozen=True)
@@ -125,12 +129,16 @@ class PlannerConfig:
     waypoint_lookahead: int = 3                      # 高层输入的前瞻占位维度
     anchor_radius: float = 0.6                       # 子目标基准半径（用于距离/角度裁剪）
 
-    # 目标–间隙引导的候选子目标生成（OGDS）
-    ogds_num_candidates: int = 7                     # 每次生成的候选子目标总数
-    ogds_min_distance: float = 0.8                   # 子目标距离下限（米）
-    ogds_max_distance: float = 3.5                   # 子目标距离上限（米）
-    ogds_front_angle: float = 2.6                    # 前方扇形范围（弧度）
-    ogds_gap_min_width: float = 0.2                  # 最小间隙角宽（弧度）
+    # 前沿引导的候选子目标生成
+    frontier_num_candidates: int = 7                 # 每次生成的候选子目标总数
+    frontier_min_dist: float = 0.8                   # 子目标距离下限（米）
+    frontier_max_dist: float = 3.5                   # 子目标距离上限（米）
+    frontier_gap_min_width: float = 0.2              # 最小前沿角宽（弧度）
+
+    # 连续性约束参数
+    consistency_lambda: float = 0.5
+    consistency_sigma_r: float = 1.0
+    consistency_sigma_theta: float = 0.5
 
 
     def __post_init__(self) -> None:  # type: ignore[override]
@@ -139,69 +147,20 @@ class PlannerConfig:
             raise ValueError("waypoint_lookahead must be positive")
         if self.anchor_radius <= 0:
             raise ValueError("anchor_radius must be positive")
-        if self.ogds_num_candidates <= 0:
-            raise ValueError("ogds_num_candidates must be positive")
-        if self.ogds_min_distance <= 0:
-            raise ValueError("ogds_min_distance must be positive")
-        if self.ogds_max_distance <= 0:
-            raise ValueError("ogds_max_distance must be positive")
-        if self.ogds_front_angle <= 0:
-            raise ValueError("ogds_front_angle must be positive")
-        if self.ogds_gap_min_width <= 0:
-            raise ValueError("ogds_gap_min_width must be positive")
-
-
-@dataclass(frozen=True)
-class SafetyCriticConfig:
-    """Configuration for the tactical-layer safety critic."""
-
-    progress_weight: float = 1.0                     # 进度得分的权重α
-    risk_weight: float = 1.0                         # 风险惩罚的权重β
-    distance_weight: float = 1.0                     # 进度得分中的距离项权重
-    angle_weight: float = 0.35                       # 进度得分中的角度项权重
-    update_batch_size: int = 64                      # Safety-Critic训练批次大小
-    min_buffer_size: int = 128                       # 开始训练前所需的最少样本数
-    max_buffer_size: int = 4096                      # Safety-Critic样本缓冲区最大容量
-    target_clip_min: float = 0.0                     # 风险监督目标的最小裁剪值
-    target_clip_max: float = 6.0                     # 风险监督目标的最大裁剪值
-    short_horizon: int = 20                          # rollout 步数 H（解释短期安全标签）
-    safe_distance_base: float = 0.5                  # d0：基础安全距离
-    safe_distance_kv: float = 0.5                    # kv：速度相关的安全距离增量
-
-    def __post_init__(self) -> None:  # type: ignore[override]
-        if self.progress_weight < 0:
-            raise ValueError("progress_weight must be non-negative")
-        if self.risk_weight < 0:
-            raise ValueError("risk_weight must be non-negative")
-        if self.distance_weight < 0:
-            raise ValueError("distance_weight must be non-negative")
-        if self.angle_weight < 0:
-            raise ValueError("angle_weight must be non-negative")
-        if self.update_batch_size <= 0:
-            raise ValueError("update_batch_size must be positive")
-        if self.min_buffer_size < 0:
-            raise ValueError("min_buffer_size must be non-negative")
-        if self.max_buffer_size <= 0:
-            raise ValueError("max_buffer_size must be positive")
-        if self.target_clip_min < 0:
-            raise ValueError("target_clip_min must be non-negative")
-        if self.target_clip_max <= self.target_clip_min:
-            raise ValueError("target_clip_max must be greater than target_clip_min")
-
-
-@dataclass(frozen=True)
-class HighLevelCostConfig:
-    """Configuration for the long-horizon high-level cost critic (Q_c^H)."""
-
-    gamma_H: float = 1.0
-    lambda_col: float = 1.0
-    lambda_near: float = 0.2
-    safe_cost_threshold: float = 2.0
-    aux_align_weight: float = 0.3
-    update_batch_size: int = 64
-    min_buffer_size: int = 256
-    max_buffer_size: int = 4096
-    lr: float = 1e-3
+        if self.frontier_num_candidates <= 0:
+            raise ValueError("frontier_num_candidates must be positive")
+        if self.frontier_min_dist <= 0:
+            raise ValueError("frontier_min_dist must be positive")
+        if self.frontier_max_dist <= 0:
+            raise ValueError("frontier_max_dist must be positive")
+        if self.frontier_gap_min_width <= 0:
+            raise ValueError("frontier_gap_min_width must be positive")
+        if self.consistency_lambda < 0:
+            raise ValueError("consistency_lambda must be non-negative")
+        if self.consistency_sigma_r <= 0:
+            raise ValueError("consistency_sigma_r must be positive")
+        if self.consistency_sigma_theta <= 0:
+            raise ValueError("consistency_sigma_theta must be positive")
 
 
 @dataclass(frozen=True)
@@ -274,8 +233,6 @@ class IntegrationConfig:
     motion: MotionConfig = field(default_factory=MotionConfig)                    # 运动配置
     trigger: TriggerConfig = field(default_factory=TriggerConfig)                 # 触发配置
     planner: PlannerConfig = field(default_factory=PlannerConfig)                 # 规划器配置
-    safety_critic: SafetyCriticConfig = field(default_factory=SafetyCriticConfig) # Safety-Critic配置
-    high_level_cost: HighLevelCostConfig = field(default_factory=HighLevelCostConfig)  # 长期成本Critic配置
     low_level_reward: LowLevelRewardConfig = field(default_factory=LowLevelRewardConfig)  # 低层奖励配置
     high_level_reward: HighLevelRewardConfig = field(default_factory=HighLevelRewardConfig)  # 高层奖励配置
     training: TrainingConfig = field(default_factory=TrainingConfig)              # 训练配置
@@ -286,8 +243,6 @@ class IntegrationConfig:
         motion: MotionConfig | None = None,
         trigger: TriggerConfig | None = None,
         planner: PlannerConfig | None = None,
-        safety_critic: SafetyCriticConfig | None = None,
-        high_level_cost: HighLevelCostConfig | None = None,
         low_level_reward: LowLevelRewardConfig | None = None,
         high_level_reward: HighLevelRewardConfig | None = None,
         training: TrainingConfig | None = None,
@@ -298,8 +253,6 @@ class IntegrationConfig:
             motion=motion or self.motion,
             trigger=trigger or self.trigger,
             planner=planner or self.planner,
-            safety_critic=safety_critic or self.safety_critic,
-            high_level_cost=high_level_cost or self.high_level_cost,
             low_level_reward=low_level_reward or self.low_level_reward,
             high_level_reward=high_level_reward or self.high_level_reward,
             training=training or self.training,
@@ -335,16 +288,6 @@ class ConfigBundle:
         """便捷属性：直接访问高层奖励配置"""
         return self.integration.high_level_reward
 
-    @property
-    def safety_critic(self) -> SafetyCriticConfig:
-        """便捷属性：直接访问安全评估模型配置"""
-        return self.integration.safety_critic
-
-    @property
-    def high_level_cost(self) -> HighLevelCostConfig:
-        """便捷属性：直接访问高层成本评估配置"""
-        return self.integration.high_level_cost
-
 
 # 模块导出列表
 __all__ = [
@@ -352,8 +295,6 @@ __all__ = [
     "MotionConfig",
     "TriggerConfig",
     "PlannerConfig",
-    "SafetyCriticConfig",
-    "HighLevelCostConfig",
     "LowLevelRewardConfig",
     "HighLevelRewardConfig",
     "TrainingConfig",
