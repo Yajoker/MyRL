@@ -256,10 +256,14 @@ def evaluate(
             window_metrics: dict = {}
             goal_info = [distance, cos, sin]  # 目标信息
 
+            scan_arr = np.asarray(latest_scan, dtype=np.float32)
+            risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+
             trigger_flags = system.high_level_planner.check_triggers(
                 latest_scan,  # 最新激光数据
                 robot_pose,  # 机器人位姿
                 goal_info,  # 目标信息
+                risk_index=risk_index,
                 current_step=steps,  # 当前步数
                 window_metrics=None,  # 窗口指标
             )
@@ -360,10 +364,7 @@ def evaluate(
                 delta_ang = float(ang_cmd - prev_env_action[1])  # 角速度变化
                 action_delta = [delta_lin, delta_ang]  # 动作变化量
 
-            # 计算最小障碍物距离
-            scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
-            finite_scan = scan_arr[np.isfinite(scan_arr)]  # 有限值扫描
-            min_obstacle_distance = float(np.percentile(finite_scan, 10)) if finite_scan.size else 8.0  # 最小障碍距离
+            min_obstacle_distance = float(d_percentile) if np.isfinite(d_percentile) else 8.0  # 最小障碍距离
             # 检查终止条件
             just_reached_subgoal = False  # 刚刚到达子目标标志
             if not current_subgoal_completed:  # 如果当前子目标未完成
@@ -588,10 +589,14 @@ def main(args=None):
             waypoint_sequence: list = []
             goal_info = [distance, cos, sin]  # 目标信息
 
+            scan_arr = np.asarray(latest_scan, dtype=np.float32)
+            risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+
             trigger_flags = system.high_level_planner.check_triggers(
                 latest_scan,  # 最新激光数据
                 robot_pose,  # 机器人位姿
                 goal_info,  # 目标信息
+                risk_index=risk_index,
                 current_step=steps,  # 当前步数
                 window_metrics=None,  # 窗口指标
             )
@@ -771,9 +776,7 @@ def main(args=None):
                 delta_ang = float(executed_action[1] - prev_env_action[1])  # 角速度变化
                 action_delta = [delta_lin, delta_ang]  # 动作变化量
 
-            # 计算最小障碍物距离
-            scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
-            risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+            # 计算最小障碍物距离（复用本步开始时的风险统计）
             min_obstacle_distance = float(d_percentile) if np.isfinite(d_percentile) else 8.0  # 最小障碍距离
             if current_subgoal_context is not None:  # 如果有当前子目标上下文
                 current_subgoal_context.min_dmin = min(  # 更新最小障碍距离

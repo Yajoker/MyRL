@@ -340,13 +340,11 @@ class HighLevelPlanner:
         laser_scan,
         robot_pose,
         goal_info,
+        risk_index: float,
         current_step: int = 0,
         window_metrics: Optional[dict] = None,
     ) -> TriggerFlags:
         goal_distance = float(goal_info[0]) if goal_info else float("inf")
-        laser_scan = np.asarray(laser_scan, dtype=np.float32)
-
-        risk_index, _, _ = self.compute_risk_index(laser_scan)
         self.event_trigger.update_progress(goal_distance, current_step)
 
         dist_to_subgoal, _ = self.get_relative_subgoal(robot_pose)

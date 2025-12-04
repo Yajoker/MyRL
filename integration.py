@@ -129,10 +129,14 @@ class HierarchicalNavigationSystem:
 
         goal_info = [goal_distance, goal_cos, goal_sin]  # 目标信息
 
+        scan_arr = np.asarray(laser_scan, dtype=np.float32)
+        risk_index, _, _ = self.high_level_planner.compute_risk_index(scan_arr)
+
         trigger_flags = self.high_level_planner.check_triggers(
             laser_scan,  # 激光数据
             robot_pose,  # 机器人位姿
             goal_info,  # 目标信息
+            risk_index=risk_index,
             current_step=self.step_count,  # 当前步数
             window_metrics=None,  # 窗口指标
         )
