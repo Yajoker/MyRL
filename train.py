@@ -256,16 +256,17 @@ def evaluate(
             window_metrics: dict = {}
             goal_info = [distance, cos, sin]  # 目标信息
 
+            trigger_flags = system.high_level_planner.check_triggers(
+                latest_scan,  # 最新激光数据
+                robot_pose,  # 机器人位姿
+                goal_info,  # 目标信息
+                current_step=steps,  # 当前步数
+                window_metrics=None,  # 窗口指标
+            )
             # 检查是否需要重新规划
             should_replan = (
                 system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
-                or system.high_level_planner.check_triggers(  # 或触发器条件满足
-                    latest_scan,  # 最新激光数据
-                    robot_pose,  # 机器人位姿
-                    goal_info,  # 目标信息
-                    current_step=steps,  # 当前步数
-                    window_metrics=None,  # 窗口指标
-                )
+                or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
             )
 
             subgoal_distance: Optional[float] = None  # 子目标距离
@@ -286,7 +287,8 @@ def evaluate(
                 )
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
-                system.high_level_planner.event_trigger.reset_time(steps)  # 重置事件触发器时间
+                # 仅在成功生成新子目标后重置事件触发时间
+                system.high_level_planner.event_trigger.reset_time(steps)
                 if current_subgoal_world is None:  # 如果没有子目标世界坐标
                     current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)  # 计算子目标世界坐标
                 current_subgoal_completed = False  # 重置子目标完成标志
@@ -586,16 +588,17 @@ def main(args=None):
             waypoint_sequence: list = []
             goal_info = [distance, cos, sin]  # 目标信息
 
+            trigger_flags = system.high_level_planner.check_triggers(
+                latest_scan,  # 最新激光数据
+                robot_pose,  # 机器人位姿
+                goal_info,  # 目标信息
+                current_step=steps,  # 当前步数
+                window_metrics=None,  # 窗口指标
+            )
             # 检查是否需要重新规划子目标
             should_replan = (
                 system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
-                or system.high_level_planner.check_triggers(  # 或触发器条件满足
-                    latest_scan,  # 最新激光数据
-                    robot_pose,  # 机器人位姿
-                    goal_info,  # 目标信息
-                    current_step=steps,  # 当前步数
-                    window_metrics=None,  # 窗口指标
-                )
+                or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
             )
 
             metadata = {}  # 元数据字典
@@ -642,7 +645,8 @@ def main(args=None):
                 )
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
-                system.high_level_planner.event_trigger.reset_time(steps)  # 重置事件触发器时间
+                # 生成新的子目标后统一重置事件触发时间
+                system.high_level_planner.event_trigger.reset_time(steps)
                 if current_subgoal_world is None:  # 如果没有子目标世界坐标
                     current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)  # 计算子目标世界坐标
 

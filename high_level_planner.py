@@ -1,6 +1,7 @@
 """高层规划器：事件触发的前沿候选 + 统一价值网络 (E-FVQ)。"""
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -164,6 +165,15 @@ class EventTrigger:
         self.last_trigger_step = -self.min_step_interval
         self.best_goal_distance = None
         self.last_progress_step = 0
+
+
+@dataclass
+class TriggerFlags:
+    time_ready: bool
+    time_over: bool
+    progress_stagnant: bool
+    risk: bool
+    subgoal_reached: bool
 
 
 class HighLevelPlanner:
@@ -332,10 +342,7 @@ class HighLevelPlanner:
         goal_info,
         current_step: int = 0,
         window_metrics: Optional[dict] = None,
-    ) -> bool:
-        if not self.event_trigger.can_replan(current_step):
-            return False
-
+    ) -> TriggerFlags:
         goal_distance = float(goal_info[0]) if goal_info else float("inf")
         laser_scan = np.asarray(laser_scan, dtype=np.float32)
 
@@ -344,15 +351,24 @@ class HighLevelPlanner:
 
         dist_to_subgoal, _ = self.get_relative_subgoal(robot_pose)
 
+        time_ready = self.event_trigger.can_replan(current_step)
         time_event = self.event_trigger.time_upper_bound(current_step)
         risk_event = self.event_trigger.risk_trigger(risk_index)
         progress_event = self.event_trigger.global_progress_stagnant(goal_distance, current_step)
         subgoal_event = self.event_trigger.subgoal_reached(dist_to_subgoal)
 
-        trigger_new_subgoal = time_event or risk_event or progress_event or subgoal_event
-        if trigger_new_subgoal:
-            self.event_trigger.reset_time(current_step)
-        return trigger_new_subgoal
+        return TriggerFlags(
+            time_ready=time_ready,
+            time_over=time_event,
+            progress_stagnant=progress_event,
+            risk=risk_event,
+            subgoal_reached=subgoal_event,
+        )
+
+    def should_replan(self, flags: TriggerFlags) -> bool:
+        if not flags.time_ready:
+            return False
+        return flags.time_over or flags.progress_stagnant or flags.risk or flags.subgoal_reached
 
     # ------------------------- 子目标生成 -------------------------
     def _generate_frontier_candidates(self, laser_scan: np.ndarray, goal_distance: float, goal_cos: float, goal_sin: float) -> List[Tuple[float, float]]:
@@ -395,7 +411,11 @@ class HighLevelPlanner:
         return candidates
 
     def _select_best_subgoal(
-        self, laser_scan, goal_info: Tuple[float, float, float], candidates: List[Tuple[float, float]]
+        self,
+        laser_scan,
+        goal_info: Tuple[float, float, float],
+        candidates: List[Tuple[float, float]],
+        robot_pose: Optional[Sequence[float]] = None,
     ) -> Tuple[float, float]:
         if not candidates:
             goal_distance, goal_cos, goal_sin = goal_info
@@ -419,20 +439,23 @@ class HighLevelPlanner:
         with torch.no_grad():
             q_vals = self.value_net(laser_batch, goal_batch, geom_t).cpu().numpy()
 
-        if self.current_subgoal is not None:
-            last_r, last_theta = self.current_subgoal
-            lambda_cons = self.consistency_lambda
-            sigma_r = self.consistency_sigma_r
-            sigma_theta = self.consistency_sigma_theta
-            bonuses = []
-            for (r, theta) in candidates:
-                dr = (r - last_r) / sigma_r
-                dtheta = (theta - last_theta) / sigma_theta
-                bonus = math.exp(-0.5 * (dr * dr + dtheta * dtheta))
-                bonuses.append(lambda_cons * bonus)
-            scores = q_vals + np.asarray(bonuses, dtype=np.float32)
-        else:
-            scores = q_vals
+        scores = q_vals
+
+        if robot_pose is not None and self.current_subgoal_world is not None:
+            last_r, last_theta = self.get_relative_subgoal(robot_pose)
+            if last_r is not None:
+                lambda_cons = self.consistency_lambda
+                sigma_r = max(self.consistency_sigma_r, 1e-6)
+                sigma_theta = max(self.consistency_sigma_theta, 1e-6)
+
+                bonuses: List[float] = []
+                for (r, theta) in candidates:
+                    dr = (r - last_r) / sigma_r
+                    dtheta = (theta - last_theta) / sigma_theta
+                    bonus = math.exp(-0.5 * (dr * dr + dtheta * dtheta))
+                    bonuses.append(lambda_cons * bonus)
+
+                scores = q_vals + np.asarray(bonuses, dtype=np.float32)
 
         best_idx = int(np.argmax(scores))
         best_r, best_theta = candidates[best_idx]
@@ -453,7 +476,12 @@ class HighLevelPlanner:
         goal_info = (float(goal_distance), float(goal_cos), float(goal_sin))
 
         candidates = self._generate_frontier_candidates(laser_scan, *goal_info)
-        final_distance, final_angle = self._select_best_subgoal(laser_scan, goal_info, candidates)
+        final_distance, final_angle = self._select_best_subgoal(
+            laser_scan,
+            goal_info,
+            candidates,
+            robot_pose=robot_pose,
+        )
 
         world_target = None
         if robot_pose is not None:
