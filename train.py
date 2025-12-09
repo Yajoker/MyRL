@@ -343,6 +343,19 @@ def evaluate(
                 ang_velocity=ang_cmd,  # 角速度
             )
 
+            # 使用动作后的激光数据计算奖励所需的最小障碍距离
+            post_scan = np.asarray(latest_scan, dtype=np.float32)
+            finite_scan = post_scan[np.isfinite(post_scan)]
+            if finite_scan.size > 0:
+                risk_percentile = getattr(
+                    system.high_level_planner.event_trigger, "risk_percentile", 10.0
+                )
+                min_obstacle_distance = float(
+                    np.percentile(finite_scan, risk_percentile)
+                )
+            else:
+                min_obstacle_distance = 8.0
+
             # 更新子目标距离
             next_pose = get_robot_pose(sim)  # 获取下一时刻机器人位姿
             post_window_metrics: dict = {}
@@ -364,7 +377,6 @@ def evaluate(
                 delta_ang = float(ang_cmd - prev_env_action[1])  # 角速度变化
                 action_delta = [delta_lin, delta_ang]  # 动作变化量
 
-            min_obstacle_distance = float(d_percentile) if np.isfinite(d_percentile) else 8.0  # 最小障碍距离
             # 检查终止条件
             just_reached_subgoal = False  # 刚刚到达子目标标志
             if not current_subgoal_completed:  # 如果当前子目标未完成
@@ -736,6 +748,19 @@ def main(args=None):
                 ang_velocity=ang_cmd,  # 角速度
             )
 
+            # 使用动作后的激光数据刷新奖励所需的最小障碍距离
+            post_scan = np.asarray(latest_scan, dtype=np.float32)
+            finite_scan = post_scan[np.isfinite(post_scan)]
+            if finite_scan.size > 0:
+                risk_percentile = getattr(
+                    system.high_level_planner.event_trigger, "risk_percentile", 10.0
+                )
+                min_obstacle_distance = float(
+                    np.percentile(finite_scan, risk_percentile)
+                )
+            else:
+                min_obstacle_distance = 8.0
+
             # 更新子目标距离
             next_pose = get_robot_pose(sim)  # 获取下一时刻机器人位姿
             post_window_metrics: dict = {}
@@ -776,8 +801,6 @@ def main(args=None):
                 delta_ang = float(executed_action[1] - prev_env_action[1])  # 角速度变化
                 action_delta = [delta_lin, delta_ang]  # 动作变化量
 
-            # 计算最小障碍物距离（复用本步开始时的风险统计）
-            min_obstacle_distance = float(d_percentile) if np.isfinite(d_percentile) else 8.0  # 最小障碍距离
             if current_subgoal_context is not None:  # 如果有当前子目标上下文
                 current_subgoal_context.min_dmin = min(  # 更新最小障碍距离
                     current_subgoal_context.min_dmin,
