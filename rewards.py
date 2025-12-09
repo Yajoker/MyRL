@@ -116,40 +116,53 @@ def compute_high_level_reward(
     short_cost_sum: float = 0.0,
     near_obstacle_steps: int = 0,
     **kwargs,
-) -> Tuple[float, Dict[str, float]]:
-    """计算高层规划器的奖励，统一进展、安全与时间成本。
+) -> Tuple[Tuple[float, float], Dict[str, float]]:
+    """计算高层规划器的效率回报与安全成本。
 
-    设计目标：
-    - 按简化公式 Gi = alpha * Δd_global - beta_col * I[collision] - beta_time * T
-    - 仅聚焦全局进展、碰撞与时间成本，便于 Advantage-RWR 直接利用。
+    返回 (r_eff, c_safe) 二元组：
+    - r_eff：效率回报，越大越好；
+    - c_safe：安全成本，正值且越大越不安全（训练时作为监督信号）。
     """
     components: Dict[str, float] = {}
 
     # 全局距离进展
-    delta_global = start_goal_distance - end_goal_distance
-    progress_reward = config.alpha_global_progress * float(delta_global)
+    delta_global = float(start_goal_distance - end_goal_distance)
+    progress_reward = float(config.alpha_global_progress * delta_global)
     components["global_progress"] = float(progress_reward)
 
-    collision_penalty = config.beta_collision if collision else 0.0
-    components["collision_penalty"] = float(-collision_penalty)
-
-    time_penalty = config.beta_time * float(max(subgoal_step_count, 0))
+    # 时间成本（作为效率回报中的惩罚项）
+    time_penalty = float(config.beta_time * float(max(subgoal_step_count, 0)))
     components["time_penalty"] = float(-time_penalty)
 
-    safety_cost = config.gamma_short_cost * float(short_cost_sum)
-    near_penalty = config.gamma_near_steps * float(max(near_obstacle_steps, 0))
-    components["safety_cost"] = float(-safety_cost)
-    components["near_steps"] = float(-near_penalty)
+    # 效率回报：进展奖励 - 时间惩罚
+    reward_eff = progress_reward - time_penalty
+    components["eff_reward"] = float(reward_eff)
 
-    total_reward = progress_reward - collision_penalty - time_penalty - safety_cost - near_penalty
-    return float(total_reward), components
+    # 安全成本：碰撞 + 短距离风险 + 近障步数
+    collision_cost = float(config.beta_collision) if collision else 0.0
+    short_cost_term = float(config.gamma_short_cost * max(short_cost_sum, 0.0))
+    near_cost_term = float(config.gamma_near_steps * max(near_obstacle_steps, 0))
+    safety_cost = collision_cost + short_cost_term + near_cost_term
+
+    components["collision_cost"] = float(-collision_cost)
+    components["short_cost_term"] = float(-short_cost_term)
+    components["near_cost_term"] = float(-near_cost_term)
+    components["safety_cost_total"] = float(-safety_cost)
+
+    total_reward = reward_eff - safety_cost
+    components["total_reward"] = float(total_reward)
+
+    return (float(reward_eff), float(safety_cost)), components
 
 
 # ================================================================
 #  短期安全成本计算（供高层成本/安全统计使用）
 # ================================================================
 def compute_step_safety_cost(risk_index: float, collision: bool, *, config: HighLevelRewardConfig) -> float:
-    """Compute the per-step safety cost using the unified risk index."""
+    """Compute the per-step safety cost using the unified risk index.
+
+    每步成本会累计到高层的安全成本监督信号中。
+    """
 
     cost = float(config.lambda_near) * float(max(risk_index, 0.0))
     if collision:

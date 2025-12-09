@@ -252,19 +252,20 @@ class RolloutReplayBuffer(object):
 
 
 class HighLevelReplayBuffer:
-    """Simple replay buffer for high-level (state, action, reward, done, next_state) tuples."""
+    """Simple replay buffer for high-level (state, action, r_eff, c_safe, done, next_state) tuples."""
 
     def __init__(self, buffer_size: int, random_seed: int = 666) -> None:
-        self._buffer: Deque[Tuple[np.ndarray, np.ndarray, float, float, np.ndarray]] = deque(maxlen=buffer_size)
+        self._buffer: Deque[Tuple[np.ndarray, np.ndarray, float, float, float, np.ndarray]] = deque(maxlen=buffer_size)
         random.seed(random_seed)
 
-    def add(self, state, action, reward, done, next_state) -> None:
+    def add(self, state, action, reward_eff: float, safety_cost: float, done: bool, next_state) -> None:
         state_arr = np.asarray(state, dtype=np.float32)
         action_arr = np.asarray(action, dtype=np.float32)
         next_state_arr = np.asarray(next_state, dtype=np.float32)
-        reward_val = float(reward)
+        reward_val = float(reward_eff)
+        safety_val = float(safety_cost)
         done_val = float(done)
-        self._buffer.append((state_arr, action_arr, reward_val, done_val, next_state_arr))
+        self._buffer.append((state_arr, action_arr, reward_val, safety_val, done_val, next_state_arr))
 
     def size(self) -> int:
         return len(self._buffer)
@@ -273,10 +274,11 @@ class HighLevelReplayBuffer:
         batch = random.sample(self._buffer, min(batch_size, len(self._buffer)))
         states = np.stack([entry[0] for entry in batch])
         actions = np.stack([entry[1] for entry in batch])
-        rewards = np.array([entry[2] for entry in batch], dtype=np.float32)
-        dones = np.array([entry[3] for entry in batch], dtype=np.float32)
-        next_states = np.stack([entry[4] for entry in batch])
-        return states, actions, rewards, dones, next_states
+        rewards_eff = np.array([entry[2] for entry in batch], dtype=np.float32)
+        safety_costs = np.array([entry[3] for entry in batch], dtype=np.float32)
+        dones = np.array([entry[4] for entry in batch], dtype=np.float32)
+        next_states = np.stack([entry[5] for entry in batch])
+        return states, actions, rewards_eff, safety_costs, dones, next_states
 
     def clear(self) -> None:
         self._buffer.clear()
