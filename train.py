@@ -85,7 +85,7 @@ def finalize_subgoal_transition(
     collision_flag = collision or context.collision_occurred
 
     # 计算高层奖励
-    reward, components = compute_high_level_reward(  # 调用高层奖励计算函数
+    (reward_eff, safety_cost), components = compute_high_level_reward(  # 调用高层奖励计算函数
         start_goal_distance=context.start_goal_distance,  # 开始目标距离
         end_goal_distance=context.last_goal_distance,  # 结束目标距离
         subgoal_step_count=context.steps,  # 子目标步数
@@ -111,7 +111,8 @@ def finalize_subgoal_transition(
     buffer.add(
         context.start_state.astype(np.float32, copy=False),
         context.action.astype(np.float32, copy=False),
-        float(reward),
+        float(reward_eff),
+        float(safety_cost),
         float(done),
         last_state.astype(np.float32, copy=False),
     )
@@ -138,10 +139,18 @@ def maybe_train_high_level(
     if buffer.size() < batch_size:
         return None
 
-    states, actions, rewards, dones, next_states = buffer.sample(batch_size)
+    states, actions, rewards_eff, safety_costs, dones, next_states = buffer.sample(batch_size)
 
     # 更新规划器
-    metrics = planner.update_planner(states, actions, rewards, dones, next_states, batch_size=batch_size)  # 更新高层规划器
+    metrics = planner.update_planner(
+        states,
+        actions,
+        rewards_eff,
+        safety_costs,
+        dones,
+        next_states,
+        batch_size=batch_size,
+    )  # 更新高层规划器
     return metrics  # 返回训练指标
 
 

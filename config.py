@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -165,6 +166,10 @@ class PlannerConfig:
     consistency_sigma_r: float = 1.0
     consistency_sigma_theta: float = 0.5
 
+    # === 新增：多目标 Q 组合相关超参 ===
+    safety_q_weight: float = 1.0       # λ_q: 决策时 Q_safe 的权重
+    safety_loss_weight: float = 1.0    # λ_safe_loss: 训练时安全头 loss 的权重
+
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -186,6 +191,10 @@ class PlannerConfig:
             raise ValueError("consistency_sigma_r must be positive")
         if self.consistency_sigma_theta <= 0:
             raise ValueError("consistency_sigma_theta must be positive")
+        if self.safety_q_weight < 0:
+            raise ValueError("safety_q_weight must be non-negative")
+        if self.safety_loss_weight < 0:
+            raise ValueError("safety_loss_weight must be non-negative")
 
 
 @dataclass(frozen=True)
