@@ -265,14 +265,15 @@ def evaluate(
             window_metrics: dict = {}
             goal_info = [distance, cos, sin]  # 目标信息
 
+            # 动作前：用当前激光计算风险，只用于事件触发
             scan_arr = np.asarray(latest_scan, dtype=np.float32)
-            risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+            pre_risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
 
             trigger_flags = system.high_level_planner.check_triggers(
                 latest_scan,  # 最新激光数据
                 robot_pose,  # 机器人位姿
                 goal_info,  # 目标信息
-                risk_index=risk_index,
+                risk_index=pre_risk_index,
                 current_step=steps,  # 当前步数
                 window_metrics=None,  # 窗口指标
             )
@@ -610,14 +611,15 @@ def main(args=None):
             waypoint_sequence: list = []
             goal_info = [distance, cos, sin]  # 目标信息
 
+            # 动作前：用当前激光计算风险，只用于事件触发
             scan_arr = np.asarray(latest_scan, dtype=np.float32)
-            risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+            pre_risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
 
             trigger_flags = system.high_level_planner.check_triggers(
                 latest_scan,  # 最新激光数据
                 robot_pose,  # 机器人位姿
                 goal_info,  # 目标信息
-                risk_index=risk_index,
+                risk_index=pre_risk_index,
                 current_step=steps,  # 当前步数
                 window_metrics=None,  # 窗口指标
             )
@@ -770,6 +772,9 @@ def main(args=None):
             else:
                 min_obstacle_distance = 8.0
 
+            # 使用动作后的激光重新计算风险，用于安全成本统计
+            post_risk_index, _, _ = system.high_level_planner.compute_risk_index(post_scan)
+
             # 更新子目标距离
             next_pose = get_robot_pose(sim)  # 获取下一时刻机器人位姿
             post_window_metrics: dict = {}
@@ -816,12 +821,12 @@ def main(args=None):
                     min_obstacle_distance,
                 )
                 step_cost = compute_step_safety_cost(
-                    risk_index,
+                    post_risk_index,
                     collision,
                     config=high_reward_cfg,
                 )
                 current_subgoal_context.short_cost_sum += step_cost
-                if risk_index >= trigger_cfg.risk_near_threshold:
+                if post_risk_index >= trigger_cfg.risk_near_threshold:
                     current_subgoal_context.near_obstacle_steps += 1
                 if collision:  # 如果碰撞
                     current_subgoal_context.collision_occurred = True  # 标记碰撞发生
