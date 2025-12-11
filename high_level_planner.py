@@ -392,22 +392,46 @@ class HighLevelPlanner:
     # ------------------------- 子目标生成 -------------------------
     def _generate_frontier_candidates(self, laser_scan: np.ndarray, goal_distance: float, goal_cos: float, goal_sin: float) -> List[Tuple[float, float]]:
         scan = np.asarray(laser_scan, dtype=np.float32)
-        scan = np.nan_to_num(scan, nan=0.0, posinf=self.frontier_max_distance, neginf=0.0)
+        scan = np.nan_to_num(
+            scan,
+            nan=self.frontier_max_distance,
+            posinf=self.frontier_max_distance,
+            neginf=0.0,
+        )
+        scan = np.clip(scan, 0.0, self.frontier_max_distance)
 
         n = scan.shape[0]
         angles = np.linspace(-math.pi, math.pi, n, endpoint=False)
 
-        frontier_dist = max(self.frontier_min_distance, 0.8 * self.frontier_max_distance)
-        mask = scan >= frontier_dist
+        safe_dist = max(float(self.event_trigger.safety_trigger_distance), float(self.frontier_min_distance))
+        valid = scan[scan > safe_dist]
+        if valid.size > 0:
+            perc = float(np.percentile(valid, 70.0))
+            raw_frontier_dist = max(safe_dist + 0.25, perc)
+        else:
+            raw_frontier_dist = safe_dist + 0.25
+
+        frontier_max = float(self.frontier_max_distance)
+        frontier_dist = min(frontier_max, raw_frontier_dist)
+        mask_frontier = scan >= frontier_dist
+
+        diffs = np.abs(np.diff(scan, append=scan[0]))
+        delta_d = max(0.4, 0.5 * safe_dist)
+        jump_mask = np.zeros_like(scan, dtype=bool)
+        for i_diff in range(n):
+            if diffs[i_diff] > delta_d and max(scan[i_diff], scan[(i_diff + 1) % n]) > safe_dist:
+                jump_mask[i_diff] = True
+
+        combined_mask = mask_frontier | jump_mask
 
         candidates: List[Tuple[float, float]] = []
         i = 0
         while i < n:
-            if not mask[i]:
+            if not combined_mask[i]:
                 i += 1
                 continue
             start = i
-            while i + 1 < n and mask[i + 1]:
+            while i + 1 < n and combined_mask[i + 1]:
                 i += 1
             end = i
             width = angles[end] - angles[start]
