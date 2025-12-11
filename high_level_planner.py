@@ -487,8 +487,8 @@ class HighLevelPlanner:
 
         self.value_net.eval()
         scan = np.asarray(laser_scan, dtype=np.float32)
-        scan = np.nan_to_num(scan, nan=0.0, posinf=self.frontier_max_distance, neginf=0.0)
-
+        scan = np.nan_to_num(scan, nan=self.frontier_max_distance, posinf=self.frontier_max_distance, neginf=0.0)
+        scan = np.clip(scan, 0.0, self.frontier_max_distance)
         laser_t = torch.as_tensor(scan[None, :], dtype=torch.float32, device=self.device)
         dummy_waypoints = self.build_waypoint_features(waypoints=None, robot_pose=None)
         goal_t_single = self.process_goal_info(goal_info[0], goal_info[1], goal_info[2], dummy_waypoints)
