@@ -169,6 +169,8 @@ class PlannerConfig:
     # === 新增：多目标 Q 组合相关超参 ===
     safety_q_weight: float = 1.0       # λ_q: 决策时 Q_safe 的权重
     safety_loss_weight: float = 1.0    # λ_safe_loss: 训练时安全头 loss 的权重
+    high_level_gamma: float = 0.99     # 高层 TD 折扣因子
+    high_level_tau: float = 0.005      # 高层目标网络软更新系数
 
 
     def __post_init__(self) -> None:  # type: ignore[override]
@@ -195,6 +197,10 @@ class PlannerConfig:
             raise ValueError("safety_q_weight must be non-negative")
         if self.safety_loss_weight < 0:
             raise ValueError("safety_loss_weight must be non-negative")
+        if not 0 < self.high_level_gamma <= 1:
+            raise ValueError("high_level_gamma must be in (0, 1]")
+        if not 0 < self.high_level_tau <= 1:
+            raise ValueError("high_level_tau must be in (0, 1]")
 
 
 @dataclass(frozen=True)

@@ -28,10 +28,17 @@ class HighLevelValueNet(nn.Module):
         self.subgoal_embed = nn.Linear(geom_dim, 16)
 
         cnn_out_dim = self._get_cnn_output_dim(belief_dim)
-        self.fc1 = nn.Linear(cnn_out_dim + 64 + 16, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
-        self.q_eff_head = nn.Linear(hidden_dim // 2, 1)
-        self.q_safe_head = nn.Linear(hidden_dim // 2, 1)
+        concat_dim = cnn_out_dim + 64 + 16
+
+        self.shared_fc1 = nn.Linear(concat_dim, hidden_dim)
+        self.shared_fc2 = nn.Linear(hidden_dim, hidden_dim)
+
+        branch_hidden_dim = hidden_dim // 2
+        self.eff_fc = nn.Linear(hidden_dim, branch_hidden_dim)
+        self.q_eff_head = nn.Linear(branch_hidden_dim, 1)
+
+        self.safe_fc = nn.Linear(hidden_dim, branch_hidden_dim)
+        self.q_safe_head = nn.Linear(branch_hidden_dim, 1)
 
     def _get_cnn_output_dim(self, belief_dim: int) -> int:
         dummy = torch.zeros(1, 1, belief_dim)
@@ -57,11 +64,14 @@ class HighLevelValueNet(nn.Module):
         geom = F.relu(self.subgoal_embed(subgoal_geom))
 
         h = torch.cat([x, g, geom], dim=1)
-        h = F.relu(self.fc1(h))
-        h = F.relu(self.fc2(h))
+        h_shared = F.relu(self.shared_fc1(h))
+        h_shared = F.relu(self.shared_fc2(h_shared))
 
-        q_eff = self.q_eff_head(h).squeeze(-1)
-        q_safe = self.q_safe_head(h).squeeze(-1)
+        h_eff = F.relu(self.eff_fc(h_shared))
+        q_eff = self.q_eff_head(h_eff).squeeze(-1)
+
+        h_safe = F.relu(self.safe_fc(h_shared))
+        q_safe = self.q_safe_head(h_safe).squeeze(-1)
 
         if return_heads:
             return q_eff, q_safe
@@ -237,6 +247,15 @@ class HighLevelPlanner:
 
         self.value_net = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(self.device)
         self.value_net.safety_q_weight = self.safety_q_weight
+        self.target_value_net = HighLevelValueNet(
+            belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
+        ).to(self.device)
+        self.target_value_net.load_state_dict(self.value_net.state_dict())
+        self.target_value_net.safety_q_weight = self.safety_q_weight
+        for p in self.target_value_net.parameters():
+            p.requires_grad = False
+        self.gamma_high = getattr(self.planner_config, "high_level_gamma", 0.99)
+        self.tau_high = getattr(self.planner_config, "high_level_tau", 0.005)
         self.value_optimizer = torch.optim.Adam(self.value_net.parameters(), lr=1e-3)
         self.value_loss_fn = nn.MSELoss()
 
@@ -548,6 +567,11 @@ class HighLevelPlanner:
         return final_distance, final_angle, metadata
 
     # ------------------------- 训练 -------------------------
+    def _soft_update_target(self) -> None:
+        tau = self.tau_high
+        for param, target_param in zip(self.value_net.parameters(), self.target_value_net.parameters()):
+            target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
+
     def update_planner(
         self,
         states,
@@ -564,19 +588,71 @@ class HighLevelPlanner:
         actions_t = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         rewards_eff_t = torch.as_tensor(rewards_eff, dtype=torch.float32, device=self.device)
         safety_costs_t = torch.as_tensor(safety_costs, dtype=torch.float32, device=self.device)
+        next_states_t = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
+        dones_t = torch.as_tensor(dones, dtype=torch.float32, device=self.device)
+        not_done = 1.0 - dones_t
 
         laser_dim = states_t.shape[1] - self.goal_feature_dim
         laser_t = states_t[:, :laser_dim]
         goal_t = states_t[:, laser_dim:]
 
+        laser_next_t = next_states_t[:, :laser_dim]
+        goal_next_t = next_states_t[:, laser_dim:]
+
+        with torch.no_grad():
+            self.target_value_net.eval()
+            laser_next_np = (laser_next_t.cpu().numpy() * 7.0).astype(np.float32)
+            goal_next_np = goal_next_t.cpu().numpy().astype(np.float32)
+
+            norm_dist = goal_next_np[:, 0]
+            cos_next = goal_next_np[:, 1]
+            sin_next = goal_next_np[:, 2]
+            goal_dist_next = norm_dist * 30.0
+
+            q_eff_next_list = []
+            q_safe_next_list = []
+
+            for i in range(states_t.shape[0]):
+                scan_next = laser_next_np[i]
+                gd = float(goal_dist_next[i])
+                gc = float(cos_next[i])
+                gs = float(sin_next[i])
+
+                candidates = self._generate_frontier_candidates(scan_next, gd, gc, gs)
+                if not candidates:
+                    q_eff_next_list.append(0.0)
+                    q_safe_next_list.append(0.0)
+                    continue
+
+                subgoals = torch.tensor(candidates, dtype=torch.float32, device=self.device)
+                laser_i = torch.tensor(scan_next / 7.0, dtype=torch.float32, device=self.device).unsqueeze(0)
+                laser_i = laser_i.repeat(subgoals.size(0), 1)
+                goal_i = torch.tensor(goal_next_np[i], dtype=torch.float32, device=self.device).unsqueeze(0)
+                goal_i = goal_i.repeat(subgoals.size(0), 1)
+
+                q_eff_cand, q_safe_cand = self.target_value_net(laser_i, goal_i, subgoals, return_heads=True)
+                q_total_cand = q_eff_cand - self.safety_q_weight * q_safe_cand
+                idx_best = torch.argmax(q_total_cand).item()
+
+                q_eff_next_list.append(float(q_eff_cand[idx_best].item()))
+                q_safe_next_list.append(float(q_safe_cand[idx_best].item()))
+
+            q_eff_next = torch.tensor(q_eff_next_list, device=self.device, dtype=torch.float32)
+            q_safe_next = torch.tensor(q_safe_next_list, device=self.device, dtype=torch.float32)
+
+            target_eff = rewards_eff_t + self.gamma_high * not_done * q_eff_next
+            target_safe = safety_costs_t + self.gamma_high * not_done * q_safe_next
+
         q_eff_pred, q_safe_pred = self.value_net(laser_t, goal_t, actions_t, return_heads=True)
-        loss_eff = self.value_loss_fn(q_eff_pred, rewards_eff_t)
-        loss_safe = self.value_loss_fn(q_safe_pred, safety_costs_t)
+        loss_eff = self.value_loss_fn(q_eff_pred, target_eff.detach())
+        loss_safe = self.value_loss_fn(q_safe_pred, target_safe.detach())
         loss = loss_eff + self.safety_loss_weight * loss_safe
 
         self.value_optimizer.zero_grad()
         loss.backward()
         self.value_optimizer.step()
+
+        self._soft_update_target()
 
         self.iter_count += 1
 
@@ -599,6 +675,8 @@ class HighLevelPlanner:
     def load_model(self, filename, directory):
         try:
             self.value_net.load_state_dict(torch.load(f"{directory}/{filename}.pth", map_location=self.device))
+            if hasattr(self, "target_value_net"):
+                self.target_value_net.load_state_dict(self.value_net.state_dict())
             print(f"模型已从 {directory}/{filename}.pth 加载")
         except FileNotFoundError as e:
             print(f"加载模型时出错: {e}")
