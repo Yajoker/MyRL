@@ -226,13 +226,23 @@ class HighLevelPlanner:
         self.planner_config = planner_cfg
         self.safety_q_weight = float(planner_cfg.safety_q_weight)
         self.safety_loss_weight = float(planner_cfg.safety_loss_weight)
+        self.high_level_double_q_enabled = bool(getattr(planner_cfg, "high_level_double_q_enabled", False))
+        self.high_level_double_q_update_mode = getattr(planner_cfg, "high_level_double_q_update_mode", "alternate")
+        self.high_level_double_q_fuse_mode = getattr(planner_cfg, "high_level_double_q_fuse_mode", "mean")
+        self.high_level_double_q_target_eval = bool(getattr(planner_cfg, "high_level_double_q_target_eval", True))
+        self.high_level_double_q_log_net_id = bool(getattr(planner_cfg, "high_level_double_q_log_net_id", True))
+        self._doubleq_toggle = 0
 
         if subgoal_reach_threshold is None:
             subgoal_reach_threshold = trigger_cfg.subgoal_reach_threshold
         if waypoint_lookahead is None:
             waypoint_lookahead = planner_cfg.waypoint_lookahead
         if min_interval is None:
-            min_interval = trigger_cfg.min_interval if trigger_cfg.min_interval > 0 else trigger_cfg.min_step_interval * step_duration
+            min_interval = (
+                trigger_cfg.min_interval
+                if trigger_cfg.min_interval > 0
+                else trigger_cfg.min_step_interval * step_duration
+            )
 
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.save_directory = Path(save_directory)
@@ -245,18 +255,49 @@ class HighLevelPlanner:
         self.goal_feature_dim = 3 + self.active_window_feature_dim + self.per_window_feature_dim * self.waypoint_lookahead
         self.belief_dim = belief_dim
 
-        self.value_net = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(self.device)
-        self.value_net.safety_q_weight = self.safety_q_weight
-        self.target_value_net = HighLevelValueNet(
-            belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
-        ).to(self.device)
-        self.target_value_net.load_state_dict(self.value_net.state_dict())
-        self.target_value_net.safety_q_weight = self.safety_q_weight
-        for p in self.target_value_net.parameters():
-            p.requires_grad = False
+        if self.high_level_double_q_enabled:
+            self.value_net_a = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
+                self.device
+            )
+            self.value_net_b = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
+                self.device
+            )
+            self.value_net_a.safety_q_weight = self.safety_q_weight
+            self.value_net_b.safety_q_weight = self.safety_q_weight
+
+            self.target_value_net_a = HighLevelValueNet(
+                belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
+            ).to(self.device)
+            self.target_value_net_b = HighLevelValueNet(
+                belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
+            ).to(self.device)
+            self.target_value_net_a.load_state_dict(self.value_net_a.state_dict())
+            self.target_value_net_b.load_state_dict(self.value_net_b.state_dict())
+            self.target_value_net_a.safety_q_weight = self.safety_q_weight
+            self.target_value_net_b.safety_q_weight = self.safety_q_weight
+            for p in self.target_value_net_a.parameters():
+                p.requires_grad = False
+            for p in self.target_value_net_b.parameters():
+                p.requires_grad = False
+
+            self.value_optimizer_a = torch.optim.Adam(self.value_net_a.parameters(), lr=1e-3)
+            self.value_optimizer_b = torch.optim.Adam(self.value_net_b.parameters(), lr=1e-3)
+            self.value_net = self.value_net_a
+        else:
+            self.value_net = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
+                self.device
+            )
+            self.value_net.safety_q_weight = self.safety_q_weight
+            self.target_value_net = HighLevelValueNet(
+                belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
+            ).to(self.device)
+            self.target_value_net.load_state_dict(self.value_net.state_dict())
+            self.target_value_net.safety_q_weight = self.safety_q_weight
+            for p in self.target_value_net.parameters():
+                p.requires_grad = False
+            self.value_optimizer = torch.optim.Adam(self.value_net.parameters(), lr=1e-3)
         self.gamma_high = getattr(self.planner_config, "high_level_gamma", 0.99)
         self.tau_high = getattr(self.planner_config, "high_level_tau", 0.005)
-        self.value_optimizer = torch.optim.Adam(self.value_net.parameters(), lr=1e-3)
         self.value_loss_fn = nn.MSELoss()
 
         self.event_trigger = EventTrigger(
@@ -283,6 +324,14 @@ class HighLevelPlanner:
         self.consistency_lambda = planner_cfg.consistency_lambda
         self.consistency_sigma_r = planner_cfg.consistency_sigma_r
         self.consistency_sigma_theta = planner_cfg.consistency_sigma_theta
+        self.diverse_frontier_enabled = bool(getattr(planner_cfg, "diverse_frontier_enabled", False))
+        self.frontier_bucket_k_align = int(getattr(planner_cfg, "frontier_bucket_k_align", 0))
+        self.frontier_bucket_k_clear = int(getattr(planner_cfg, "frontier_bucket_k_clear", 0))
+        self.frontier_bucket_k_diverse = int(getattr(planner_cfg, "frontier_bucket_k_diverse", 0))
+        self.frontier_clear_window = int(getattr(planner_cfg, "frontier_clear_window", 0))
+        self.frontier_diverse_method = getattr(planner_cfg, "frontier_diverse_method", "farthest_angle")
+        self.frontier_keep_goal_candidate = bool(getattr(planner_cfg, "frontier_keep_goal_candidate", True))
+        self._rng = np.random.default_rng(getattr(planner_cfg, "frontier_diverse_seed", None))
 
         if load_model:
             load_dir = load_directory if load_directory else save_directory
@@ -294,6 +343,56 @@ class HighLevelPlanner:
 
     def _wrap_angle(self, angle: float) -> float:
         return math.atan2(math.sin(angle), math.cos(angle))
+
+    def _candidate_index_from_theta(self, theta: float, n: int) -> int:
+        pos = (theta + math.pi) / (2 * math.pi)
+        return int(round(pos * n)) % n
+
+    def _clearance_score(self, scan: np.ndarray, idx: int, window: int) -> float:
+        if window <= 0 or scan.size == 0:
+            return float(scan[idx])
+        n = scan.shape[0]
+        indices = [((idx + offset) % n) for offset in range(-window, window + 1)]
+        return float(np.min(scan[indices]))
+
+    def _select_topk(self, scores: Sequence[float], k: int, exclude: Optional[set[int]] = None) -> List[int]:
+        if k <= 0:
+            return []
+        exclude = exclude or set()
+        indexed = [(i, s) for i, s in enumerate(scores) if i not in exclude]
+        indexed.sort(key=lambda x: x[1], reverse=True)
+        return [i for i, _ in indexed[:k]]
+
+    def _farthest_angle_sampling(self, thetas: Sequence[float], k: int, exclude: Optional[set[int]] = None) -> List[int]:
+        if k <= 0:
+            return []
+        exclude = exclude or set()
+        available = [(i, theta) for i, theta in enumerate(thetas) if i not in exclude]
+        if not available:
+            return []
+
+        selected: List[int] = []
+        while available and len(selected) < k:
+            if not selected:
+                chosen_idx, _ = available.pop(0)
+                selected.append(chosen_idx)
+                continue
+
+            best_idx = None
+            best_dist = -1.0
+            for cand_idx, cand_theta in available:
+                min_dist = min(
+                    abs(self._wrap_angle(cand_theta - thetas[s_idx])) for s_idx in selected
+                )
+                if min_dist > best_dist:
+                    best_dist = min_dist
+                    best_idx = cand_idx
+            if best_idx is None:
+                break
+            selected.append(best_idx)
+            available = [(i, t) for i, t in available if i != best_idx]
+
+        return selected
 
     def _world_to_relative(self, robot_pose, waypoint) -> Tuple[float, float]:
         if robot_pose is None:
@@ -467,8 +566,65 @@ class HighLevelPlanner:
         candidates.append((r_goal, goal_dir))
 
         if len(candidates) > self.frontier_num_candidates:
-            candidates.sort(key=lambda g: -math.cos(g[1] - goal_dir))
-            candidates = candidates[: self.frontier_num_candidates]
+            if self.diverse_frontier_enabled:
+                align_scores: List[float] = []
+                clear_scores: List[float] = []
+                theta_list: List[float] = []
+                for _, theta in candidates:
+                    align_scores.append(math.cos(theta - goal_dir))
+                    idx = self._candidate_index_from_theta(theta, n)
+                    clear_scores.append(self._clearance_score(scan, idx, self.frontier_clear_window))
+                    theta_list.append(theta)
+
+                k_align = min(self.frontier_bucket_k_align, self.frontier_num_candidates)
+                selected_align = self._select_topk(align_scores, k_align)
+
+                k_clear = min(
+                    self.frontier_bucket_k_clear,
+                    max(self.frontier_num_candidates - len(selected_align), 0),
+                )
+                selected_clear = self._select_topk(clear_scores, k_clear, exclude=set(selected_align))
+
+                k_diverse = min(
+                    self.frontier_bucket_k_diverse,
+                    max(self.frontier_num_candidates - len(selected_align) - len(selected_clear), 0),
+                )
+                excluded = set(selected_align) | set(selected_clear)
+                if self.frontier_diverse_method == "random":
+                    remaining = [i for i in range(len(candidates)) if i not in excluded]
+                    self._rng = getattr(self, "_rng", np.random.default_rng())
+                    if remaining:
+                        chosen = self._rng.choice(remaining, size=min(k_diverse, len(remaining)), replace=False)
+                        selected_diverse = [int(i) for i in np.atleast_1d(chosen).tolist()]
+                    else:
+                        selected_diverse = []
+                else:
+                    selected_diverse = self._farthest_angle_sampling(theta_list, k_diverse, exclude=excluded)
+
+                selected_ordered: List[int] = []
+                for idx in selected_align + selected_clear + selected_diverse:
+                    if idx not in selected_ordered:
+                        selected_ordered.append(idx)
+
+                if len(selected_ordered) < self.frontier_num_candidates:
+                    remaining_indices = [i for i in range(len(candidates)) if i not in set(selected_ordered)]
+                    remaining_indices.sort(key=lambda i: align_scores[i], reverse=True)
+                    topup = remaining_indices[: self.frontier_num_candidates - len(selected_ordered)]
+                    selected_ordered.extend(topup)
+
+                goal_idx = len(candidates) - 1
+                if self.frontier_keep_goal_candidate and goal_idx not in selected_ordered:
+                    selected_ordered.append(goal_idx)
+                    if len(selected_ordered) > self.frontier_num_candidates:
+                        removable = [idx for idx in selected_ordered if idx != goal_idx]
+                        if removable:
+                            selected_ordered.remove(removable[-1])
+
+                selected_ordered = selected_ordered[: self.frontier_num_candidates]
+                candidates = [candidates[i] for i in selected_ordered]
+            else:
+                candidates.sort(key=lambda g: -math.cos(g[1] - goal_dir))
+                candidates = candidates[: self.frontier_num_candidates]
 
         return candidates
 
@@ -485,7 +641,11 @@ class HighLevelPlanner:
             r = max(self.frontier_min_distance, min(goal_distance, self.frontier_max_distance))
             return r, goal_dir
 
-        self.value_net.eval()
+        if self.high_level_double_q_enabled:
+            self.value_net_a.eval()
+            self.value_net_b.eval()
+        else:
+            self.value_net.eval()
         scan = np.asarray(laser_scan, dtype=np.float32)
         scan = np.nan_to_num(scan, nan=self.frontier_max_distance, posinf=self.frontier_max_distance, neginf=0.0)
         scan = np.clip(scan, 0.0, self.frontier_max_distance)
@@ -499,10 +659,18 @@ class HighLevelPlanner:
         goal_batch = goal_t.repeat(geom_t.shape[0], 1)
 
         with torch.no_grad():
-            q_eff, q_safe = self.value_net(laser_batch, goal_batch, geom_t, return_heads=True)
-            q_eff_np = q_eff.cpu().numpy()
-            q_safe_np = q_safe.cpu().numpy()
-            q_vals = q_eff_np - self.safety_q_weight * q_safe_np
+            if self.high_level_double_q_enabled:
+                q_eff_a, q_safe_a = self.value_net_a(laser_batch, goal_batch, geom_t, return_heads=True)
+                q_eff_b, q_safe_b = self.value_net_b(laser_batch, goal_batch, geom_t, return_heads=True)
+                q_total_a = q_eff_a - self.safety_q_weight * q_safe_a
+                q_total_b = q_eff_b - self.safety_q_weight * q_safe_b
+                if self.high_level_double_q_fuse_mode == "min":
+                    q_vals = torch.minimum(q_total_a, q_total_b).cpu().numpy()
+                else:
+                    q_vals = (0.5 * (q_total_a + q_total_b)).cpu().numpy()
+            else:
+                q_eff, q_safe = self.value_net(laser_batch, goal_batch, geom_t, return_heads=True)
+                q_vals = (q_eff - self.safety_q_weight * q_safe).cpu().numpy()
 
         scores = q_vals
 
@@ -567,9 +735,9 @@ class HighLevelPlanner:
         return final_distance, final_angle, metadata
 
     # ------------------------- 训练 -------------------------
-    def _soft_update_target(self) -> None:
+    def _soft_update_target(self, source_net: nn.Module, target_net: nn.Module) -> None:
         tau = self.tau_high
-        for param, target_param in zip(self.value_net.parameters(), self.target_value_net.parameters()):
+        for param, target_param in zip(source_net.parameters(), target_net.parameters()):
             target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
 
     def update_planner(
@@ -582,8 +750,6 @@ class HighLevelPlanner:
         next_states,
         batch_size: int = 64,
     ):
-        self.value_net.train()
-
         states_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
         actions_t = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         rewards_eff_t = torch.as_tensor(rewards_eff, dtype=torch.float32, device=self.device)
@@ -599,8 +765,29 @@ class HighLevelPlanner:
         laser_next_t = next_states_t[:, :laser_dim]
         goal_next_t = next_states_t[:, laser_dim:]
 
+        if self.high_level_double_q_enabled:
+            updating_a = self._doubleq_toggle % 2 == 0
+            net_upd = self.value_net_a if updating_a else self.value_net_b
+            net_sel = net_upd
+            eval_target = self.target_value_net_b if updating_a else self.target_value_net_a
+            eval_online = self.value_net_b if updating_a else self.value_net_a
+            net_eval = eval_target if self.high_level_double_q_target_eval else eval_online
+            optimizer = self.value_optimizer_a if updating_a else self.value_optimizer_b
+            target_upd = self.target_value_net_a if updating_a else self.target_value_net_b
+            net_upd.train()
+        else:
+            self.value_net.train()
+
         with torch.no_grad():
-            self.target_value_net.eval()
+            if self.high_level_double_q_enabled:
+                eval_net = net_eval
+                sel_net = net_sel
+                eval_net.eval()
+                sel_net.eval()
+            else:
+                self.target_value_net.eval()
+                eval_net = self.target_value_net
+                sel_net = self.target_value_net
             laser_next_np = (laser_next_t.cpu().numpy() * 7.0).astype(np.float32)
             goal_next_np = goal_next_t.cpu().numpy().astype(np.float32)
 
@@ -609,8 +796,8 @@ class HighLevelPlanner:
             sin_next = goal_next_np[:, 2]
             goal_dist_next = norm_dist * 30.0
 
-            q_eff_next_list = []
-            q_safe_next_list = []
+            q_eff_next_list: List[float] = []
+            q_safe_next_list: List[float] = []
 
             for i in range(states_t.shape[0]):
                 scan_next = laser_next_np[i]
@@ -630,12 +817,13 @@ class HighLevelPlanner:
                 goal_i = torch.tensor(goal_next_np[i], dtype=torch.float32, device=self.device).unsqueeze(0)
                 goal_i = goal_i.repeat(subgoals.size(0), 1)
 
-                q_eff_cand, q_safe_cand = self.target_value_net(laser_i, goal_i, subgoals, return_heads=True)
-                q_total_cand = q_eff_cand - self.safety_q_weight * q_safe_cand
-                idx_best = torch.argmax(q_total_cand).item()
+                q_eff_sel, q_safe_sel = sel_net(laser_i, goal_i, subgoals, return_heads=True)
+                q_total_sel = q_eff_sel - self.safety_q_weight * q_safe_sel
+                idx_best = torch.argmax(q_total_sel).item()
 
-                q_eff_next_list.append(float(q_eff_cand[idx_best].item()))
-                q_safe_next_list.append(float(q_safe_cand[idx_best].item()))
+                q_eff_eval, q_safe_eval = eval_net(laser_i, goal_i, subgoals, return_heads=True)
+                q_eff_next_list.append(float(q_eff_eval[idx_best].item()))
+                q_safe_next_list.append(float(q_safe_eval[idx_best].item()))
 
             q_eff_next = torch.tensor(q_eff_next_list, device=self.device, dtype=torch.float32)
             q_safe_next = torch.tensor(q_safe_next_list, device=self.device, dtype=torch.float32)
@@ -643,20 +831,33 @@ class HighLevelPlanner:
             target_eff = rewards_eff_t + self.gamma_high * not_done * q_eff_next
             target_safe = safety_costs_t + self.gamma_high * not_done * q_safe_next
 
-        q_eff_pred, q_safe_pred = self.value_net(laser_t, goal_t, actions_t, return_heads=True)
-        loss_eff = self.value_loss_fn(q_eff_pred, target_eff.detach())
-        loss_safe = self.value_loss_fn(q_safe_pred, target_safe.detach())
-        loss = loss_eff + self.safety_loss_weight * loss_safe
+        if self.high_level_double_q_enabled:
+            q_eff_pred, q_safe_pred = net_upd(laser_t, goal_t, actions_t, return_heads=True)
+            loss_eff = self.value_loss_fn(q_eff_pred, target_eff.detach())
+            loss_safe = self.value_loss_fn(q_safe_pred, target_safe.detach())
+            loss = loss_eff + self.safety_loss_weight * loss_safe
 
-        self.value_optimizer.zero_grad()
-        loss.backward()
-        self.value_optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        self._soft_update_target()
+            self._soft_update_target(net_upd, target_upd)
+            self._doubleq_toggle = 1 - self._doubleq_toggle
+        else:
+            q_eff_pred, q_safe_pred = self.value_net(laser_t, goal_t, actions_t, return_heads=True)
+            loss_eff = self.value_loss_fn(q_eff_pred, target_eff.detach())
+            loss_safe = self.value_loss_fn(q_safe_pred, target_safe.detach())
+            loss = loss_eff + self.safety_loss_weight * loss_safe
+
+            self.value_optimizer.zero_grad()
+            loss.backward()
+            self.value_optimizer.step()
+
+            self._soft_update_target(self.value_net, self.target_value_net)
 
         self.iter_count += 1
 
-        return {
+        metrics = {
             "loss_eff": float(loss_eff.item()),
             "loss_safe": float(loss_safe.item()),
             "loss_total": float(loss.item()),
@@ -664,19 +865,50 @@ class HighLevelPlanner:
             "q_safe_mean": float(q_safe_pred.mean().item()),
             "r_eff_mean": float(rewards_eff_t.mean().item()),
             "c_safe_mean": float(safety_costs_t.mean().item()),
+            "q_eff_next_mean": float(q_eff_next.mean().item()),
+            "q_safe_next_mean": float(q_safe_next.mean().item()),
         }
+        if self.high_level_double_q_enabled and self.high_level_double_q_log_net_id:
+            metrics["doubleq_updated_net"] = 0 if updating_a else 1
+
+        return metrics
 
     # ------------------------- 模型存储 -------------------------
     def save_model(self, filename, directory):
         Path(directory).mkdir(parents=True, exist_ok=True)
-        torch.save(self.value_net.state_dict(), f"{directory}/{filename}.pth")
-        print(f"模型已保存到 {directory}/{filename}.pth")
+        if self.high_level_double_q_enabled:
+            torch.save(self.value_net_a.state_dict(), f"{directory}/{filename}_A.pth")
+            torch.save(self.value_net_b.state_dict(), f"{directory}/{filename}_B.pth")
+            print(f"模型已保存到 {directory}/{filename}_A.pth 和 _B.pth")
+        else:
+            torch.save(self.value_net.state_dict(), f"{directory}/{filename}.pth")
+            print(f"模型已保存到 {directory}/{filename}.pth")
 
     def load_model(self, filename, directory):
         try:
-            self.value_net.load_state_dict(torch.load(f"{directory}/{filename}.pth", map_location=self.device))
-            if hasattr(self, "target_value_net"):
-                self.target_value_net.load_state_dict(self.value_net.state_dict())
-            print(f"模型已从 {directory}/{filename}.pth 加载")
+            if self.high_level_double_q_enabled:
+                path_a = Path(directory) / f"{filename}_A.pth"
+                path_b = Path(directory) / f"{filename}_B.pth"
+                single_path = Path(directory) / f"{filename}.pth"
+                if path_a.exists() and path_b.exists():
+                    self.value_net_a.load_state_dict(torch.load(path_a, map_location=self.device))
+                    self.value_net_b.load_state_dict(torch.load(path_b, map_location=self.device))
+                    self.target_value_net_a.load_state_dict(self.value_net_a.state_dict())
+                    self.target_value_net_b.load_state_dict(self.value_net_b.state_dict())
+                    print(f"模型已从 {path_a} 和 {path_b} 加载")
+                elif single_path.exists():
+                    state_dict = torch.load(single_path, map_location=self.device)
+                    self.value_net_a.load_state_dict(state_dict)
+                    self.value_net_b.load_state_dict(state_dict)
+                    self.target_value_net_a.load_state_dict(state_dict)
+                    self.target_value_net_b.load_state_dict(state_dict)
+                    print(f"模型已从 {single_path} 加载并同步到双网络")
+                else:
+                    raise FileNotFoundError(f"未找到 {path_a} 或 {single_path}")
+            else:
+                self.value_net.load_state_dict(torch.load(f"{directory}/{filename}.pth", map_location=self.device))
+                if hasattr(self, "target_value_net"):
+                    self.target_value_net.load_state_dict(self.value_net.state_dict())
+                print(f"模型已从 {directory}/{filename}.pth 加载")
         except FileNotFoundError as e:
             print(f"加载模型时出错: {e}")

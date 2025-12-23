@@ -160,6 +160,13 @@ class PlannerConfig:
     frontier_min_dist: float = 0.8                   # 子目标距离下限（米）
     frontier_max_dist: float = 3.5                   # 子目标距离上限（米）
     frontier_gap_min_width: float = 0.2              # 最小前沿角宽（弧度）
+    diverse_frontier_enabled: bool = False           # 是否启用多桶候选保留策略
+    frontier_bucket_k_align: int = 3                 # 与目标方向对齐的保留数量
+    frontier_bucket_k_clear: int = 2                 # 空旷度优先保留数量
+    frontier_bucket_k_diverse: int = 2               # 多样性采样保留数量
+    frontier_clear_window: int = 3                   # 计算空旷度时的窗口半径
+    frontier_diverse_method: str = "farthest_angle"  # 多样性采样方式
+    frontier_keep_goal_candidate: bool = True        # 是否强制保留目标方向候选
 
     # 连续性约束参数
     consistency_lambda: float = 0.5
@@ -171,6 +178,11 @@ class PlannerConfig:
     safety_loss_weight: float = 1.0    # λ_safe_loss: 训练时安全头 loss 的权重
     high_level_gamma: float = 0.99     # 高层 TD 折扣因子
     high_level_tau: float = 0.005      # 高层目标网络软更新系数
+    high_level_double_q_enabled: bool = False        # 是否启用双价值网络
+    high_level_double_q_update_mode: str = "alternate"  # 双Q更新模式
+    high_level_double_q_fuse_mode: str = "mean"         # 推理融合方式
+    high_level_double_q_target_eval: bool = True         # 目标网络是否用于评估
+    high_level_double_q_log_net_id: bool = True          # 是否记录本轮更新的网络编号
 
 
     def __post_init__(self) -> None:  # type: ignore[override]
@@ -187,6 +199,13 @@ class PlannerConfig:
             raise ValueError("frontier_max_dist must be positive")
         if self.frontier_gap_min_width <= 0:
             raise ValueError("frontier_gap_min_width must be positive")
+        if self.frontier_bucket_k_align < 0 or self.frontier_bucket_k_clear < 0 or self.frontier_bucket_k_diverse < 0:
+            raise ValueError("frontier bucket sizes must be non-negative")
+        total_bucket = self.frontier_bucket_k_align + self.frontier_bucket_k_clear + self.frontier_bucket_k_diverse
+        if total_bucket > self.frontier_num_candidates:
+            raise ValueError("sum of frontier buckets must not exceed frontier_num_candidates")
+        if self.frontier_clear_window < 0:
+            raise ValueError("frontier_clear_window must be non-negative")
         if self.consistency_lambda < 0:
             raise ValueError("consistency_lambda must be non-negative")
         if self.consistency_sigma_r <= 0:
@@ -201,6 +220,10 @@ class PlannerConfig:
             raise ValueError("high_level_gamma must be in (0, 1]")
         if not 0 < self.high_level_tau <= 1:
             raise ValueError("high_level_tau must be in (0, 1]")
+        if self.high_level_double_q_update_mode not in {"alternate"}:
+            raise ValueError("high_level_double_q_update_mode must be 'alternate'")
+        if self.high_level_double_q_fuse_mode not in {"mean", "min"}:
+            raise ValueError("high_level_double_q_fuse_mode must be 'mean' or 'min'")
 
 
 @dataclass(frozen=True)
