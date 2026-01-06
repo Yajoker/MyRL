@@ -897,7 +897,6 @@ def main(args=None):
             # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
             scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
 
-            #low_reward=0.2*low_reward  # 奖励缩放
             #replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
             # ✅ 用 policy_action 作为 replay buffer 里的动作
             replay_buffer.add(state, policy_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
@@ -980,8 +979,8 @@ def main(args=None):
                     batch_size=config.batch_size,  # 批次大小
                     discount=0.99,  # 折扣因子
                     tau=0.005,    # 软更新参数
-                    policy_noise=0.2,  # 策略噪声
-                    noise_clip=0.5,  # 噪声裁剪
+                    policy_noise=0.15,  # 策略噪声
+                    noise_clip=0.3,  # 噪声裁剪
                     policy_freq=2,   # 策略频率
                 )
             print("   ✅ Training completed")  # 训练完成信息
