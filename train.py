@@ -10,7 +10,7 @@ from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, Tr
 from integration import HierarchicalNavigationSystem
 from rewards import compute_high_level_reward, compute_low_level_reward, compute_step_safety_cost
 from robot_nav.SIM_ENV.sim import SIM
-from replay_buffer import HighLevelReplayBuffer, ReplayBuffer
+from replay_buffer import HighLevelReplayBuffer, TerminalAwareReplayBuffer
 
 
 @dataclass
@@ -159,16 +159,26 @@ class TD3ReplayAdapter:
 
     def __init__(self, buffer_size: int, random_seed: int = 666) -> None:
         """初始化回放缓冲区适配器"""
-        self._buffer = ReplayBuffer(buffer_size=buffer_size, random_seed=random_seed)  # 创建回放缓冲区
+        self._buffer = TerminalAwareReplayBuffer(
+            buffer_size=buffer_size,
+            random_seed=random_seed,
+        )  # 创建终局感知回放缓冲区
 
-    def add(self, state, action, reward, done, next_state) -> None:
+    def add(self, state, action, reward, done, next_state, *, terminal_type=None) -> None:
         """向缓冲区添加经验"""
         state_arr = np.asarray(state, dtype=np.float32)  # 状态数组
         action_arr = np.asarray(action, dtype=np.float32)  # 动作数组
         next_state_arr = np.asarray(next_state, dtype=np.float32)  # 下一状态数组
         reward_val = float(reward)  # 奖励值
         done_val = float(done)  # 终止标志
-        self._buffer.add(state_arr, action_arr, reward_val, done_val, next_state_arr)  # 添加到缓冲区
+        self._buffer.add(
+            state_arr,
+            action_arr,
+            reward_val,
+            done_val,
+            next_state_arr,
+            terminal_type=terminal_type,
+        )  # 添加到缓冲区
 
     def size(self) -> int:
         """返回缓冲区当前大小"""
@@ -176,7 +186,7 @@ class TD3ReplayAdapter:
 
     def sample(self, batch_size: int):
         """从缓冲区采样批次数据"""
-        states, actions, rewards, dones, next_states = self._buffer.sample_batch(batch_size)  # 采样批次数据
+        states, actions, rewards, dones, next_states = self._buffer.sample(batch_size)  # 采样批次数据
         return states, actions, rewards, dones, next_states  # 返回采样数据
 
     def clear(self) -> None:
@@ -409,6 +419,10 @@ def evaluate(
                 prev_subgoal_distance=prev_subgoal_distance,  # 前一个子目标距离
                 current_subgoal_distance=current_subgoal_distance,  # 当前子目标距离
                 min_obstacle_distance=min_obstacle_distance,  # 最小障碍距离
+                steps_taken=steps + 1,
+                max_steps=config.max_steps,
+                subgoal_replanned=should_replan,
+                goal_distance=float(distance),
                 reached_goal=goal,  # 是否到达目标
                 reached_subgoal=just_reached_subgoal,  # 是否到达子目标
                 collision=collision,  # 是否碰撞
@@ -569,10 +583,15 @@ def main(args=None):
     epoch_total_steps = 0  # 轮次总步数
     epoch_goal_count = 0  # 轮次目标计数
     epoch_collision_count = 0  # 轮次碰撞计数
+    total_est_env_steps = config.max_epochs * config.episodes_per_epoch * config.max_steps
+    anneal_steps = max(1, int(total_est_env_steps * 0.8))
+    noise_start = float(config.exploration_noise)
+    noise_end = float(config.min_exploration_noise)
 
     # 训练计数器初始化
     episode = 0  # 情节计数器
     epoch = 0  # 轮次计数器
+    global_env_step = 0  # 全局环境步数
 
     print("\n🎬 Starting main training loop...")  # 开始主训练循环
     print("-" * 50)  # 分隔线
@@ -739,11 +758,13 @@ def main(args=None):
                 prev_policy_action,  # 上次归一化策略动作
             )
 
-            # 预测动作（带探索噪声）
+            # 预测动作（带探索噪声，按环境步数退火）
+            anneal_ratio = min(1.0, global_env_step / float(anneal_steps))
+            noise_scale = noise_start + anneal_ratio * (noise_end - noise_start)
             raw_action = system.low_level_controller.predict_action(  # 预测动作
                 state,
                 add_noise=True,  # 添加噪声
-                noise_scale=config.exploration_noise,  # 噪声尺度
+                noise_scale=noise_scale,  # 退火后的噪声尺度
             )
             policy_action = np.clip(raw_action, -1.0, 1.0)  # 归一化策略动作
 
@@ -853,6 +874,10 @@ def main(args=None):
                 prev_subgoal_distance=prev_subgoal_distance,  # 前一个子目标距离
                 current_subgoal_distance=current_subgoal_distance,  # 当前子目标距离
                 min_obstacle_distance=min_obstacle_distance,  # 最小障碍距离
+                steps_taken=steps + 1,  # 当前已执行步数（从1开始）
+                max_steps=config.max_steps,
+                subgoal_replanned=should_replan,
+                goal_distance=float(distance),
                 reached_goal=goal,  # 是否到达目标
                 reached_subgoal=just_reached_subgoal,  # 是否到达子目标
                 collision=collision,  # 是否碰撞
@@ -896,10 +921,25 @@ def main(args=None):
 
             # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
             scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
+            terminal_type = None
+            if done:
+                if goal:
+                    terminal_type = "goal"
+                elif collision:
+                    terminal_type = "collision"
+                elif timed_out:
+                    terminal_type = "timeout"
 
             #replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
             # ✅ 用 policy_action 作为 replay buffer 里的动作
-            replay_buffer.add(state, policy_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
+            replay_buffer.add(
+                state,
+                policy_action,
+                low_reward,
+                float(done),
+                next_state,
+                terminal_type=terminal_type,
+            )  # 添加到回放缓冲区
 
             # 定期输出回放缓冲区大小与奖励
             if steps % 50 == 0:  # 每50步输出一次
@@ -914,6 +954,7 @@ def main(args=None):
             prev_policy_action = next_policy_action  # 更新策略动作
             prev_env_action = [executed_action[0], executed_action[1]]  # 更新物理动作
             steps += 1  # 步数加1
+            global_env_step += 1  # 全局环境步数加1
 
         # ========== 情节结束处理 ==========
         timed_out_episode = not goal and not collision and steps >= config.max_steps  # 超时情节判断

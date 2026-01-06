@@ -24,6 +24,7 @@ class LowLevelRewardConfig:
     subgoal_bonus: float = 0.0            
     collision_penalty: float = -20.0       
     timeout_penalty: float = -20.0          
+    reward_scale: float = 0.1               # 全局奖励缩放因子，压低TD目标尺度
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -31,6 +32,8 @@ class LowLevelRewardConfig:
             raise ValueError("efficiency_penalty must be non-negative")
         if self.safety_clearance <= 0:
             raise ValueError("safety_clearance must be positive")
+        if self.reward_scale <= 0:
+            raise ValueError("reward_scale must be positive")
 
 
 @dataclass(frozen=True)
@@ -252,6 +255,7 @@ class TrainingConfig:
     noise_clip: float = 0.3                          # 噪声裁剪范围
     policy_freq: int = 2                            # 策略更新频率
     random_seed: Optional[int] = 666                 # 随机种子
+    min_exploration_noise: float = 0.05              # 噪声退火下限
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -287,6 +291,8 @@ class TrainingConfig:
             raise ValueError("noise_clip must be non-negative")
         if self.policy_freq <= 0:
             raise ValueError("policy_freq must be positive")
+        if self.min_exploration_noise < 0:
+            raise ValueError("min_exploration_noise must be non-negative")
 
 
 @dataclass(frozen=True)

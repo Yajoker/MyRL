@@ -18,6 +18,10 @@ def compute_low_level_reward(
     prev_subgoal_distance: Optional[float],
     current_subgoal_distance: Optional[float],
     min_obstacle_distance: float,
+    steps_taken: int,
+    max_steps: int,
+    subgoal_replanned: bool,
+    goal_distance: float,
     # --- 终局状态 ---
     reached_goal: bool,
     reached_subgoal: bool,
@@ -40,66 +44,73 @@ def compute_low_level_reward(
     """
     components: Dict[str, float] = {}
 
-    # ------------------------------------------------------------
-    # 1. 子目标进展奖励 R_progress
-    #    R_progress = w_p * (d_prev - d_cur) - step_penalty
-    # ------------------------------------------------------------
-    progress_reward = 0.0
-
-    # 步数惩罚：表达“时间成本”
-    # 终点那一步可以不惩罚；到子目标那一步则减半，避免穿越子目标时被过度惩罚。
-    step_penalty = 0.0 if reached_goal else config.efficiency_penalty
-    if reached_subgoal and not reached_goal:
-        step_penalty *= 0.5
-
-    if prev_subgoal_distance is not None and current_subgoal_distance is not None:
-        progress_delta = prev_subgoal_distance - current_subgoal_distance
-        progress_reward = config.progress_weight * progress_delta - step_penalty
-    else:
-        # 没有距离信息时，只保留时间惩罚
-        progress_reward = -step_penalty
-
-    components["progress"] = float(progress_reward)
+    # 基准锚点：拖满一局的时间成本
+    R_base = config.efficiency_penalty * max_steps
 
     # ------------------------------------------------------------
-    # 2. 安全塑形奖励 R_safety
-    #    离障碍越近，惩罚越大；超过安全距离则不惩罚。
+    # 1. 子目标进展奖励（防刷分 + 跳变裁剪）
     # ------------------------------------------------------------
-    if min_obstacle_distance < config.collision_distance:
-        safety_raw = -1.0
-    elif min_obstacle_distance < config.safety_clearance:
-        # 在线性区间 [collision_distance, safety_clearance] 内插值
-        ratio = (config.safety_clearance - min_obstacle_distance) / (
-            config.safety_clearance - config.collision_distance
+    progress_delta = 0.0
+    if (
+        not subgoal_replanned
+        and prev_subgoal_distance is not None
+        and current_subgoal_distance is not None
+    ):
+        raw_delta = prev_subgoal_distance - current_subgoal_distance
+        progress_delta = float(
+            np.clip(raw_delta, -config.collision_distance, config.collision_distance)
         )
-        safety_raw = -0.3 - 0.7 * ratio  # 从 -0.3 到 -1.0
-    else:
-        safety_raw = 0.0
 
-    safety_reward = config.safety_weight * safety_raw
-    components["safety"] = float(safety_reward)
+    r_prog = config.progress_weight * progress_delta
+    components["progress"] = float(r_prog)
 
     # ------------------------------------------------------------
-    # 3. 低层局部终局项 R_terminal
-    #    只在发生碰撞时给一个小的额外惩罚。
-    #    终点 / 子目标成功 / 超时都由高层奖励统一处理。
+    # 2. 时间项（隐式防抖动）
     # ------------------------------------------------------------
-    terminal_reward = 0.0
-    
+    r_time = -config.efficiency_penalty
+    if progress_delta <= 0:
+        r_time -= config.efficiency_penalty  # 无进展时加倍惩罚
+    components["time"] = float(r_time)
+
+    # ------------------------------------------------------------
+    # 3. 安全塑形奖励（线性归一化）
+    # ------------------------------------------------------------
+    r_safety = 0.0
+    if min_obstacle_distance < config.safety_clearance:
+        ratio = (config.safety_clearance - min_obstacle_distance) / config.safety_clearance
+        r_safety = -config.safety_weight * ratio
+    components["safety"] = float(r_safety)
+
+    # ------------------------------------------------------------
+    # 4. 终局强锚点
+    # ------------------------------------------------------------
+    r_terminal = 0.0
+    steps_taken = int(max(0, steps_taken))
+
     if reached_goal:
-        terminal_reward = config.goal_bonus
-    elif collision and not reached_goal:
-        terminal_reward = config.collision_penalty
-    elif timed_out and not reached_goal:
-        # 低层也对超时有一个小的局部惩罚
-        terminal_reward = config.timeout_penalty
+        # 成功：基准大奖 + 剩余时间分
+        r_terminal = R_base + config.efficiency_penalty * max(0, max_steps - steps_taken)
+    elif collision:
+        # 碰撞：基准倒扣 - 剩余距离罚 - 提前结束补偿
+        r_terminal = (
+            -R_base
+            - (config.progress_weight * max(goal_distance, 0.0))
+            - (config.efficiency_penalty * max(0, max_steps - steps_taken))
+        )
+    elif timed_out:
+        # 超时：基准倒扣 - 剩余距离罚
+        r_terminal = -R_base - (config.progress_weight * max(goal_distance, 0.0))
 
-    components["terminal"] = float(terminal_reward)
+    components["terminal"] = float(r_terminal)
 
     # ------------------------------------------------------------
-    # 4. 总奖励汇总 & 碰撞时做一次下限裁剪
+    # 5. 总奖励汇总（再做全局缩放）
     # ------------------------------------------------------------
-    total_reward = progress_reward + safety_reward + terminal_reward
+    total_reward_raw = r_prog + r_time + r_safety + r_terminal
+
+    # 全局缩放奖励，压低TD目标尺度但不改变最优策略
+    total_reward = float(total_reward_raw * config.reward_scale)
+    components["reward_raw"] = float(total_reward_raw)
 
     # 确保碰撞时 reward 不会被进度项刷成正值
     #if collision and not reached_goal:
