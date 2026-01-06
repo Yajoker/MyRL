@@ -10,20 +10,20 @@ class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
     # 1. 子目标进展相关
-    progress_weight: float = 5.0          # 略小一点，配合后面的缩放
-    efficiency_penalty: float = 0.05      # 每步轻微时间成本
+    progress_weight: float = 5.0          
+    efficiency_penalty: float = 0.5      # 时间步惩罚
 
     # 2. 安全相关
     safety_weight: float = 1.0            # 提高安全项权重
-    safety_sensitivity: float = 0.5       # 暂时保留但不使用（或直接删掉）
+    safety_sensitivity: float = 0.0       # 暂时保留但不使用（或直接删掉）
     safety_clearance: float = 0.6
     collision_distance: float = 0.3
 
     # 3. 终局项：在低层只保留很小的局部效果
-    goal_bonus: float = 0.0               # 低层不再给终点奖励
-    subgoal_bonus: float = 0.0            # 子目标奖励交给高层
-    collision_penalty: float = -20.0       # 轻微局部惩罚
-    timeout_penalty: float = -10          # 不在低层惩罚超时
+    goal_bonus: float = 30.0              
+    subgoal_bonus: float = 0.0            
+    collision_penalty: float = -20.0       
+    timeout_penalty: float = -20.0          
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -160,7 +160,7 @@ class PlannerConfig:
     frontier_min_dist: float = 0.8                   # 子目标距离下限（米）
     frontier_max_dist: float = 3.5                   # 子目标距离上限（米）
     frontier_gap_min_width: float = 0.2              # 最小前沿角宽（弧度）
-    diverse_frontier_enabled: bool = False           # 是否启用多桶候选保留策略
+    diverse_frontier_enabled: bool = True           # 是否启用多桶候选保留策略
     frontier_bucket_k_align: int = 3                 # 与目标方向对齐的保留数量
     frontier_bucket_k_clear: int = 2                 # 空旷度优先保留数量
     frontier_bucket_k_diverse: int = 2               # 多样性采样保留数量
@@ -178,7 +178,7 @@ class PlannerConfig:
     safety_loss_weight: float = 1.0    # λ_safe_loss: 训练时安全头 loss 的权重
     high_level_gamma: float = 0.99     # 高层 TD 折扣因子
     high_level_tau: float = 0.005      # 高层目标网络软更新系数
-    high_level_double_q_enabled: bool = False        # 是否启用双价值网络
+    high_level_double_q_enabled: bool = True        # 是否启用双价值网络
     high_level_double_q_update_mode: str = "alternate"  # 双Q更新模式
     high_level_double_q_fuse_mode: str = "mean"         # 推理融合方式
     high_level_double_q_target_eval: bool = True         # 目标网络是否用于评估
@@ -230,27 +230,27 @@ class PlannerConfig:
 class TrainingConfig:
     """End-to-end training and evaluation hyper-parameters."""
 
-    buffer_size: int = 50_000                        # 经验回放缓冲区大小
-    batch_size: int = 64                             # 训练批次大小
+    buffer_size: int = 100_000                        # 经验回放缓冲区大小
+    batch_size: int = 128                            # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
     max_steps: int = 550                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
-    training_iterations: int = 20                   # 每次训练的迭代次数
+    training_iterations: int = 10                    # 每次训练的迭代次数
     exploration_noise: float = 0.17                  # 探索噪声系数
-    min_buffer_size: int = 0                     # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 0                         # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
-    world_file: str = "env_a.yaml"                  # 环境配置文件
+    world_file: str = "env1.yaml"                  # 环境配置文件
     waypoint_lookahead: int = 3                      # 高层使用的前瞻航点数
     discount: float = 0.99                           # 折扣因子
     tau: float = 0.005                               # 目标网络软更新系数
-    policy_noise: float = 0.2                        # 策略噪声
-    noise_clip: float = 0.5                          # 噪声裁剪范围
-    policy_freq: int = 2                             # 策略更新频率
+    policy_noise: float = 0.15                        # 策略噪声
+    noise_clip: float = 0.3                          # 噪声裁剪范围
+    policy_freq: int = 2                            # 策略更新频率
     random_seed: Optional[int] = 666                 # 随机种子
 
     def __post_init__(self) -> None:  # type: ignore[override]
