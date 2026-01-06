@@ -2,7 +2,12 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from config import HighLevelRewardConfig, LowLevelRewardConfig
+try:
+    # 当以包形式导入（例如 `from myrl.rewards import ...`）时使用相对导入
+    from .config import HighLevelRewardConfig, LowLevelRewardConfig
+except ImportError:  # pragma: no cover
+    # 兼容旧的脚本运行方式（在 myrl 目录下直接运行 train.py 等）
+    from config import HighLevelRewardConfig, LowLevelRewardConfig
 
 
 # ================================================================
@@ -80,10 +85,10 @@ def compute_low_level_reward(
     #    终点 / 子目标成功 / 超时都由高层奖励统一处理。
     # ------------------------------------------------------------
     terminal_reward = 0.0
-
-    if collision and not reached_goal:
-        # 将碰撞惩罚缩小到局部尺度：避免与高层的大失败惩罚重复。
-        # 建议在 config 里把 collision_penalty 设得比高层小很多，
+    
+    if reached_goal:
+        terminal_reward = config.goal_bonus
+    elif collision and not reached_goal:
         terminal_reward = config.collision_penalty
     elif timed_out and not reached_goal:
         # 低层也对超时有一个小的局部惩罚
