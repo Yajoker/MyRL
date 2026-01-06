@@ -25,7 +25,7 @@ class HierarchicalNavigationSystem:
             max_action: float = 1.0,
             device=None,
             load_models: bool = False,
-            models_directory: Path = Path("ethsrl/models"),
+            models_directory: Path = Path("myrl/models"),
             step_duration: Optional[float] = None,  # 与yaml中的保持一致
             trigger_min_interval: Optional[float] = None,
             subgoal_threshold: Optional[float] = None,
