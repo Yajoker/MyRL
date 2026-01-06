@@ -307,11 +307,12 @@ class LowLevelController:
         # 归一化激光雷达数据（处理无穷大值）
         laser_scan = np.array(laser_scan)
         inf_mask = np.isinf(laser_scan)  # 检测无穷大值
-        laser_scan[inf_mask] = 7.0  # 将无穷大替换为最大范围值
-        laser_scan /= 7.0  # 归一化到[0, 1]范围
+        laser_scan[inf_mask] = 9.0  # 将无穷大替换为最大范围值
+        laser_scan /= 9.0  # 归一化到[0, 1]范围
 
         # 归一化子目标距离和角度
-        norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
+        # norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
+        norm_distance = float(np.tanh(subgoal_distance / 10.0))
         norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
 
         # 处理历史动作（已经是[-1,1]范围的归一化动作）
