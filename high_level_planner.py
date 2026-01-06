@@ -280,8 +280,8 @@ class HighLevelPlanner:
             for p in self.target_value_net_b.parameters():
                 p.requires_grad = False
 
-            self.value_optimizer_a = torch.optim.Adam(self.value_net_a.parameters(), lr=1e-3)
-            self.value_optimizer_b = torch.optim.Adam(self.value_net_b.parameters(), lr=1e-3)
+            self.value_optimizer_a = torch.optim.Adam(self.value_net_a.parameters(), lr=3e-4)  #1e-3改为了3e-4
+            self.value_optimizer_b = torch.optim.Adam(self.value_net_b.parameters(), lr=3e-4)  #1e-3改为了3e-4
             self.value_net = self.value_net_a
         else:
             self.value_net = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
@@ -431,8 +431,8 @@ class HighLevelPlanner:
     def process_laser_scan(self, laser_scan):
         laser_scan = np.array(laser_scan)
         inf_mask = np.isinf(laser_scan)
-        laser_scan[inf_mask] = 7.0
-        laser_scan = laser_scan / 7.0
+        laser_scan[inf_mask] = 9.0
+        laser_scan = laser_scan / 9.0
         return torch.FloatTensor(laser_scan).to(self.device)
 
     def process_goal_info(self, distance, cos_angle, sin_angle, waypoint_features=None):
@@ -788,7 +788,7 @@ class HighLevelPlanner:
                 self.target_value_net.eval()
                 eval_net = self.target_value_net
                 sel_net = self.target_value_net
-            laser_next_np = (laser_next_t.cpu().numpy() * 7.0).astype(np.float32)
+            laser_next_np = (laser_next_t.cpu().numpy() * 9.0).astype(np.float32)
             goal_next_np = goal_next_t.cpu().numpy().astype(np.float32)
 
             norm_dist = goal_next_np[:, 0]
@@ -812,7 +812,7 @@ class HighLevelPlanner:
                     continue
 
                 subgoals = torch.tensor(candidates, dtype=torch.float32, device=self.device)
-                laser_i = torch.tensor(scan_next / 7.0, dtype=torch.float32, device=self.device).unsqueeze(0)
+                laser_i = torch.tensor(scan_next / 9.0, dtype=torch.float32, device=self.device).unsqueeze(0)
                 laser_i = laser_i.repeat(subgoals.size(0), 1)
                 goal_i = torch.tensor(goal_next_np[i], dtype=torch.float32, device=self.device).unsqueeze(0)
                 goal_i = goal_i.repeat(subgoals.size(0), 1)
