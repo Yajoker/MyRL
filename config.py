@@ -10,21 +10,20 @@ class LowLevelRewardConfig:
     """Reward shaping coefficients for the low-level controller."""
 
     # 1. 子目标进展相关
-    progress_weight: float = 5.0          
-    efficiency_penalty: float = 0.5      # 时间步惩罚
+    progress_weight: float = 5.0          # 略小一点，配合后面的缩放
+    efficiency_penalty: float = 0.25      # 每步轻微时间成本
 
     # 2. 安全相关
     safety_weight: float = 1.0            # 提高安全项权重
-    safety_sensitivity: float = 0.0       # 暂时保留但不使用（或直接删掉）
+    safety_sensitivity: float = 0.5       # 暂时保留但不使用（或直接删掉）
     safety_clearance: float = 0.6
     collision_distance: float = 0.3
 
     # 3. 终局项：在低层只保留很小的局部效果
-    goal_bonus: float = 30.0              
-    subgoal_bonus: float = 0.0            
-    collision_penalty: float = -20.0       
-    timeout_penalty: float = -20.0          
-    reward_scale: float = 0.1               # 全局奖励缩放因子，压低TD目标尺度
+    goal_bonus: float = 30.0               # 低层不再给终点奖励
+    subgoal_bonus: float = 0.0            # 子目标奖励交给高层
+    collision_penalty: float = -20.0       # 轻微局部惩罚
+    timeout_penalty: float = -20          # 不在低层惩罚超时
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -32,8 +31,6 @@ class LowLevelRewardConfig:
             raise ValueError("efficiency_penalty must be non-negative")
         if self.safety_clearance <= 0:
             raise ValueError("safety_clearance must be positive")
-        if self.reward_scale <= 0:
-            raise ValueError("reward_scale must be positive")
 
 
 @dataclass(frozen=True)
@@ -234,28 +231,27 @@ class TrainingConfig:
     """End-to-end training and evaluation hyper-parameters."""
 
     buffer_size: int = 100_000                        # 经验回放缓冲区大小
-    batch_size: int = 128                            # 训练批次大小
+    batch_size: int = 128                             # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
     max_steps: int = 550                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
-    training_iterations: int = 10                    # 每次训练的迭代次数
+    training_iterations: int = 20                   # 每次训练的迭代次数
     exploration_noise: float = 0.17                  # 探索噪声系数
-    min_buffer_size: int = 0                         # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 0                     # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
-    world_file: str = "env1.yaml"                  # 环境配置文件
+    world_file: str = "env2.yaml"                  # 环境配置文件
     waypoint_lookahead: int = 3                      # 高层使用的前瞻航点数
     discount: float = 0.99                           # 折扣因子
     tau: float = 0.005                               # 目标网络软更新系数
-    policy_noise: float = 0.15                        # 策略噪声
-    noise_clip: float = 0.3                          # 噪声裁剪范围
-    policy_freq: int = 2                            # 策略更新频率
+    policy_noise: float = 0.2                        # 策略噪声
+    noise_clip: float = 0.5                          # 噪声裁剪范围
+    policy_freq: int = 2                             # 策略更新频率
     random_seed: Optional[int] = 666                 # 随机种子
-    min_exploration_noise: float = 0.05              # 噪声退火下限
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -291,8 +287,6 @@ class TrainingConfig:
             raise ValueError("noise_clip must be non-negative")
         if self.policy_freq <= 0:
             raise ValueError("policy_freq must be positive")
-        if self.min_exploration_noise < 0:
-            raise ValueError("min_exploration_noise must be non-negative")
 
 
 @dataclass(frozen=True)
