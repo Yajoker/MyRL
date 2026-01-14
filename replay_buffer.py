@@ -6,7 +6,7 @@
 import random
 from collections import deque  # 双端队列，用于高效地添加和删除元素
 import itertools  # 迭代工具，用于高效循环操作
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Deque, Tuple
 
 import numpy as np
 
@@ -110,101 +110,6 @@ class ReplayBuffer(object):
         """
         self.buffer.clear()  # 清空双端队列
         self.count = 0  # 重置计数器
-
-
-class TerminalAwareReplayBuffer:
-    """
-    终局感知的经验回放缓冲区
-
-    - 主缓冲区保持原有随机采样逻辑；
-    - 额外维护终局类型（goal/timeout/collision）的尾段样本池，采样时强制混入；
-    - 每次终局自动将结尾最近 k 步加入对应池，以增强价值学习的分布覆盖。
-    """
-
-    def __init__(
-        self,
-        buffer_size: int,
-        random_seed: int = 123,
-        tail_length: int = 5,
-        terminal_fraction: float = 0.25,
-        terminal_pool_size: Optional[int] = None,
-    ):
-        self.main = ReplayBuffer(buffer_size, random_seed=random_seed)
-        pool_cap = terminal_pool_size or max(buffer_size // 5, 1)
-        self._pools: Dict[str, Deque[Tuple]] = {
-            "goal": deque(maxlen=pool_cap),
-            "timeout": deque(maxlen=pool_cap),
-            "collision": deque(maxlen=pool_cap),
-        }
-        self._episode_tail: Deque[Tuple] = deque(maxlen=tail_length)
-        self.terminal_fraction = float(terminal_fraction)
-        self.tail_length = tail_length
-        random.seed(random_seed)
-
-    def add(self, s, a, r, t, s2, *, terminal_type: Optional[str] = None) -> None:
-        """添加经验，并在终局时将结尾尾段放入对应池"""
-        experience = (s, a, r, t, s2)
-        self.main.add(s, a, r, t, s2)
-        self._episode_tail.append(experience)
-
-        if terminal_type is not None and t:
-            if terminal_type in self._pools:
-                self._pools[terminal_type].extend(list(self._episode_tail))
-            self._episode_tail.clear()
-        elif t:
-            self._episode_tail.clear()
-
-    def size(self) -> int:
-        return self.main.size()
-
-    def _sample_from_pool(self, pool: Deque[Tuple], k: int) -> List[Tuple]:
-        if k <= 0 or len(pool) == 0:
-            return []
-        return random.sample(pool, min(k, len(pool)))
-
-    def _stack_batch(self, batch: List[Tuple]):
-        s_batch = np.array([_[0] for _ in batch])
-        a_batch = np.array([_[1] for _ in batch])
-        r_batch = np.array([_[2] for _ in batch])
-        t_batch = np.array([_[3] for _ in batch])
-        s2_batch = np.array([_[4] for _ in batch])
-        return s_batch, a_batch, r_batch, t_batch, s2_batch
-
-    def sample(self, batch_size: int):
-        """采样时强制混入终局样本，不足部分由主缓冲区补齐"""
-        if self.size() == 0:
-            return self._stack_batch([])
-
-        effective_batch = min(batch_size, self.size())
-        n_terminal = int(effective_batch * self.terminal_fraction)
-
-        n_each = n_terminal // 3
-        remainder = n_terminal - n_each * 3
-
-        ordered_types = ["goal", "timeout", "collision"]
-        pool_samples: List[Tuple] = []
-        for idx, t_type in enumerate(ordered_types):
-            target = n_each + (1 if idx < remainder else 0)
-            pool_samples.extend(self._sample_from_pool(self._pools[t_type], target))
-
-        # 补齐终局配额
-        collected = len(pool_samples)
-        remaining_terminal = max(0, n_terminal - collected)
-        if remaining_terminal > 0:
-            extra_from_main = random.sample(self.main.buffer, min(remaining_terminal, self.size()))
-            pool_samples.extend(extra_from_main)
-
-        remaining = max(0, effective_batch - len(pool_samples))
-        main_samples = random.sample(self.main.buffer, min(remaining, self.size()))
-
-        full_batch = pool_samples + main_samples
-        return self._stack_batch(full_batch)
-
-    def clear(self):
-        self.main.clear()
-        for pool in self._pools.values():
-            pool.clear()
-        self._episode_tail.clear()
 
 
 class RolloutReplayBuffer(object):
@@ -378,24 +283,3 @@ class HighLevelReplayBuffer:
     def clear(self) -> None:
         self._buffer.clear()
 
-
-class CostReplayBuffer:
-    """Replay buffer for long-horizon cost critic supervision."""
-
-    def __init__(self, max_size: int):
-        self._buffer: Deque[Tuple[np.ndarray, np.ndarray, float]] = deque(maxlen=max_size)
-
-    def add(self, state, geom, cost) -> None:
-        state_arr = np.asarray(state, dtype=np.float32)
-        geom_arr = np.asarray(geom, dtype=np.float32)
-        self._buffer.append((state_arr, geom_arr, float(cost)))
-
-    def sample(self, batch_size: int):
-        batch = random.sample(self._buffer, min(batch_size, len(self._buffer)))
-        states = np.stack([entry[0] for entry in batch])
-        geoms = np.stack([entry[1] for entry in batch])
-        costs = np.array([entry[2] for entry in batch], dtype=np.float32)
-        return states, geoms, costs
-
-    def __len__(self) -> int:
-        return len(self._buffer)
