@@ -219,6 +219,7 @@ def evaluate(
     config: TrainingConfig,
     epoch: int,
     low_cfg: LowLevelRewardConfig,
+    dt: float,
 ) -> None:
     """运行无探索噪声的评估 rollout 并记录汇总统计信息.
 
@@ -414,6 +415,9 @@ def evaluate(
                 collision=collision,  # 是否碰撞
                 timed_out=timed_out,  # 是否超时
                 config=low_cfg,  # 低层奖励配置
+                action=(lin_cmd, ang_cmd),  # 实际执行动作
+                angle_to_subgoal=subgoal_alignment_angle or 0.0,  # 子目标对齐角度
+                dt=dt,  # 控制步长
             )
 
             # 更新统计
@@ -493,6 +497,7 @@ def main(args=None):
     bundle = ConfigBundle()  # 配置包
     config = bundle.training  # 训练配置
     integration_config = bundle.integration  # 集成配置
+    motion_dt = integration_config.motion.dt  # 控制步长
 
     raw_world = Path(config.world_file)  # 世界文件路径
     base_dir = Path(__file__).resolve().parent  # 基础目录
@@ -858,6 +863,9 @@ def main(args=None):
                 collision=collision,  # 是否碰撞
                 timed_out=timed_out,  # 是否超时
                 config=low_reward_cfg,  # 低层奖励配置
+                action=(lin_cmd, ang_cmd),  # 实际执行动作
+                angle_to_subgoal=subgoal_alignment_angle or 0.0,  # 子目标对齐角度
+                dt=motion_dt,  # 控制步长
             )
 
             # 更新奖励统计
@@ -1032,7 +1040,14 @@ def main(args=None):
             epoch += 1  # 轮次计数器加1
 
             # 执行评估
-            evaluate(system, sim, config, epoch, low_reward_cfg)  # 执行评估
+            evaluate(  # 执行评估
+                system,
+                sim,
+                config,
+                epoch,
+                low_reward_cfg,
+                motion_dt,
+            )
 
     # ========== 训练完成处理 ==========
     print("\n💾 Saving final checkpoints...")  # 保存最终检查点

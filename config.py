@@ -19,11 +19,21 @@ class LowLevelRewardConfig:
     safety_clearance: float = 0.6
     collision_distance: float = 0.3
 
-    # 3. 终局项：在低层只保留很小的局部效果
-    goal_bonus: float = 30.0               # 低层不再给终点奖励
-    subgoal_bonus: float = 0.0            # 子目标奖励交给高层
-    collision_penalty: float = -20.0       # 轻微局部惩罚
-    timeout_penalty: float = -20          # 不在低层惩罚超时
+    # 3. 单层风格奖励（推荐用于低层）
+    forward_weight: float = 1.0           # 有效前进速度奖励系数
+    turn_weight: float = 0.3              # 转向惩罚系数
+    obstacle_weight: float = 0.5          # 靠近障碍惩罚系数
+    safe_distance: float = 1.35           # 靠近障碍的惩罚阈值
+    living_cost_per_sec: float = 1.0      # 按秒生存成本
+    living_cost_per_step: float = 0.0     # 按步生存成本（与 per_sec 二选一）
+    use_directional_velocity: bool = True
+    direction_clip: float = 0.0           # 方向余弦下限裁剪（0 表示不裁剪）
+
+    # 4. 终局项：低层 option 语义
+    goal_bonus: float = 40.0               # 低层一般不需要终点奖励
+    subgoal_bonus: float = 40.0            # 子目标奖励
+    collision_penalty: float = -200.0      # 碰撞惩罚
+    timeout_penalty: float = -40.0         # 低层 option 超时惩罚
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -31,6 +41,18 @@ class LowLevelRewardConfig:
             raise ValueError("efficiency_penalty must be non-negative")
         if self.safety_clearance <= 0:
             raise ValueError("safety_clearance must be positive")
+        if self.forward_weight < 0:
+            raise ValueError("forward_weight must be non-negative")
+        if self.turn_weight < 0:
+            raise ValueError("turn_weight must be non-negative")
+        if self.obstacle_weight < 0:
+            raise ValueError("obstacle_weight must be non-negative")
+        if self.safe_distance <= 0:
+            raise ValueError("safe_distance must be positive")
+        if self.living_cost_per_sec < 0:
+            raise ValueError("living_cost_per_sec must be non-negative")
+        if self.living_cost_per_step < 0:
+            raise ValueError("living_cost_per_step must be non-negative")
 
 
 @dataclass(frozen=True)
