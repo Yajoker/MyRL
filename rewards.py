@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Optional, Tuple
 
 import numpy as np
@@ -31,8 +32,8 @@ def compute_low_level_reward(
 
     设计目标：
     - 告诉低层：应当“快速、平滑、安全”地接近当前子目标；
-    - 终点 / 子目标成功 / 超时的语义交给高层处理；
-    - 只保留一个“轻微的局部碰撞惩罚”，提醒低层本身也要讨厌撞墙。
+    - 使用方向有效速度替代距离差分奖励，避免背对目标刷分；
+    - 终局时直接给出 option 语义奖励/惩罚，避免叠加偏置。
 
     返回:
         total_reward: 本步低层总奖励（标量）
@@ -40,70 +41,83 @@ def compute_low_level_reward(
     """
     components: Dict[str, float] = {}
 
-    # ------------------------------------------------------------
-    # 1. 子目标进展奖励 R_progress
-    #    R_progress = w_p * (d_prev - d_cur) - step_penalty
-    # ------------------------------------------------------------
-    progress_reward = 0.0
-
-    # 步数惩罚：表达“时间成本”
-    # 终点那一步可以不惩罚；到子目标那一步则减半，避免穿越子目标时被过度惩罚。
-    step_penalty = 0.0 if reached_goal else config.efficiency_penalty
-    if reached_subgoal and not reached_goal:
-        step_penalty *= 0.5
-
-    if prev_subgoal_distance is not None and current_subgoal_distance is not None:
-        progress_delta = prev_subgoal_distance - current_subgoal_distance
-        progress_reward = config.progress_weight * progress_delta - step_penalty
-    else:
-        # 没有距离信息时，只保留时间惩罚
-        progress_reward = -step_penalty
-
-    components["progress"] = float(progress_reward)
-
-    # ------------------------------------------------------------
-    # 2. 安全塑形奖励 R_safety
-    #    离障碍越近，惩罚越大；超过安全距离则不惩罚。
-    # ------------------------------------------------------------
-    if min_obstacle_distance < config.collision_distance:
-        safety_raw = -1.0
-    elif min_obstacle_distance < config.safety_clearance:
-        # 在线性区间 [collision_distance, safety_clearance] 内插值
-        ratio = (config.safety_clearance - min_obstacle_distance) / (
-            config.safety_clearance - config.collision_distance
-        )
-        safety_raw = -0.3 - 0.7 * ratio  # 从 -0.3 到 -1.0
-    else:
-        safety_raw = 0.0
-
-    safety_reward = config.safety_weight * safety_raw
-    components["safety"] = float(safety_reward)
-
-    # ------------------------------------------------------------
-    # 3. 低层局部终局项 R_terminal
-    #    只在发生碰撞时给一个小的额外惩罚。
-    #    终点 / 子目标成功 / 超时都由高层奖励统一处理。
-    # ------------------------------------------------------------
     terminal_reward = 0.0
-    
-    if reached_goal:
-        terminal_reward = config.goal_bonus
-    elif collision and not reached_goal:
+    if collision:
         terminal_reward = config.collision_penalty
-    elif timed_out and not reached_goal:
-        # 低层也对超时有一个小的局部惩罚
+    elif timed_out:
         terminal_reward = config.timeout_penalty
+    elif reached_subgoal:
+        terminal_reward = config.subgoal_bonus
+    elif reached_goal:
+        terminal_reward = config.goal_bonus
 
-    components["terminal"] = float(terminal_reward)
+    if terminal_reward != 0.0:
+        components["progress_v"] = 0.0
+        components["turn"] = 0.0
+        components["obs"] = 0.0
+        components["living"] = 0.0
+        components["terminal"] = float(terminal_reward)
+        components["total"] = float(terminal_reward)
+        return float(terminal_reward), components
 
     # ------------------------------------------------------------
-    # 4. 总奖励汇总 & 碰撞时做一次下限裁剪
+    # 1. 方向有效速度奖励 R_progress
+    #    R_progress = w_f * max(0, v) * cos(angle)
     # ------------------------------------------------------------
-    total_reward = progress_reward + safety_reward + terminal_reward
+    action = kwargs.get("action")
+    angle_to_subgoal = kwargs.get("angle_to_subgoal", 0.0)
+    dt = kwargs.get("dt", 1.0)
 
-    # 确保碰撞时 reward 不会被进度项刷成正值
-    #if collision and not reached_goal:
-    #    total_reward = min(total_reward, terminal_reward)
+    v = float(action[0]) if action is not None else 0.0
+    w = float(action[1]) if action is not None else 0.0
+    if angle_to_subgoal is None:
+        angle_to_subgoal = 0.0
+    cos_angle = math.cos(float(angle_to_subgoal))
+    if config.direction_clip != 0.0:
+        cos_angle = max(cos_angle, config.direction_clip)
+
+    progress_v = max(0.0, v) * cos_angle
+    if config.use_directional_velocity:
+        progress_reward = config.forward_weight * progress_v
+    else:
+        if prev_subgoal_distance is not None and current_subgoal_distance is not None:
+            progress_delta = prev_subgoal_distance - current_subgoal_distance
+            progress_reward = config.progress_weight * progress_delta
+        else:
+            progress_reward = 0.0
+    components["progress_v"] = float(progress_v)
+
+    # ------------------------------------------------------------
+    # 2. 转向惩罚 R_turn
+    # ------------------------------------------------------------
+    turn_scale = 0.3 + 0.7 * max(0.0, cos_angle)
+    turn_reward = -config.turn_weight * abs(w) * turn_scale
+    components["turn"] = float(turn_reward)
+
+    # ------------------------------------------------------------
+    # 3. 靠近障碍惩罚 R_obs
+    # ------------------------------------------------------------
+    r3 = max(0.0, config.safe_distance - float(min_obstacle_distance))
+    obs_reward = -config.obstacle_weight * r3
+    components["obs"] = float(obs_reward)
+
+    # ------------------------------------------------------------
+    # 4. 生存成本 R_living
+    # ------------------------------------------------------------
+    if config.living_cost_per_sec > 0:
+        living_reward = -config.living_cost_per_sec * float(dt)
+    elif config.living_cost_per_step > 0:
+        living_reward = -config.living_cost_per_step
+    else:
+        living_reward = 0.0
+    components["living"] = float(living_reward)
+
+    # ------------------------------------------------------------
+    # 5. 总奖励汇总
+    # ------------------------------------------------------------
+    total_reward = progress_reward + turn_reward + obs_reward + living_reward
+    components["terminal"] = 0.0
+    components["total"] = float(total_reward)
 
     return float(total_reward), components
 
