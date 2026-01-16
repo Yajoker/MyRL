@@ -73,8 +73,9 @@ def compute_low_level_reward(
     if angle_to_subgoal is None:
         angle_to_subgoal = 0.0
     cos_angle = math.cos(float(angle_to_subgoal))
-    if config.direction_clip != 0.0:
-        cos_angle = max(cos_angle, config.direction_clip)
+    direction_clip = getattr(config, "direction_clip", 0.0)
+    if direction_clip != 0.0:
+        cos_angle = max(cos_angle, direction_clip)
 
     progress_v = max(0.0, v) * cos_angle
     if config.use_directional_velocity:
