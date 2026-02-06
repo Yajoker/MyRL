@@ -19,21 +19,11 @@ class LowLevelRewardConfig:
     safety_clearance: float = 0.6
     collision_distance: float = 0.3
 
-    # 3. 单层风格奖励（推荐用于低层）
-    forward_weight: float = 1.0           # 有效前进速度奖励系数
-    turn_weight: float = 0.3              # 转向惩罚系数
-    obstacle_weight: float = 0.5          # 靠近障碍惩罚系数
-    safe_distance: float = 1.35           # 靠近障碍的惩罚阈值
-    living_cost_per_sec: float = 1.0      # 按秒生存成本
-    living_cost_per_step: float = 0.0     # 按步生存成本（与 per_sec 二选一）
-    use_directional_velocity: bool = True
-    direction_clip: float = 0.0           # 方向余弦下限裁剪（0 表示不裁剪）
-
-    # 4. 终局项：低层 option 语义
-    goal_bonus: float = 40.0               # 低层一般不需要终点奖励
-    subgoal_bonus: float = 40.0            # 子目标奖励
-    collision_penalty: float = -200.0      # 碰撞惩罚
-    timeout_penalty: float = -40.0         # 低层 option 超时惩罚
+    # 3. 终局项：在低层只保留很小的局部效果
+    goal_bonus: float = 30.0              
+    subgoal_bonus: float = 0.0            
+    collision_penalty: float = -20.0       
+    timeout_penalty: float = -20         
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -41,18 +31,6 @@ class LowLevelRewardConfig:
             raise ValueError("efficiency_penalty must be non-negative")
         if self.safety_clearance <= 0:
             raise ValueError("safety_clearance must be positive")
-        if self.forward_weight < 0:
-            raise ValueError("forward_weight must be non-negative")
-        if self.turn_weight < 0:
-            raise ValueError("turn_weight must be non-negative")
-        if self.obstacle_weight < 0:
-            raise ValueError("obstacle_weight must be non-negative")
-        if self.safe_distance <= 0:
-            raise ValueError("safe_distance must be positive")
-        if self.living_cost_per_sec < 0:
-            raise ValueError("living_cost_per_sec must be non-negative")
-        if self.living_cost_per_step < 0:
-            raise ValueError("living_cost_per_step must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -256,17 +234,17 @@ class TrainingConfig:
     batch_size: int = 128                             # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
-    max_steps: int = 550                             # 每个回合的最大步数
+    max_steps: int = 450                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 20                   # 每次训练的迭代次数
     exploration_noise: float = 0.17                  # 探索噪声系数
-    min_buffer_size: int = 0                     # 开始训练的最小缓冲区大小
+    min_buffer_size: int = 0                        # 开始训练的最小缓冲区大小
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
-    world_file: str = "env2.yaml"                  # 环境配置文件
+    world_file: str = "env1.yaml"                  # 环境配置文件
     waypoint_lookahead: int = 3                      # 高层使用的前瞻航点数
     discount: float = 0.99                           # 折扣因子
     tau: float = 0.005                               # 目标网络软更新系数
