@@ -219,7 +219,6 @@ def evaluate(
     config: TrainingConfig,
     epoch: int,
     low_cfg: LowLevelRewardConfig,
-    dt: float,
 ) -> None:
     """运行无探索噪声的评估 rollout 并记录汇总统计信息.
 
@@ -415,9 +414,6 @@ def evaluate(
                 collision=collision,  # 是否碰撞
                 timed_out=timed_out,  # 是否超时
                 config=low_cfg,  # 低层奖励配置
-                action=(lin_cmd, ang_cmd),  # 实际执行动作
-                angle_to_subgoal=subgoal_alignment_angle or 0.0,  # 子目标对齐角度
-                dt=dt,  # 控制步长
             )
 
             # 更新统计
@@ -490,14 +486,13 @@ def evaluate(
 
 
 def main(args=None):
-    """ETHSRL+GP的主要训练循环"""
+    """主要训练循环"""
 
     # ========== 训练配置与设备初始化 ==========
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # 设置设备
     bundle = ConfigBundle()  # 配置包
     config = bundle.training  # 训练配置
     integration_config = bundle.integration  # 集成配置
-    motion_dt = integration_config.motion.dt  # 控制步长
 
     raw_world = Path(config.world_file)  # 世界文件路径
     base_dir = Path(__file__).resolve().parent  # 基础目录
@@ -529,7 +524,7 @@ def main(args=None):
 
     # ========== 训练初始化日志 ==========
     print("\n" + "="*60)  # 分隔线
-    print("🚀 Starting ETHSRL+GP Hierarchical Navigation Training")  # 训练开始标题
+    print("🚀 Starting Hierarchical Navigation Training")  # 训练开始标题
     print("="*60)
     print(f"📋 Training Configuration:")  # 训练配置标题
     print(f"   • Device: {device}")  # 设备信息
@@ -550,7 +545,7 @@ def main(args=None):
     print("="*60)
 
     # ========== 系统初始化 ==========
-    print("🔄 Initializing ETHSRL+GP system...")  # 系统初始化信息
+    print("🔄 Initializing system...")  # 系统初始化信息
     system = HierarchicalNavigationSystem(  # 创建分层导航系统
         device=device,  # 设备
         subgoal_threshold=config.subgoal_radius,  # 子目标阈值
@@ -574,6 +569,8 @@ def main(args=None):
     epoch_total_steps = 0  # 轮次总步数
     epoch_goal_count = 0  # 轮次目标计数
     epoch_collision_count = 0  # 轮次碰撞计数
+
+    # best model 保存相关：保存所有 Success Rate 达到 100% 的 epoch
 
     # 训练计数器初始化
     episode = 0  # 情节计数器
@@ -863,9 +860,6 @@ def main(args=None):
                 collision=collision,  # 是否碰撞
                 timed_out=timed_out,  # 是否超时
                 config=low_reward_cfg,  # 低层奖励配置
-                action=(lin_cmd, ang_cmd),  # 实际执行动作
-                angle_to_subgoal=subgoal_alignment_angle or 0.0,  # 子目标对齐角度
-                dt=motion_dt,  # 控制步长
             )
 
             # 更新奖励统计
@@ -1031,6 +1025,38 @@ def main(args=None):
             print(f"   • Buffer Size:     {replay_buffer.size():8d}")  # 缓冲区大小
             print("=" * 60)
 
+            # ========== Best Model 保存（独立于常规 checkpoint） ==========
+            # 需求：保存整个训练周期中每个 Success Rate 达到 100% 的模型（而不是只保存首次）。
+            # 注意：此处不改变原有 checkpoint 保存逻辑与频率。
+            if epoch_success_rate >= 100.0 - 1e-9:
+                # best_models 根目录：与 myrl/models 同级的独立子目录
+                models_root = Path(system.high_level_planner.save_directory).parent
+                best_root = models_root / "best_models"
+                best_high_dir = best_root / "high_level"
+                best_low_dir = best_root / "low_level"
+
+                # 确保目录存在（避免 save_model 不创建目录导致报错）
+                best_high_dir.mkdir(parents=True, exist_ok=True)
+                best_low_dir.mkdir(parents=True, exist_ok=True)
+
+                # 文件名包含 epoch 与 Success Rate，避免覆盖并便于后续分析
+                tag = f"epoch{epoch:03d}_sr{epoch_success_rate:05.1f}"
+                high_best_name = f"{system.high_level_planner.model_name}_perfect_{tag}"
+                low_best_name = f"{system.low_level_controller.model_name}_perfect_{tag}"
+
+                print(
+                    f"🏆 Perfect Success Rate: {epoch_success_rate:.1f}% | "
+                    f"Saving perfect models to: {best_root}"
+                )
+                system.high_level_planner.save_model(
+                    filename=high_best_name,
+                    directory=best_high_dir,
+                )
+                system.low_level_controller.save_model(
+                    filename=low_best_name,
+                    directory=best_low_dir,
+                )
+
             # 重置轮次统计
             epoch_total_reward = 0.0  # 重置轮次总奖励
             epoch_total_steps = 0  # 重置轮次总步数
@@ -1040,14 +1066,7 @@ def main(args=None):
             epoch += 1  # 轮次计数器加1
 
             # 执行评估
-            evaluate(  # 执行评估
-                system,
-                sim,
-                config,
-                epoch,
-                low_reward_cfg,
-                motion_dt,
-            )
+            evaluate(system, sim, config, epoch, low_reward_cfg)  # 执行评估
 
     # ========== 训练完成处理 ==========
     print("\n💾 Saving final checkpoints...")  # 保存最终检查点
