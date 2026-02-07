@@ -9,6 +9,10 @@ from config import IntegrationConfig
 from low_level_controller import LowLevelController
 from high_level_planner import HighLevelPlanner
 
+from ablation_config import AblationConfig
+from ablation_system import HighLevelPlannerPeriodic
+from high_level_planner_scalar import HighLevelPlannerScalar, HighLevelPlannerScalarPeriodic
+
 
 class HierarchicalNavigationSystem:
     """
@@ -31,6 +35,7 @@ class HierarchicalNavigationSystem:
             subgoal_threshold: Optional[float] = None,
             waypoint_lookahead: Optional[int] = None,
             integration_config: Optional[IntegrationConfig] = None,
+                ablation_config: Optional[AblationConfig] = None,
     ) -> None:
         """
         初始化分层导航系统。
@@ -65,8 +70,39 @@ class HierarchicalNavigationSystem:
         # 计算状态维度
         low_level_state_dim = laser_dim + 4  # 低层控制器状态维度 = 激光维度 + 4个额外特征
 
+        # Ablation (optional): default is baseline unless env vars are set.
+        ab_cfg = ablation_config or AblationConfig.from_env()
+
+        # By default we preserve the original checkpoint locations for the baseline.
+        # For ablation runs (periodic replanning and/or scalar-Q), we suffix the
+        # models directory so different runs won't overwrite each other.
+        is_baseline = (ab_cfg.replan_mode == "event") and (ab_cfg.value_mode == "dual")
+        if not is_baseline:
+            models_directory = Path(models_directory) / ab_cfg.exp_tag()
+
+        planner_cls = HighLevelPlanner
+        planner_kwargs = {}
+        if ab_cfg.replan_mode == "periodic" and ab_cfg.value_mode == "scalar":
+            planner_cls = HighLevelPlannerScalarPeriodic
+            planner_kwargs = {
+                "replan_k": int(ab_cfg.replan_k),
+                "allow_subgoal_immediate": bool(ab_cfg.allow_subgoal_immediate),
+                "scalar_lambda": float(ab_cfg.scalar_lambda),
+            }
+        elif ab_cfg.replan_mode == "periodic":
+            planner_cls = HighLevelPlannerPeriodic
+            planner_kwargs = {
+                "replan_k": int(ab_cfg.replan_k),
+                "allow_subgoal_immediate": bool(ab_cfg.allow_subgoal_immediate),
+            }
+        elif ab_cfg.value_mode == "scalar":
+            planner_cls = HighLevelPlannerScalar
+            planner_kwargs = {
+                "scalar_lambda": float(ab_cfg.scalar_lambda),
+            }
+
         # 初始化高层规划器（负责生成子目标）
-        self.high_level_planner = HighLevelPlanner(
+        self.high_level_planner = planner_cls(
             belief_dim=laser_dim,  # 输入维度（激光雷达特征）
             device=self.device,  # 使用的计算设备
             save_directory=models_directory / "high_level",  # 模型保存路径
@@ -78,6 +114,7 @@ class HierarchicalNavigationSystem:
             waypoint_lookahead=waypoint_lookahead,  # 航点前瞻数量
             trigger_config=trigger_cfg,  # 触发器配置
             planner_config=planner_cfg,  # 规划器配置
+            **planner_kwargs,
         )
 
         # 初始化低层控制器（负责执行动作）
