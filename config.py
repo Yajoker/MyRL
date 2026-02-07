@@ -234,7 +234,7 @@ class TrainingConfig:
     batch_size: int = 128                             # 训练批次大小
     max_epochs: int = 60                             # 最大训练周期数
     episodes_per_epoch: int = 70                     # 每个周期的回合数
-    max_steps: int = 450                             # 每个回合的最大步数
+    max_steps: int = 400                             # 每个回合的最大步数
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 20                   # 每次训练的迭代次数
     exploration_noise: float = 0.17                  # 探索噪声系数
