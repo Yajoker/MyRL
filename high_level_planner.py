@@ -1,6 +1,8 @@
 """高层规划器：事件触发的前沿候选 + 统一价值网络 (E-FVQ)。"""
 
 import math
+import socket
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -308,7 +310,12 @@ class HighLevelPlanner:
         )
         self.step_duration = step_duration
 
-        self.writer = SummaryWriter(log_dir=self.save_directory)
+        tb_root = Path(__file__).resolve().parent / "runs"
+        tb_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%b%d_%H-%M-%S")
+        host = socket.gethostname()
+        tb_run_dir = tb_root / f"{timestamp}_{host}{model_name}"
+        self.writer = SummaryWriter(log_dir=str(tb_run_dir))
         self.iter_count = 0
 
         self.current_subgoal: Optional[Tuple[float, float]] = None
