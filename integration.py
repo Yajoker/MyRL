@@ -142,6 +142,7 @@ class HierarchicalNavigationSystem:
         self.waypoint_lookahead = waypoint_lookahead  # 航点前瞻数量
         self._cached_window_info: Dict[str, object] = {}  # 占位，保持接口兼容
         self.last_linear_velocity: float = 0.0
+        self._ext_goal_sector_prev_blocked = False
 
     def step(self, laser_scan, goal_distance, goal_cos, goal_sin, robot_pose, goal_position=None):
         """
@@ -333,6 +334,7 @@ class HierarchicalNavigationSystem:
         self.high_level_planner.event_trigger.reset_state()  # 重置事件触发器状态
         self.high_level_planner.reset_subgoal_hidden()  # 清空子目标网络隐状态
         self._cached_window_info = {}
+        self._ext_goal_sector_prev_blocked = False
 
     # ------------------------------------------------------------------
     # 兼容旧接口的空实现（mapless 模式下不会使用全局航点/窗口）
