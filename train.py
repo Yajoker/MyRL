@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
+import math
 
 import numpy as np
 import torch
@@ -91,6 +92,7 @@ def finalize_subgoal_transition(
         subgoal_step_count=context.steps,  # 子目标步数
         collision=collision_flag,  # 是否碰撞
         config=high_cfg,  # 高层奖励配置
+        reached_goal=reached_goal,
         short_cost_sum=context.short_cost_sum,
         near_obstacle_steps=context.near_obstacle_steps,
     )
@@ -277,9 +279,20 @@ def evaluate(
                 current_step=steps,  # 当前步数
                 window_metrics=None,  # 窗口指标
             )
+            goal_dir = math.atan2(float(sin), float(cos))
+            goal_sector_clear = system.high_level_planner._goal_sector_min_clearance(scan_arr, goal_dir)
+            prev_blocked = getattr(system, "_ext_goal_sector_prev_blocked", False)
+            goal_sector_blocked = goal_sector_clear <= system.high_level_planner.goal_lock_clearance
+            just_cleared_last_obstacle = prev_blocked and (not goal_sector_blocked)
+            system._ext_goal_sector_prev_blocked = goal_sector_blocked
+            force_goal_replan = (
+                float(distance) < system.high_level_planner.goal_lock_distance
+                and just_cleared_last_obstacle
+            )
             # 检查是否需要重新规划
             should_replan = (
                 system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
+                or force_goal_replan  # 刚绕开目标方向最后障碍且接近终点
                 or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
             )
 
@@ -625,9 +638,20 @@ def main(args=None):
                 current_step=steps,  # 当前步数
                 window_metrics=None,  # 窗口指标
             )
+            goal_dir = math.atan2(float(sin), float(cos))
+            goal_sector_clear = system.high_level_planner._goal_sector_min_clearance(scan_arr, goal_dir)
+            prev_blocked = getattr(system, "_ext_goal_sector_prev_blocked", False)
+            goal_sector_blocked = goal_sector_clear <= system.high_level_planner.goal_lock_clearance
+            just_cleared_last_obstacle = prev_blocked and (not goal_sector_blocked)
+            system._ext_goal_sector_prev_blocked = goal_sector_blocked
+            force_goal_replan = (
+                float(distance) < system.high_level_planner.goal_lock_distance
+                and just_cleared_last_obstacle
+            )
             # 检查是否需要重新规划子目标
             should_replan = (
                 system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
+                or force_goal_replan  # 刚绕开目标方向最后障碍且接近终点
                 or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
             )
 
@@ -1031,7 +1055,7 @@ def main(args=None):
             if epoch_success_rate >= 100.0 - 1e-9:
                 # best_models 根目录：与 myrl/models 同级的独立子目录
                 models_root = Path(system.high_level_planner.save_directory).parent
-                best_root = models_root / "best_models"
+                best_root = models_root / "best_models_3.24"
                 best_high_dir = best_root / "high_level"
                 best_low_dir = best_root / "low_level"
 
