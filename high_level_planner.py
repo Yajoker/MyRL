@@ -1,4 +1,4 @@
-"""高层规划器：事件触发的前沿候选 + 统一价值网络 (E-FVQ)。"""
+"""高层规划器"""
 
 import math
 import socket
@@ -339,6 +339,14 @@ class HighLevelPlanner:
         self.frontier_diverse_method = getattr(planner_cfg, "frontier_diverse_method", "farthest_angle")
         self.frontier_keep_goal_candidate = bool(getattr(planner_cfg, "frontier_keep_goal_candidate", True))
         self._rng = np.random.default_rng(getattr(planner_cfg, "frontier_diverse_seed", None))
+        self.goal_lock_distance = float(getattr(planner_cfg, "goal_lock_distance", 3.0))
+        self.goal_lock_clearance = float(getattr(planner_cfg, "goal_lock_clearance", 1.0))
+        self.goal_lock_sector_half_width = float(
+            getattr(planner_cfg, "goal_lock_sector_half_width", math.radians(12.0))
+        )
+        self.goal_lock_recent_clear_steps = max(1, int(getattr(planner_cfg, "goal_lock_recent_clear_steps", 6)))
+        self._goal_sector_prev_blocked = False
+        self._goal_lock_recent_clear_countdown = 0
 
         if load_model:
             load_dir = load_directory if load_directory else save_directory
@@ -478,6 +486,30 @@ class HighLevelPlanner:
         risk_index = min(1.0, alpha * r_min + (1.0 - alpha) * r_p)
         return risk_index, d_min, percentile
 
+    def _goal_sector_min_clearance(
+        self,
+        laser_scan: np.ndarray,
+        goal_dir: float,
+        sector_half_width: Optional[float] = None,
+    ) -> float:
+        scan = np.asarray(laser_scan, dtype=np.float32)
+        if scan.size == 0:
+            return float("inf")
+
+        width = self.goal_lock_sector_half_width if sector_half_width is None else float(sector_half_width)
+        n = scan.shape[0]
+        angles = np.linspace(-math.pi, math.pi, n, endpoint=False)
+        angle_delta = np.abs(np.arctan2(np.sin(angles - goal_dir), np.cos(angles - goal_dir)))
+        sector_mask = angle_delta <= max(width, 1e-4)
+        if not np.any(sector_mask):
+            return float("inf")
+
+        sector_values = scan[sector_mask]
+        sector_values = sector_values[np.isfinite(sector_values)]
+        if sector_values.size == 0:
+            return float("inf")
+        return float(np.min(sector_values))
+
     # ------------------------- 事件触发 -------------------------
     def check_triggers(
         self,
@@ -569,7 +601,8 @@ class HighLevelPlanner:
             i += 1
 
         goal_dir = math.atan2(goal_sin, goal_cos)
-        r_goal = float(np.clip(goal_distance, self.frontier_min_distance, self.frontier_max_distance))
+        #r_goal = float(np.clip(goal_distance, self.frontier_min_distance, self.frontier_max_distance))
+        r_goal = float(np.clip(goal_distance, 0.05, self.frontier_max_distance))
         candidates.append((r_goal, goal_dir))
 
         if len(candidates) > self.frontier_num_candidates:
@@ -679,12 +712,28 @@ class HighLevelPlanner:
                 q_eff, q_safe = self.value_net(laser_batch, goal_batch, geom_t, return_heads=True)
                 q_vals = (q_eff - self.safety_q_weight * q_safe).cpu().numpy()
 
-        scores = q_vals
+        scores = q_vals.copy()
 
-        if robot_pose is not None and self.current_subgoal_world is not None:
+        goal_distance, goal_cos, goal_sin = goal_info
+        goal_dir = math.atan2(goal_sin, goal_cos)
+        goal_idx = int(
+            np.argmin(
+                [
+                    abs(math.atan2(math.sin(theta - goal_dir), math.cos(theta - goal_dir)))
+                    for _, theta in candidates
+                ]
+            )
+        )
+        near_terminal = goal_distance < self.goal_lock_distance
+
+        if near_terminal:
+            goal_bias = 1.5 + 0.5 * max(0.0, self.goal_lock_distance - goal_distance)
+            scores[goal_idx] += goal_bias
+
+        lambda_cons = 0.0 if near_terminal else self.consistency_lambda
+        if robot_pose is not None and self.current_subgoal_world is not None and lambda_cons > 0.0:
             last_r, last_theta = self.get_relative_subgoal(robot_pose)
             if last_r is not None:
-                lambda_cons = self.consistency_lambda
                 sigma_r = max(self.consistency_sigma_r, 1e-6)
                 sigma_theta = max(self.consistency_sigma_theta, 1e-6)
 
@@ -695,7 +744,7 @@ class HighLevelPlanner:
                     bonus = math.exp(-0.5 * (dr * dr + dtheta * dtheta))
                     bonuses.append(lambda_cons * bonus)
 
-                scores = q_vals + np.asarray(bonuses, dtype=np.float32)
+                scores = scores + np.asarray(bonuses, dtype=np.float32)
 
         best_idx = int(np.argmax(scores))
         best_r, best_theta = candidates[best_idx]
@@ -713,6 +762,64 @@ class HighLevelPlanner:
         window_metrics: Optional[dict] = None,
         current_speed: Optional[float] = None,
     ):
+        goal_distance = float(goal_distance)
+        goal_dir = math.atan2(float(goal_sin), float(goal_cos))
+
+        # 强制近终点直达策略：目标近且目标扇区清晰时，跳过普通子目标选择。
+        goal_sector_clear = self._goal_sector_min_clearance(np.asarray(laser_scan, dtype=np.float32), goal_dir)
+        goal_sector_blocked = goal_sector_clear <= self.goal_lock_clearance
+        just_cleared_last_obstacle = self._goal_sector_prev_blocked and not goal_sector_blocked
+        if just_cleared_last_obstacle:
+            self._goal_lock_recent_clear_countdown = self.goal_lock_recent_clear_steps
+        elif goal_sector_blocked:
+            self._goal_lock_recent_clear_countdown = 0
+        elif self._goal_lock_recent_clear_countdown > 0:
+            self._goal_lock_recent_clear_countdown -= 1
+        self._goal_sector_prev_blocked = goal_sector_blocked
+
+        recently_cleared = just_cleared_last_obstacle or self._goal_lock_recent_clear_countdown > 0
+        if goal_distance < self.goal_lock_distance and (goal_sector_clear > self.goal_lock_clearance or recently_cleared):
+            goal_eps = 0.05
+            final_distance = max(goal_distance, goal_eps)
+            final_angle = goal_dir
+            world_target = None
+            if robot_pose is not None:
+                world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
+
+            self.current_subgoal = (final_distance, final_angle)
+            self.current_subgoal_world = world_target
+            self.last_goal_distance = goal_distance
+            self.last_goal_direction = goal_dir
+
+            progress_step = current_step if current_step is not None else 0
+            self.event_trigger.reset_progress(goal_distance, progress_step)
+            return final_distance, final_angle, {
+                "mode": "goal_lock",
+                "goal_sector_clear": float(goal_sector_clear),
+                "recently_cleared": bool(recently_cleared),
+            }
+
+        near_goal_switch = 1.0
+        goal_eps = 0.05
+
+        # near-goal: 直接把真实目标当子目标
+        risk_index, _, _ = self.compute_risk_index(np.asarray(laser_scan, dtype=np.float32))
+        if goal_distance <= near_goal_switch and risk_index < 0.2:
+            final_distance = max(goal_distance, goal_eps)
+            final_angle = goal_dir
+            world_target = None
+            if robot_pose is not None:
+                world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
+
+            self.current_subgoal = (final_distance, final_angle)
+            self.current_subgoal_world = world_target
+            self.last_goal_distance = goal_distance
+            self.last_goal_direction = goal_dir
+
+            progress_step = current_step if current_step is not None else 0
+            self.event_trigger.reset_progress(goal_distance, progress_step)
+            return final_distance, final_angle, {"num_candidates": 1, "mode": "goal_snap"}
+        
         goal_info = (float(goal_distance), float(goal_cos), float(goal_sin))
 
         candidates = self._generate_frontier_candidates(laser_scan, *goal_info)
