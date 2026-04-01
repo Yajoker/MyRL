@@ -45,6 +45,7 @@ class HighLevelRewardConfig:
     gamma_near_steps: float = 0.5           # 近障碍步数权重
     lambda_col: float = 1.0                 # 每步安全成本中的碰撞权重
     lambda_near: float = 0.2                # 每步安全成本中的近障碍权重
+    goal_completion_bonus: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,9 @@ class PlannerConfig:
     high_level_double_q_fuse_mode: str = "mean"         # 推理融合方式
     high_level_double_q_target_eval: bool = True         # 目标网络是否用于评估
     high_level_double_q_log_net_id: bool = True          # 是否记录本轮更新的网络编号
+    goal_lock_distance: float = 3.0                      # 近终点强切换半径
+    goal_lock_clearance: float = 1.0                     # 目标方向扇区净空阈值
+    goal_lock_recent_clear_steps: int = 6                # 刚绕开最后障碍后的保持步数
 
 
     def __post_init__(self) -> None:  # type: ignore[override]
@@ -224,6 +228,12 @@ class PlannerConfig:
             raise ValueError("high_level_double_q_update_mode must be 'alternate'")
         if self.high_level_double_q_fuse_mode not in {"mean", "min"}:
             raise ValueError("high_level_double_q_fuse_mode must be 'mean' or 'min'")
+        if self.goal_lock_distance <= 0:
+            raise ValueError("goal_lock_distance must be positive")
+        if self.goal_lock_clearance <= 0:
+            raise ValueError("goal_lock_clearance must be positive")
+        if self.goal_lock_recent_clear_steps <= 0:
+            raise ValueError("goal_lock_recent_clear_steps must be positive")
 
 
 @dataclass(frozen=True)
