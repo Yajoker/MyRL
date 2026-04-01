@@ -117,6 +117,7 @@ def compute_high_level_reward(
     subgoal_step_count: int,
     collision: bool,
     *,
+    reached_goal: bool,
     config: HighLevelRewardConfig,
     short_cost_sum: float = 0.0,
     near_obstacle_steps: int = 0,
@@ -139,6 +140,9 @@ def compute_high_level_reward(
     time_penalty = float(config.beta_time * float(max(subgoal_step_count, 0)))
     components["time_penalty"] = float(-time_penalty)
 
+    goal_bonus = float(config.goal_completion_bonus) if reached_goal else 0.0
+    components["goal_bonus"] = float(goal_bonus)
+
     # 效率回报：进展奖励 - 时间惩罚
     reward_eff = progress_reward - time_penalty
     components["eff_reward"] = float(reward_eff)
@@ -154,7 +158,7 @@ def compute_high_level_reward(
     components["near_cost_term"] = float(-near_cost_term)
     components["safety_cost_total"] = float(-safety_cost)
 
-    total_reward = reward_eff - safety_cost
+    total_reward = reward_eff - safety_cost + goal_bonus
     components["total_reward"] = float(total_reward)
 
     return (float(reward_eff), float(safety_cost)), components
