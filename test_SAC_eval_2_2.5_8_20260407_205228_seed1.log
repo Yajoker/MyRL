@@ -27,7 +27,7 @@ Scenario   11 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   12 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
 Scenario   13 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario   14 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario   15 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.4
+Scenario   15 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     4.1
 Scenario   16 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   17 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario   18 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
@@ -43,7 +43,7 @@ Scenario   26 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   27 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
 Scenario   28 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario   29 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
-Scenario   30 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
+Scenario   30 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    15.6
 Scenario   31 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario   32 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario   33 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
@@ -57,7 +57,7 @@ Scenario   40 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario   41 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario   42 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   43 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario   44 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario   44 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     2.3
 Scenario   45 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario   46 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario   47 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
@@ -68,8 +68,8 @@ Scenario   51 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario   52 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario   53 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   54 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario   55 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario   56 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario   55 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    15.7
+Scenario   56 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    10.8
 Scenario   57 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario   58 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario   59 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
@@ -81,7 +81,7 @@ Scenario   64 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario   65 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.4
 Scenario   66 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario   67 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario   68 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario   68 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     4.2
 Scenario   69 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario   70 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   71 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
@@ -90,7 +90,7 @@ Scenario   72 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   73 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -67.9
 Scenario   74 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario   75 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
-Scenario   76 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
+Scenario   76 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     5.0
 Scenario   77 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario   78 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario   79 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -108,7 +108,7 @@ Scenario   90 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario   91 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario   92 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario   93 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
-Scenario   94 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario   94 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     2.8
 Scenario   95 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario   96 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario   97 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -119,16 +119,16 @@ Scenario  101 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  102 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  103 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  104 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  105 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  105 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     7.9
 Scenario  106 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  107 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 2026-04-07 21:12 | WARNING  | robot_0 collided with obstacle_7 at state [17.05, 16.09, -0.54]
 Scenario  108 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.2
-Scenario  109 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario  109 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     8.4
 Scenario  110 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.3
 Scenario  111 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  112 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
-Scenario  113 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
+Scenario  113 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    16.4
 Scenario  114 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  115 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 2026-04-07 21:14 | WARNING  | robot_0 collided with obstacle_7 at state [16.94, 16.06, -0.54]
@@ -140,12 +140,12 @@ Scenario  119 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -67.7
 Scenario  120 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  121 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  122 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  123 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  123 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     3.1
 Scenario  124 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  125 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  126 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  127 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.3
-Scenario  128 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario  128 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     3.2
 Scenario  129 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  130 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 2026-04-07 21:17 | WARNING  | robot_0 collided with obstacle_7 at state [17.04, 16.08, -0.54]
@@ -173,7 +173,7 @@ Scenario  150 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario  151 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  152 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  153 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario  154 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
+Scenario  154 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    15.0
 Scenario  155 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  156 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  157 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
@@ -206,11 +206,11 @@ Scenario  177 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  178 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.5
 Scenario  179 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  180 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
-Scenario  181 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
+Scenario  181 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     6.5
 Scenario  182 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  183 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  184 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  185 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario  185 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     4.8
 Scenario  186 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.3
 Scenario  187 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  188 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
@@ -223,7 +223,7 @@ Scenario  194 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  195 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  196 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  197 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
-Scenario  198 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  198 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    18.9
 Scenario  199 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 2026-04-07 21:29 | WARNING  | robot_0 collided with obstacle_7 at state [17.03, 16.07, -0.51]
 Scenario  200 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.4
@@ -233,8 +233,8 @@ Scenario  203 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
 2026-04-07 21:30 | WARNING  | robot_0 collided with obstacle_7 at state [16.95, 16.07, -0.55]
 Scenario  204 finished: 💥 COLLISION | Steps: 116 | Total Reward:   -68.5
 Scenario  205 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  206 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  207 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario  206 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    11.2
+Scenario  207 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    10.0
 Scenario  208 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  209 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario  210 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
@@ -257,9 +257,9 @@ Scenario  223 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  224 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.1
 Scenario  225 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  226 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario  227 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
+Scenario  227 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     8.4
 Scenario  228 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  229 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
+Scenario  229 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    17.7
 Scenario  230 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  231 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  232 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -284,7 +284,7 @@ Scenario  248 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  249 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  250 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.5
 Scenario  251 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
-Scenario  252 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
+Scenario  252 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     6.7
 Scenario  253 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  254 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  255 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -306,7 +306,7 @@ Scenario  266 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  267 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  268 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  269 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario  270 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
+Scenario  270 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    19.6
 2026-04-07 21:42 | WARNING  | robot_0 collided with obstacle_7 at state [17.04, 16.09, -0.54]
 Scenario  271 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.2
 Scenario  272 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
@@ -336,7 +336,7 @@ Scenario  292 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario  293 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  294 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  295 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  296 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
+Scenario  296 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     3.6
 Scenario  297 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  298 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  299 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
@@ -344,7 +344,7 @@ Scenario  300 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
 Scenario  301 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  302 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  303 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
-Scenario  304 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  304 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     9.6
 Scenario  305 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  306 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  307 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.3
@@ -357,12 +357,12 @@ Scenario  313 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  314 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  315 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  316 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario  317 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
+Scenario  317 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    13.5
 Scenario  318 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  319 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
 Scenario  320 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  321 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario  322 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario  322 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     5.5
 Scenario  323 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  324 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  325 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
@@ -373,7 +373,7 @@ Scenario  329 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  330 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  331 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.4
 Scenario  332 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  333 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario  333 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     4.3
 Scenario  334 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  335 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  336 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -381,7 +381,7 @@ Scenario  337 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  338 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  339 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  340 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  341 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario  341 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     7.0
 Scenario  342 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  343 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 2026-04-07 21:56 | WARNING  | robot_0 collided with obstacle_7 at state [17.06, 16.09, -0.55]
@@ -394,17 +394,17 @@ Scenario  349 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  350 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 2026-04-07 21:57 | WARNING  | robot_0 collided with obstacle_7 at state [17.1, 16.06, -0.54]
 Scenario  351 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.4
-Scenario  352 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario  352 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    18.4
 Scenario  353 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  354 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  355 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  356 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  357 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
-Scenario  358 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.4
+Scenario  358 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     8.5
 Scenario  359 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  360 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.3
 Scenario  361 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  362 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.3
+Scenario  362 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    11.6
 Scenario  363 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  364 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  365 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
@@ -423,13 +423,13 @@ Scenario  376 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  377 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  378 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  379 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  380 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  380 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    16.3
 Scenario  381 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  382 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.4
 Scenario  383 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  384 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  385 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  386 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
+Scenario  386 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     5.8
 Scenario  387 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  388 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  389 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.4
@@ -451,12 +451,12 @@ Scenario  404 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  405 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  406 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  407 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
-Scenario  408 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  408 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     4.3
 Scenario  409 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  410 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  411 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  412 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
-Scenario  413 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario  413 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     8.7
 Scenario  414 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  415 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  416 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -474,7 +474,7 @@ Scenario  424 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  425 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.0
 Scenario  426 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  427 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  428 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
+Scenario  428 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    14.1
 Scenario  429 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  430 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  431 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
@@ -495,13 +495,13 @@ Scenario  445 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  446 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  447 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  448 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
-Scenario  449 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
+Scenario  449 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    17.1
 Scenario  450 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  451 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  452 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  453 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  454 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
-Scenario  455 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
+Scenario  455 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    14.1
 Scenario  456 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  457 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  458 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -516,7 +516,7 @@ Scenario  465 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  466 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  467 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  468 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.6
-Scenario  469 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.3
+Scenario  469 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     4.2
 Scenario  470 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  471 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  472 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -539,10 +539,10 @@ Scenario  487 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  488 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  489 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  490 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario  491 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
+Scenario  491 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     9.2
 Scenario  492 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  493 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
-Scenario  494 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario  494 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     2.4
 Scenario  495 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 Scenario  496 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  497 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.2
@@ -554,7 +554,7 @@ Scenario  501 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  502 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  503 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  504 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
-Scenario  505 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.4
+Scenario  505 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     3.4
 Scenario  506 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  507 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  508 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
@@ -572,7 +572,7 @@ Scenario  518 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  519 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  520 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  521 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
-Scenario  522 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario  522 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     3.2
 Scenario  523 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  524 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
 2026-04-07 22:29 | WARNING  | robot_0 collided with obstacle_7 at state [17.03, 16.08, -0.53]
@@ -599,11 +599,11 @@ Scenario  542 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  543 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  544 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  545 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
-Scenario  546 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  546 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    12.4
 Scenario  547 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  548 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  549 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
-Scenario  550 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
+Scenario  550 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    14.8
 Scenario  551 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  552 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  553 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
@@ -623,11 +623,11 @@ Scenario  565 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -67.9
 Scenario  566 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 2026-04-07 22:36 | WARNING  | robot_0 collided with obstacle_7 at state [17.04, 16.08, -0.55]
 Scenario  567 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.2
-Scenario  568 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
+Scenario  568 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    14.6
 2026-04-07 22:37 | WARNING  | robot_0 collided with obstacle_7 at state [17.07, 16.09, -0.53]
 Scenario  569 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.3
 Scenario  570 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  571 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario  571 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    10.4
 Scenario  572 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 2026-04-07 22:38 | WARNING  | robot_0 collided with obstacle_7 at state [17.09, 16.05, -0.52]
 Scenario  573 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.4
@@ -635,7 +635,7 @@ Scenario  574 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  575 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  576 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.4
 Scenario  577 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
-Scenario  578 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
+Scenario  578 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    18.4
 Scenario  579 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 2026-04-07 22:39 | WARNING  | robot_0 collided with obstacle_7 at state [17.05, 16.02, -0.53]
 Scenario  580 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -68.2
@@ -644,11 +644,11 @@ Scenario  582 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  583 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  584 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.5
 Scenario  585 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
-Scenario  586 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
+Scenario  586 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:     3.4
 Scenario  587 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 Scenario  588 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  589 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.4
-Scenario  590 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
+Scenario  590 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    14.0
 Scenario  591 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.1
 Scenario  592 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.8
 2026-04-07 22:41 | WARNING  | robot_0 collided with obstacle_7 at state [17.06, 16.07, -0.51]
@@ -660,16 +660,16 @@ Scenario  597 finished: 🎯 GOAL | Steps: 165 | Total Reward:   161.0
 Scenario  598 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.9
 Scenario  599 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.7
 Scenario  600 finished: 🎯 GOAL | Steps: 165 | Total Reward:   160.6
-avg_step_reward 0.8863363860004548
-avg_step_reward_std: 0.36115630878657307
-avg_ep_reward: 142.91583333333332
-avg_ep_reward_std: 61.66152586710226
+avg_step_reward 0.7176794106556548
+avg_step_reward_std: 0.4759495132911871
+avg_ep_reward: 130.05666666666667
+avg_ep_reward_std: 71.5814337542873
 avg_col: 0.07833333333333334
-avg_goal: 0.9216666666666666
-avg_timeout: 0.0
-avg_ep_len(steps): 161.24333333333334
-avg_inter_step_rew: 0.8528480180311712
-avg_inter_step_rew_std: 0.41939468678827807
+avg_goal: 0.8366666666666667
+avg_timeout: 0.085
+avg_ep_len(steps): 181.21833333333333
+avg_inter_step_rew: 0.7719993185362216
+avg_inter_step_rew_std: 0.4759887015843136
 avg_steps_to_goal: 165
 avg_steps_to_goal_std: 0.0
 mean_lin_action: 0.4768412411212921
