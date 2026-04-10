@@ -1,0 +1,715 @@
+从以下位置加载权重: /home/lab2439/Work/YF/Navigation/myrl/compare/models/HIRO/best/best_epoch_022
+2026-04-08 21:27 | WARNING  | pynput is not available. Using matplotlib backend.
+2026-04-08 21:27 | INFO     | Simulation environment 'eval_2_2' started. Step time 0.300 s.
+============================================================
+🧪 HIRO TEST CONFIG
+   • Seed:          1
+   • Device:        cuda:0 (NVIDIA GeForce RTX 4090)
+   • World file:     /home/lab2439/Work/YF/Navigation/myrl/worlds/eval_2_2.5_16.yaml
+   • Checkpoint dir: /home/lab2439/Work/YF/Navigation/myrl/compare/models/HIRO/best/best_epoch_022
+   • Checkpoint name:best
+   • HIRO c:         5
+   • Max subgoal:    5.0
+   • Max steps/ep:   400, Scenarios: 600
+   • Plotting:       OFF
+   • Step log:       OFF (every 50 steps)
+   • Progress bar:   OFF
+============================================================
+..............................................
+Testing 600 scenarios
+Scenario    1 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -116.7
+Scenario    2 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.1
+Scenario    3 finished: 🎯 GOAL | Steps: 203 | Total Reward:    156.8
+Scenario    4 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.3
+Scenario    5 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -122.0
+2026-04-08 21:28 | WARNING  | robot_0 collided with obstacle_5 at state [14.56, 16.36, -1.85]
+Scenario    6 finished: 💥 COLLISION | Steps: 125 | Total Reward:    -82.8
+Scenario    7 finished: 🎯 GOAL | Steps: 209 | Total Reward:    154.3
+2026-04-08 21:28 | WARNING  | robot_0 collided with obstacle_28 at state [12.56, 16.39, 1.67]
+Scenario    8 finished: 💥 COLLISION | Steps: 122 | Total Reward:   -196.9
+2026-04-08 21:28 | WARNING  | robot_0 collided with obstacle_28 at state [12.74, 16.16, 2.2]
+Scenario    9 finished: 💥 COLLISION | Steps: 156 | Total Reward:   -223.4
+Scenario   10 finished: 🎯 GOAL | Steps: 221 | Total Reward:    158.8
+2026-04-08 21:29 | WARNING  | robot_0 collided with obstacle_5 at state [14.88, 16.37, -1.78]
+Scenario   11 finished: 💥 COLLISION | Steps: 166 | Total Reward:   -141.6
+Scenario   12 finished: 🎯 GOAL | Steps: 198 | Total Reward:    157.2
+Scenario   13 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -126.3
+Scenario   14 finished: 🎯 GOAL | Steps: 191 | Total Reward:    161.9
+Scenario   15 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -138.6
+Scenario   16 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -111.9
+Scenario   17 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.1
+Scenario   18 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.7
+2026-04-08 21:30 | WARNING  | robot_0 collided with obstacle_26 at state [13.77, 16.55, -1.69]
+Scenario   19 finished: 💥 COLLISION | Steps: 137 | Total Reward:    -93.4
+Scenario   20 finished: 🎯 GOAL | Steps: 221 | Total Reward:    163.0
+Scenario   21 finished: 🎯 GOAL | Steps: 199 | Total Reward:    160.4
+Scenario   22 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.5
+Scenario   23 finished: 🎯 GOAL | Steps: 228 | Total Reward:    136.6
+Scenario   24 finished: 🎯 GOAL | Steps: 200 | Total Reward:    156.9
+Scenario   25 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.5
+Scenario   26 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.5
+Scenario   27 finished: 🎯 GOAL | Steps: 221 | Total Reward:    164.1
+Scenario   28 finished: 🎯 GOAL | Steps: 195 | Total Reward:    162.6
+Scenario   29 finished: 🎯 GOAL | Steps: 198 | Total Reward:    157.3
+Scenario   30 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -134.4
+Scenario   31 finished: 🎯 GOAL | Steps: 199 | Total Reward:    159.1
+Scenario   32 finished: 🎯 GOAL | Steps: 241 | Total Reward:    126.6
+Scenario   33 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -130.9
+2026-04-08 21:33 | WARNING  | robot_0 collided with obstacle_27 at state [13.95, 16.14, 1.11]
+Scenario   34 finished: 💥 COLLISION | Steps: 178 | Total Reward:   -150.6
+Scenario   35 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.4
+Scenario   36 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.7
+Scenario   37 finished: 🎯 GOAL | Steps: 195 | Total Reward:    160.8
+Scenario   38 finished: 🎯 GOAL | Steps: 197 | Total Reward:    159.9
+2026-04-08 21:34 | WARNING  | robot_0 collided with obstacle_5 at state [14.68, 16.4, -1.88]
+Scenario   39 finished: 💥 COLLISION | Steps: 291 | Total Reward:    -87.3
+Scenario   40 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.2
+Scenario   41 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.9
+Scenario   42 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.4
+2026-04-08 21:35 | WARNING  | robot_0 collided with obstacle_28 at state [13.24, 16.71, 0.75]
+Scenario   43 finished: 💥 COLLISION | Steps: 346 | Total Reward:   -190.3
+2026-04-08 21:35 | WARNING  | robot_0 collided with obstacle_24 at state [12.64, 17.35, -1.73]
+Scenario   44 finished: 💥 COLLISION | Steps: 128 | Total Reward:   -134.3
+2026-04-08 21:36 | WARNING  | robot_0 collided with obstacle_28 at state [13.74, 16.02, 2.02]
+Scenario   45 finished: 💥 COLLISION | Steps: 278 | Total Reward:   -163.6
+Scenario   46 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.9
+2026-04-08 21:36 | WARNING  | robot_0 collided with obstacle_26 at state [13.54, 16.53, -1.53]
+Scenario   47 finished: 💥 COLLISION | Steps: 180 | Total Reward:   -103.5
+Scenario   48 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.8
+Scenario   49 finished: 🎯 GOAL | Steps: 201 | Total Reward:    151.2
+Scenario   50 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -126.8
+Scenario   51 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -120.3
+Scenario   52 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -120.6
+Scenario   53 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.8
+Scenario   54 finished: 🎯 GOAL | Steps: 202 | Total Reward:    157.6
+Scenario   55 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.5
+Scenario   56 finished: 🎯 GOAL | Steps: 226 | Total Reward:    157.6
+Scenario   57 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.8
+Scenario   58 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -113.7
+Scenario   59 finished: 🎯 GOAL | Steps: 204 | Total Reward:    152.8
+Scenario   60 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -61.1
+Scenario   61 finished: 🎯 GOAL | Steps: 195 | Total Reward:    161.4
+2026-04-08 21:41 | WARNING  | robot_0 collided with obstacle_28 at state [13.91, 15.64, 1.58]
+Scenario   62 finished: 💥 COLLISION | Steps: 340 | Total Reward:   -217.6
+Scenario   63 finished: 🎯 GOAL | Steps: 208 | Total Reward:    147.3
+Scenario   64 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -83.2
+Scenario   65 finished: 🎯 GOAL | Steps: 197 | Total Reward:    160.5
+Scenario   66 finished: 🎯 GOAL | Steps: 202 | Total Reward:    160.8
+Scenario   67 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.5
+Scenario   68 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -130.8
+Scenario   69 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -124.4
+Scenario   70 finished: 🎯 GOAL | Steps: 226 | Total Reward:    157.3
+Scenario   71 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.3
+Scenario   72 finished: 🎯 GOAL | Steps: 204 | Total Reward:    150.7
+Scenario   73 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -116.8
+Scenario   74 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.2
+Scenario   75 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -136.5
+Scenario   76 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.1
+Scenario   77 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.4
+Scenario   78 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.4
+Scenario   79 finished: 🎯 GOAL | Steps: 293 | Total Reward:    147.0
+Scenario   80 finished: 🎯 GOAL | Steps: 213 | Total Reward:    165.8
+Scenario   81 finished: 🎯 GOAL | Steps: 217 | Total Reward:    162.0
+Scenario   82 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -123.7
+Scenario   83 finished: 🎯 GOAL | Steps: 199 | Total Reward:    161.3
+Scenario   84 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.4
+Scenario   85 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -88.6
+Scenario   86 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.7
+Scenario   87 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.1
+Scenario   88 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -131.4
+Scenario   89 finished: 🎯 GOAL | Steps: 228 | Total Reward:    158.2
+Scenario   90 finished: 🎯 GOAL | Steps: 207 | Total Reward:    157.0
+Scenario   91 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -103.3
+Scenario   92 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.9
+Scenario   93 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -135.0
+Scenario   94 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.6
+Scenario   95 finished: 🎯 GOAL | Steps: 194 | Total Reward:    160.4
+Scenario   96 finished: 🎯 GOAL | Steps: 198 | Total Reward:    160.5
+Scenario   97 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.4
+Scenario   98 finished: 🎯 GOAL | Steps: 223 | Total Reward:    152.3
+Scenario   99 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.7
+Scenario  100 finished: 🎯 GOAL | Steps: 199 | Total Reward:    161.3
+Scenario  101 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.0
+Scenario  102 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.4
+Scenario  103 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.3
+Scenario  104 finished: 🎯 GOAL | Steps: 221 | Total Reward:    154.0
+2026-04-08 21:53 | WARNING  | robot_0 collided with obstacle_5 at state [14.89, 16.44, -1.9]
+Scenario  105 finished: 💥 COLLISION | Steps: 347 | Total Reward:   -167.7
+Scenario  106 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -114.9
+2026-04-08 21:54 | WARNING  | robot_0 collided with obstacle_27 at state [13.78, 16.23, 2.46]
+Scenario  107 finished: 💥 COLLISION | Steps: 115 | Total Reward:   -142.0
+Scenario  108 finished: 🎯 GOAL | Steps: 195 | Total Reward:    163.1
+Scenario  109 finished: 🎯 GOAL | Steps: 194 | Total Reward:    161.6
+Scenario  110 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.6
+Scenario  111 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.3
+Scenario  112 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.7
+Scenario  113 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -125.9
+Scenario  114 finished: 🎯 GOAL | Steps: 194 | Total Reward:    161.0
+Scenario  115 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.3
+Scenario  116 finished: 🎯 GOAL | Steps: 198 | Total Reward:    160.4
+Scenario  117 finished: 🎯 GOAL | Steps: 234 | Total Reward:    131.2
+Scenario  118 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.8
+Scenario  119 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.1
+Scenario  120 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -101.4
+Scenario  121 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.0
+Scenario  122 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -87.6
+Scenario  123 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -118.8
+Scenario  124 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -113.5
+Scenario  125 finished: 🎯 GOAL | Steps: 207 | Total Reward:    154.9
+Scenario  126 finished: 🎯 GOAL | Steps: 200 | Total Reward:    156.9
+Scenario  127 finished: 🎯 GOAL | Steps: 211 | Total Reward:    164.7
+2026-04-08 22:00 | WARNING  | robot_0 collided with obstacle_28 at state [12.89, 17.42, 1.66]
+Scenario  128 finished: 💥 COLLISION | Steps: 279 | Total Reward:   -119.3
+Scenario  129 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.0
+Scenario  130 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.3
+Scenario  131 finished: 🎯 GOAL | Steps: 198 | Total Reward:    160.0
+Scenario  132 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+2026-04-08 22:01 | WARNING  | robot_0 collided with obstacle_5 at state [14.52, 16.54, -1.76]
+Scenario  133 finished: 💥 COLLISION | Steps: 281 | Total Reward:   -199.0
+2026-04-08 22:02 | WARNING  | robot_0 collided with obstacle_26 at state [13.58, 16.45, -1.68]
+Scenario  134 finished: 💥 COLLISION | Steps: 295 | Total Reward:   -181.2
+Scenario  135 finished: 🎯 GOAL | Steps: 204 | Total Reward:    158.0
+Scenario  136 finished: 🎯 GOAL | Steps: 219 | Total Reward:    159.3
+2026-04-08 22:02 | WARNING  | robot_0 collided with obstacle_26 at state [13.53, 16.32, -1.64]
+Scenario  137 finished: 💥 COLLISION | Steps: 249 | Total Reward:    -92.4
+2026-04-08 22:03 | WARNING  | robot_0 collided with obstacle_26 at state [13.66, 16.34, -1.56]
+Scenario  138 finished: 💥 COLLISION | Steps: 231 | Total Reward:   -143.1
+Scenario  139 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.9
+Scenario  140 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.8
+Scenario  141 finished: 🎯 GOAL | Steps: 207 | Total Reward:    155.6
+Scenario  142 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+Scenario  143 finished: 🎯 GOAL | Steps: 221 | Total Reward:    158.9
+2026-04-08 22:05 | WARNING  | robot_0 collided with obstacle_27 at state [13.84, 16.23, 2.44]
+Scenario  144 finished: 💥 COLLISION | Steps: 372 | Total Reward:   -207.3
+Scenario  145 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -136.0
+Scenario  146 finished: 🎯 GOAL | Steps: 231 | Total Reward:    152.3
+2026-04-08 22:05 | WARNING  | robot_0 collided with obstacle_24 at state [11.8, 17.88, 0.13]
+Scenario  147 finished: 💥 COLLISION | Steps: 114 | Total Reward:   -100.5
+2026-04-08 22:06 | WARNING  | robot_0 collided with obstacle_24 at state [13.58, 16.36, -1.68]
+Scenario  148 finished: 💥 COLLISION | Steps: 333 | Total Reward:   -193.9
+2026-04-08 22:06 | WARNING  | robot_0 collided with obstacle_26 at state [13.63, 16.55, -1.64]
+Scenario  149 finished: 💥 COLLISION | Steps: 247 | Total Reward:   -247.6
+Scenario  150 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.9
+Scenario  151 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -131.2
+Scenario  152 finished: 🎯 GOAL | Steps: 203 | Total Reward:    157.2
+2026-04-08 22:07 | WARNING  | robot_0 collided with obstacle_28 at state [13.02, 16.42, 1.55]
+Scenario  153 finished: 💥 COLLISION | Steps: 309 | Total Reward:   -165.2
+Scenario  154 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -104.7
+Scenario  155 finished: 🎯 GOAL | Steps: 219 | Total Reward:    137.3
+Scenario  156 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -112.5
+Scenario  157 finished: 🎯 GOAL | Steps: 199 | Total Reward:    159.5
+2026-04-08 22:09 | WARNING  | robot_0 collided with obstacle_28 at state [12.52, 17.46, 0.48]
+Scenario  158 finished: 💥 COLLISION | Steps: 102 | Total Reward:   -101.8
+Scenario  159 finished: 🎯 GOAL | Steps: 212 | Total Reward:    154.2
+Scenario  160 finished: 🎯 GOAL | Steps: 201 | Total Reward:    160.2
+Scenario  161 finished: 🎯 GOAL | Steps: 207 | Total Reward:    154.2
+Scenario  162 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+Scenario  163 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  164 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.5
+Scenario  165 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.1
+Scenario  166 finished: 🎯 GOAL | Steps: 200 | Total Reward:    156.3
+Scenario  167 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.6
+Scenario  168 finished: 🎯 GOAL | Steps: 209 | Total Reward:    148.2
+Scenario  169 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.3
+2026-04-08 22:12 | WARNING  | robot_0 collided with obstacle_24 at state [11.61, 17.87, -0.67]
+Scenario  170 finished: 💥 COLLISION | Steps: 126 | Total Reward:   -232.2
+Scenario  171 finished: 🎯 GOAL | Steps: 199 | Total Reward:    161.0
+Scenario  172 finished: 🎯 GOAL | Steps: 221 | Total Reward:    158.2
+Scenario  173 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.4
+Scenario  174 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.2
+Scenario  175 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -120.9
+Scenario  176 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -111.8
+Scenario  177 finished: 🎯 GOAL | Steps: 195 | Total Reward:    161.5
+Scenario  178 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -129.5
+Scenario  179 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.8
+Scenario  180 finished: 🎯 GOAL | Steps: 195 | Total Reward:    163.6
+Scenario  181 finished: 🎯 GOAL | Steps: 198 | Total Reward:    160.1
+Scenario  182 finished: 🎯 GOAL | Steps: 205 | Total Reward:    159.6
+Scenario  183 finished: 🎯 GOAL | Steps: 221 | Total Reward:    163.9
+Scenario  184 finished: 🎯 GOAL | Steps: 214 | Total Reward:    139.6
+Scenario  185 finished: 🎯 GOAL | Steps: 197 | Total Reward:    162.8
+Scenario  186 finished: 🎯 GOAL | Steps: 217 | Total Reward:    143.8
+Scenario  187 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.3
+Scenario  188 finished: 🎯 GOAL | Steps: 195 | Total Reward:    159.7
+Scenario  189 finished: 🎯 GOAL | Steps: 207 | Total Reward:    155.1
+Scenario  190 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -103.7
+Scenario  191 finished: 🎯 GOAL | Steps: 196 | Total Reward:    160.9
+Scenario  192 finished: 🎯 GOAL | Steps: 194 | Total Reward:    163.3
+Scenario  193 finished: 🎯 GOAL | Steps: 200 | Total Reward:    159.0
+Scenario  194 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.6
+Scenario  195 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.6
+Scenario  196 finished: 🎯 GOAL | Steps: 202 | Total Reward:    160.2
+Scenario  197 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -125.2
+Scenario  198 finished: 🎯 GOAL | Steps: 203 | Total Reward:    154.5
+Scenario  199 finished: 🎯 GOAL | Steps: 198 | Total Reward:    159.3
+Scenario  200 finished: 🎯 GOAL | Steps: 199 | Total Reward:    159.3
+Scenario  201 finished: 🎯 GOAL | Steps: 208 | Total Reward:    155.4
+Scenario  202 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -120.5
+Scenario  203 finished: 🎯 GOAL | Steps: 211 | Total Reward:    149.9
+Scenario  204 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -127.3
+Scenario  205 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+Scenario  206 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.6
+Scenario  207 finished: 🎯 GOAL | Steps: 202 | Total Reward:    160.3
+2026-04-08 22:23 | WARNING  | robot_0 collided with obstacle_28 at state [13.59, 17.42, 0.59]
+Scenario  208 finished: 💥 COLLISION | Steps: 156 | Total Reward:   -136.6
+Scenario  209 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.0
+Scenario  210 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -129.3
+Scenario  211 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -118.2
+2026-04-08 22:24 | WARNING  | robot_0 collided with obstacle_27 at state [13.85, 16.14, 1.92]
+Scenario  212 finished: 💥 COLLISION | Steps: 160 | Total Reward:   -122.8
+Scenario  213 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.2
+Scenario  214 finished: 🎯 GOAL | Steps: 199 | Total Reward:    159.1
+2026-04-08 22:25 | WARNING  | robot_0 collided with obstacle_27 at state [13.91, 16.14, 0.66]
+Scenario  215 finished: 💥 COLLISION | Steps: 392 | Total Reward:   -221.5
+Scenario  216 finished: 🎯 GOAL | Steps: 198 | Total Reward:    159.8
+Scenario  217 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.6
+2026-04-08 22:25 | WARNING  | robot_0 collided with obstacle_28 at state [13.54, 16.12, 0.95]
+Scenario  218 finished: 💥 COLLISION | Steps: 136 | Total Reward:   -108.5
+Scenario  219 finished: 🎯 GOAL | Steps: 191 | Total Reward:    161.1
+Scenario  220 finished: 🎯 GOAL | Steps: 213 | Total Reward:    164.0
+Scenario  221 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -139.2
+Scenario  222 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -127.8
+Scenario  223 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.1
+Scenario  224 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.1
+Scenario  225 finished: 🎯 GOAL | Steps: 204 | Total Reward:    153.4
+Scenario  226 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.9
+Scenario  227 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+Scenario  228 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.8
+Scenario  229 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.2
+Scenario  230 finished: 🎯 GOAL | Steps: 194 | Total Reward:    163.0
+Scenario  231 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -117.2
+Scenario  232 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -117.1
+Scenario  233 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.0
+Scenario  234 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.6
+Scenario  235 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -111.1
+Scenario  236 finished: 🎯 GOAL | Steps: 221 | Total Reward:    163.5
+Scenario  237 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.2
+Scenario  238 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.8
+Scenario  239 finished: 🎯 GOAL | Steps: 222 | Total Reward:    140.8
+Scenario  240 finished: 🎯 GOAL | Steps: 195 | Total Reward:    162.2
+Scenario  241 finished: 🎯 GOAL | Steps: 231 | Total Reward:    154.7
+2026-04-08 22:29 | WARNING  | robot_0 collided with obstacle_5 at state [14.86, 16.59, -1.91]
+Scenario  242 finished: 💥 COLLISION | Steps: 117 | Total Reward:   -106.0
+Scenario  243 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.7
+Scenario  244 finished: 🎯 GOAL | Steps: 229 | Total Reward:    148.9
+2026-04-08 22:29 | WARNING  | robot_0 collided with obstacle_24 at state [12.16, 17.02, 0.11]
+Scenario  245 finished: 💥 COLLISION | Steps: 297 | Total Reward:   -104.8
+Scenario  246 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.2
+Scenario  247 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -122.3
+Scenario  248 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.2
+Scenario  249 finished: 🎯 GOAL | Steps: 226 | Total Reward:    158.1
+Scenario  250 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.1
+Scenario  251 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.4
+Scenario  252 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.5
+Scenario  253 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.5
+2026-04-08 22:31 | WARNING  | robot_0 collided with obstacle_5 at state [14.67, 16.53, -1.8]
+Scenario  254 finished: 💥 COLLISION | Steps: 381 | Total Reward:   -211.7
+2026-04-08 22:31 | WARNING  | robot_0 collided with obstacle_5 at state [14.88, 16.35, -1.95]
+Scenario  255 finished: 💥 COLLISION | Steps: 150 | Total Reward:   -114.4
+2026-04-08 22:31 | WARNING  | robot_0 collided with obstacle_28 at state [13.58, 16.93, 0.89]
+Scenario  256 finished: 💥 COLLISION | Steps: 297 | Total Reward:   -237.5
+Scenario  257 finished: 🎯 GOAL | Steps: 207 | Total Reward:    154.7
+Scenario  258 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -107.2
+Scenario  259 finished: 🎯 GOAL | Steps: 209 | Total Reward:    146.4
+Scenario  260 finished: 🎯 GOAL | Steps: 209 | Total Reward:    147.9
+Scenario  261 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -104.9
+2026-04-08 22:33 | WARNING  | robot_0 collided with obstacle_27 at state [13.87, 15.97, 1.51]
+Scenario  262 finished: 💥 COLLISION | Steps: 390 | Total Reward:   -252.5
+2026-04-08 22:33 | WARNING  | robot_0 collided with obstacle_24 at state [11.31, 17.59, 0.31]
+Scenario  263 finished: 💥 COLLISION | Steps: 128 | Total Reward:   -102.8
+Scenario  264 finished: 🎯 GOAL | Steps: 206 | Total Reward:    150.7
+Scenario  265 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -139.0
+Scenario  266 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.5
+Scenario  267 finished: 🎯 GOAL | Steps: 218 | Total Reward:    159.8
+2026-04-08 22:34 | WARNING  | robot_0 collided with obstacle_28 at state [13.71, 15.67, 0.66]
+Scenario  268 finished: 💥 COLLISION | Steps: 189 | Total Reward:   -151.8
+Scenario  269 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.9
+Scenario  270 finished: 🎯 GOAL | Steps: 195 | Total Reward:    162.4
+Scenario  271 finished: 🎯 GOAL | Steps: 228 | Total Reward:    143.1
+Scenario  272 finished: 🎯 GOAL | Steps: 202 | Total Reward:    160.2
+Scenario  273 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -126.5
+2026-04-08 22:35 | WARNING  | robot_0 collided with obstacle_26 at state [13.58, 16.39, -1.57]
+Scenario  274 finished: 💥 COLLISION | Steps: 105 | Total Reward:   -169.0
+Scenario  275 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.7
+Scenario  276 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.1
+Scenario  277 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  278 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.4
+Scenario  279 finished: 🎯 GOAL | Steps: 216 | Total Reward:    162.5
+Scenario  280 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.8
+Scenario  281 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.9
+Scenario  282 finished: 🎯 GOAL | Steps: 200 | Total Reward:    159.2
+Scenario  283 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -125.9
+Scenario  284 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.3
+Scenario  285 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.9
+Scenario  286 finished: 🎯 GOAL | Steps: 212 | Total Reward:    148.6
+Scenario  287 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.7
+Scenario  288 finished: 🎯 GOAL | Steps: 198 | Total Reward:    160.2
+Scenario  289 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -122.8
+2026-04-08 22:38 | WARNING  | robot_0 collided with obstacle_26 at state [13.6, 16.46, -1.54]
+Scenario  290 finished: 💥 COLLISION | Steps: 373 | Total Reward:   -225.2
+Scenario  291 finished: 🎯 GOAL | Steps: 221 | Total Reward:    158.7
+Scenario  292 finished: 🎯 GOAL | Steps: 196 | Total Reward:    160.9
+Scenario  293 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.4
+Scenario  294 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -122.1
+Scenario  295 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.4
+2026-04-08 22:39 | WARNING  | robot_0 collided with obstacle_26 at state [13.6, 16.51, -1.63]
+Scenario  296 finished: 💥 COLLISION | Steps: 138 | Total Reward:   -124.9
+Scenario  297 finished: 🎯 GOAL | Steps: 237 | Total Reward:    147.3
+Scenario  298 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  299 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -112.8
+Scenario  300 finished: 🎯 GOAL | Steps: 200 | Total Reward:    159.6
+Scenario  301 finished: 🎯 GOAL | Steps: 221 | Total Reward:    157.8
+Scenario  302 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -114.2
+Scenario  303 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -119.9
+Scenario  304 finished: 🎯 GOAL | Steps: 200 | Total Reward:    159.1
+Scenario  305 finished: 🎯 GOAL | Steps: 199 | Total Reward:    160.3
+Scenario  306 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.6
+Scenario  307 finished: 🎯 GOAL | Steps: 200 | Total Reward:    157.9
+Scenario  308 finished: 🎯 GOAL | Steps: 195 | Total Reward:    159.3
+2026-04-08 22:41 | WARNING  | robot_0 collided with obstacle_27 at state [13.75, 16.18, 0.99]
+Scenario  309 finished: 💥 COLLISION | Steps: 172 | Total Reward:   -120.3
+Scenario  310 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.2
+Scenario  311 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.4
+Scenario  312 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+2026-04-08 22:42 | WARNING  | robot_0 collided with obstacle_28 at state [13.83, 15.84, 1.34]
+Scenario  313 finished: 💥 COLLISION | Steps: 275 | Total Reward:   -183.5
+Scenario  314 finished: 🎯 GOAL | Steps: 195 | Total Reward:    161.6
+Scenario  315 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.0
+Scenario  316 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.4
+Scenario  317 finished: 🎯 GOAL | Steps: 195 | Total Reward:    160.4
+Scenario  318 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.8
+Scenario  319 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.6
+Scenario  320 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -114.1
+Scenario  321 finished: 🎯 GOAL | Steps: 227 | Total Reward:    155.3
+Scenario  322 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -118.7
+Scenario  323 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.6
+Scenario  324 finished: 🎯 GOAL | Steps: 267 | Total Reward:    139.5
+Scenario  325 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.3
+Scenario  326 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.1
+Scenario  327 finished: 🎯 GOAL | Steps: 199 | Total Reward:    160.0
+Scenario  328 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.8
+Scenario  329 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.2
+Scenario  330 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.3
+Scenario  331 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -117.6
+Scenario  332 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+2026-04-08 22:44 | WARNING  | robot_0 collided with obstacle_5 at state [14.69, 16.42, -1.8]
+Scenario  333 finished: 💥 COLLISION | Steps: 165 | Total Reward:    -99.6
+Scenario  334 finished: 🎯 GOAL | Steps: 196 | Total Reward:    162.4
+Scenario  335 finished: 🎯 GOAL | Steps: 221 | Total Reward:    164.0
+Scenario  336 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.3
+Scenario  337 finished: 🎯 GOAL | Steps: 211 | Total Reward:    141.8
+2026-04-08 22:45 | WARNING  | robot_0 collided with obstacle_28 at state [13.67, 16.47, 0.53]
+Scenario  338 finished: 💥 COLLISION | Steps: 131 | Total Reward:   -188.2
+Scenario  339 finished: 🎯 GOAL | Steps: 195 | Total Reward:    160.7
+Scenario  340 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.9
+2026-04-08 22:46 | WARNING  | robot_0 collided with obstacle_28 at state [13.73, 16.06, 2.29]
+Scenario  341 finished: 💥 COLLISION | Steps: 297 | Total Reward:   -167.1
+Scenario  342 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.6
+2026-04-08 22:46 | WARNING  | robot_0 collided with obstacle_26 at state [13.74, 16.4, -1.56]
+Scenario  343 finished: 💥 COLLISION | Steps: 221 | Total Reward:   -168.9
+Scenario  344 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.9
+Scenario  345 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -103.8
+Scenario  346 finished: 🎯 GOAL | Steps: 223 | Total Reward:    154.0
+Scenario  347 finished: 🎯 GOAL | Steps: 199 | Total Reward:    159.0
+Scenario  348 finished: 🎯 GOAL | Steps: 200 | Total Reward:    153.0
+2026-04-08 22:47 | WARNING  | robot_0 collided with obstacle_28 at state [13.31, 17.08, 2.16]
+Scenario  349 finished: 💥 COLLISION | Steps: 225 | Total Reward:   -225.9
+Scenario  350 finished: 🎯 GOAL | Steps: 200 | Total Reward:    151.5
+Scenario  351 finished: 🎯 GOAL | Steps: 221 | Total Reward:    163.7
+Scenario  352 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.1
+Scenario  353 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.9
+Scenario  354 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -113.8
+Scenario  355 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.2
+Scenario  356 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.7
+Scenario  357 finished: 🎯 GOAL | Steps: 200 | Total Reward:    151.4
+Scenario  358 finished: 🎯 GOAL | Steps: 222 | Total Reward:    159.1
+Scenario  359 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.0
+Scenario  360 finished: 🎯 GOAL | Steps: 194 | Total Reward:    161.4
+Scenario  361 finished: 🎯 GOAL | Steps: 195 | Total Reward:    160.4
+2026-04-08 22:49 | WARNING  | robot_0 collided with obstacle_28 at state [12.89, 16.35, 1.11]
+Scenario  362 finished: 💥 COLLISION | Steps: 111 | Total Reward:   -110.4
+Scenario  363 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.5
+Scenario  364 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -136.0
+Scenario  365 finished: 🎯 GOAL | Steps: 212 | Total Reward:    164.9
+Scenario  366 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.9
+Scenario  367 finished: 🎯 GOAL | Steps: 226 | Total Reward:    149.2
+Scenario  368 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -115.4
+Scenario  369 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -113.2
+Scenario  370 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -121.9
+Scenario  371 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -119.6
+Scenario  372 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.4
+Scenario  373 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.1
+Scenario  374 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  375 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -125.8
+2026-04-08 22:51 | WARNING  | robot_0 collided with obstacle_27 at state [13.75, 16.16, 0.57]
+Scenario  376 finished: 💥 COLLISION | Steps: 290 | Total Reward:    -87.4
+Scenario  377 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -123.9
+2026-04-08 22:52 | WARNING  | robot_0 collided with obstacle_27 at state [13.95, 16.15, 2.2]
+Scenario  378 finished: 💥 COLLISION | Steps: 270 | Total Reward:   -203.0
+Scenario  379 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.6
+Scenario  380 finished: 🎯 GOAL | Steps: 198 | Total Reward:    156.9
+Scenario  381 finished: 🎯 GOAL | Steps: 224 | Total Reward:    159.4
+Scenario  382 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -134.1
+Scenario  383 finished: 🎯 GOAL | Steps: 204 | Total Reward:    153.6
+2026-04-08 22:53 | WARNING  | robot_0 collided with obstacle_24 at state [14.03, 16.43, -1.81]
+Scenario  384 finished: 💥 COLLISION | Steps: 144 | Total Reward:   -115.7
+Scenario  385 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -172.9
+Scenario  386 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -180.4
+Scenario  387 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -115.6
+Scenario  388 finished: 🎯 GOAL | Steps: 213 | Total Reward:    165.1
+Scenario  389 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  390 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -111.3
+Scenario  391 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.7
+Scenario  392 finished: 🎯 GOAL | Steps: 199 | Total Reward:    159.1
+Scenario  393 finished: 🎯 GOAL | Steps: 202 | Total Reward:    157.1
+Scenario  394 finished: 🎯 GOAL | Steps: 194 | Total Reward:    160.2
+Scenario  395 finished: 🎯 GOAL | Steps: 197 | Total Reward:    160.2
+Scenario  396 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -131.7
+Scenario  397 finished: 🎯 GOAL | Steps: 211 | Total Reward:    165.2
+Scenario  398 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -143.6
+2026-04-08 22:55 | WARNING  | robot_0 collided with obstacle_27 at state [13.89, 16.22, 1.39]
+Scenario  399 finished: 💥 COLLISION | Steps: 245 | Total Reward:   -104.8
+Scenario  400 finished: 🎯 GOAL | Steps: 292 | Total Reward:    144.3
+Scenario  401 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.2
+Scenario  402 finished: 🎯 GOAL | Steps: 207 | Total Reward:    154.1
+Scenario  403 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -110.8
+Scenario  404 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.0
+Scenario  405 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.4
+Scenario  406 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -109.8
+Scenario  407 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.4
+Scenario  408 finished: 🎯 GOAL | Steps: 222 | Total Reward:    145.0
+Scenario  409 finished: 🎯 GOAL | Steps: 226 | Total Reward:    161.8
+2026-04-08 22:56 | WARNING  | robot_0 collided with obstacle_28 at state [12.52, 16.3, 1.86]
+Scenario  410 finished: 💥 COLLISION | Steps: 341 | Total Reward:   -170.3
+Scenario  411 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.3
+Scenario  412 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.5
+2026-04-08 22:57 | WARNING  | robot_0 collided with obstacle_27 at state [13.88, 15.94, 2.28]
+Scenario  413 finished: 💥 COLLISION | Steps: 369 | Total Reward:   -210.7
+Scenario  414 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -133.5
+Scenario  415 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.2
+Scenario  416 finished: 🎯 GOAL | Steps: 190 | Total Reward:    162.9
+Scenario  417 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -112.4
+2026-04-08 22:58 | WARNING  | robot_0 collided with obstacle_28 at state [13.94, 15.71, 1.55]
+Scenario  418 finished: 💥 COLLISION | Steps: 210 | Total Reward:   -159.3
+Scenario  419 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -118.1
+Scenario  420 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -104.4
+Scenario  421 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.0
+2026-04-08 22:58 | WARNING  | robot_0 collided with obstacle_26 at state [13.57, 16.52, -1.61]
+Scenario  422 finished: 💥 COLLISION | Steps: 142 | Total Reward:   -171.5
+Scenario  423 finished: 🎯 GOAL | Steps: 221 | Total Reward:    159.4
+Scenario  424 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.0
+Scenario  425 finished: 🎯 GOAL | Steps: 207 | Total Reward:    144.7
+Scenario  426 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -114.9
+2026-04-08 22:59 | WARNING  | robot_0 collided with obstacle_26 at state [13.75, 16.47, -1.42]
+Scenario  427 finished: 💥 COLLISION | Steps: 296 | Total Reward:   -196.8
+Scenario  428 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+Scenario  429 finished: 🎯 GOAL | Steps: 204 | Total Reward:    156.9
+Scenario  430 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.2
+Scenario  431 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.7
+Scenario  432 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -131.1
+Scenario  433 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.2
+2026-04-08 23:00 | WARNING  | robot_0 collided with obstacle_24 at state [12.55, 17.21, -0.73]
+Scenario  434 finished: 💥 COLLISION | Steps: 256 | Total Reward:   -176.7
+Scenario  435 finished: 🎯 GOAL | Steps: 208 | Total Reward:    146.9
+Scenario  436 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.2
+Scenario  437 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.9
+2026-04-08 23:01 | WARNING  | robot_0 collided with obstacle_28 at state [12.53, 16.38, 0.98]
+Scenario  438 finished: 💥 COLLISION | Steps: 316 | Total Reward:   -199.4
+2026-04-08 23:01 | WARNING  | robot_0 collided with obstacle_28 at state [12.73, 16.8, 1.92]
+Scenario  439 finished: 💥 COLLISION | Steps: 214 | Total Reward:   -143.8
+Scenario  440 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -120.7
+Scenario  441 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.8
+Scenario  442 finished: 🎯 GOAL | Steps: 202 | Total Reward:    160.1
+Scenario  443 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -107.2
+Scenario  444 finished: 🎯 GOAL | Steps: 200 | Total Reward:    157.8
+Scenario  445 finished: 🎯 GOAL | Steps: 241 | Total Reward:    152.9
+2026-04-08 23:02 | WARNING  | robot_0 collided with obstacle_27 at state [13.87, 16.16, 1.1]
+Scenario  446 finished: 💥 COLLISION | Steps: 281 | Total Reward:   -246.2
+Scenario  447 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  448 finished: 🎯 GOAL | Steps: 198 | Total Reward:    159.8
+Scenario  449 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -128.9
+Scenario  450 finished: 🎯 GOAL | Steps: 194 | Total Reward:    163.6
+Scenario  451 finished: 🎯 GOAL | Steps: 195 | Total Reward:    162.5
+Scenario  452 finished: 🎯 GOAL | Steps: 221 | Total Reward:    162.4
+Scenario  453 finished: 🎯 GOAL | Steps: 218 | Total Reward:    160.3
+Scenario  454 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.7
+Scenario  455 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -108.4
+Scenario  456 finished: 🎯 GOAL | Steps: 260 | Total Reward:    136.1
+Scenario  457 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.3
+Scenario  458 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.5
+Scenario  459 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.4
+Scenario  460 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.7
+Scenario  461 finished: 🎯 GOAL | Steps: 207 | Total Reward:    147.3
+Scenario  462 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -135.0
+Scenario  463 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.3
+Scenario  464 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.0
+Scenario  465 finished: 🎯 GOAL | Steps: 377 | Total Reward:     36.3
+Scenario  466 finished: 🎯 GOAL | Steps: 225 | Total Reward:    158.1
+Scenario  467 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.4
+Scenario  468 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -117.0
+Scenario  469 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.7
+Scenario  470 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -111.6
+Scenario  471 finished: 🎯 GOAL | Steps: 221 | Total Reward:    158.8
+Scenario  472 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.4
+Scenario  473 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -94.4
+Scenario  474 finished: 🎯 GOAL | Steps: 226 | Total Reward:    160.9
+Scenario  475 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.1
+Scenario  476 finished: 🎯 GOAL | Steps: 202 | Total Reward:    160.4
+Scenario  477 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -122.8
+Scenario  478 finished: 🎯 GOAL | Steps: 233 | Total Reward:    145.4
+Scenario  479 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.7
+Scenario  480 finished: 🎯 GOAL | Steps: 208 | Total Reward:    149.4
+Scenario  481 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.8
+Scenario  482 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.4
+Scenario  483 finished: 🎯 GOAL | Steps: 212 | Total Reward:    153.7
+Scenario  484 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.3
+Scenario  485 finished: 🎯 GOAL | Steps: 221 | Total Reward:    158.7
+Scenario  486 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -119.9
+Scenario  487 finished: 🎯 GOAL | Steps: 190 | Total Reward:    163.7
+2026-04-08 23:09 | WARNING  | robot_0 collided with obstacle_28 at state [13.92, 17.27, 1.14]
+Scenario  488 finished: 💥 COLLISION | Steps: 247 | Total Reward:   -240.7
+2026-04-08 23:10 | WARNING  | robot_0 collided with obstacle_24 at state [13.4, 16.35, -1.91]
+Scenario  489 finished: 💥 COLLISION | Steps: 110 | Total Reward:    -96.5
+Scenario  490 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.1
+Scenario  491 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -112.3
+2026-04-08 23:10 | WARNING  | robot_0 collided with obstacle_24 at state [12.78, 17.37, -0.99]
+Scenario  492 finished: 💥 COLLISION | Steps: 284 | Total Reward:   -124.8
+2026-04-08 23:10 | WARNING  | robot_0 collided with obstacle_24 at state [11.91, 16.39, -1.77]
+Scenario  493 finished: 💥 COLLISION | Steps: 240 | Total Reward:   -107.1
+Scenario  494 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.8
+Scenario  495 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -105.3
+Scenario  496 finished: 🎯 GOAL | Steps: 222 | Total Reward:    158.0
+Scenario  497 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -96.2
+Scenario  498 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.8
+Scenario  499 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.8
+Scenario  500 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  501 finished: 🎯 GOAL | Steps: 195 | Total Reward:    162.1
+Scenario  502 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.7
+Scenario  503 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.7
+Scenario  504 finished: 🎯 GOAL | Steps: 195 | Total Reward:    161.7
+Scenario  505 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.6
+Scenario  506 finished: 🎯 GOAL | Steps: 197 | Total Reward:    159.7
+Scenario  507 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -100.0
+Scenario  508 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -128.4
+Scenario  509 finished: 🎯 GOAL | Steps: 191 | Total Reward:    162.5
+Scenario  510 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -121.1
+2026-04-08 23:14 | WARNING  | robot_0 collided with obstacle_24 at state [13.55, 17.65, -0.71]
+Scenario  511 finished: 💥 COLLISION | Steps: 214 | Total Reward:   -234.3
+Scenario  512 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.7
+Scenario  513 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -125.2
+Scenario  514 finished: 🎯 GOAL | Steps: 212 | Total Reward:    164.9
+Scenario  515 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -119.1
+Scenario  516 finished: 🎯 GOAL | Steps: 194 | Total Reward:    163.9
+Scenario  517 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -102.4
+2026-04-08 23:15 | WARNING  | robot_0 collided with obstacle_27 at state [13.8, 16.25, 1.59]
+Scenario  518 finished: 💥 COLLISION | Steps: 386 | Total Reward:   -138.6
+Scenario  519 finished: 🎯 GOAL | Steps: 213 | Total Reward:    141.1
+Scenario  520 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -119.5
+Scenario  521 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.3
+2026-04-08 23:16 | WARNING  | robot_0 collided with obstacle_26 at state [13.49, 16.55, -1.5]
+Scenario  522 finished: 💥 COLLISION | Steps: 179 | Total Reward:   -151.4
+Scenario  523 finished: 🎯 GOAL | Steps: 221 | Total Reward:    161.5
+2026-04-08 23:17 | WARNING  | robot_0 collided with obstacle_5 at state [14.44, 16.3, -1.75]
+Scenario  524 finished: 💥 COLLISION | Steps: 255 | Total Reward:   -250.7
+Scenario  525 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.0
+Scenario  526 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -127.9
+Scenario  527 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -118.5
+Scenario  528 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.4
+Scenario  529 finished: 🎯 GOAL | Steps: 204 | Total Reward:    156.3
+Scenario  530 finished: 🎯 GOAL | Steps: 221 | Total Reward:    164.5
+Scenario  531 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.3
+Scenario  532 finished: 🎯 GOAL | Steps: 194 | Total Reward:    162.5
+Scenario  533 finished: 🎯 GOAL | Steps: 196 | Total Reward:    161.0
+Scenario  534 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -102.5
+Scenario  535 finished: 🎯 GOAL | Steps: 202 | Total Reward:    160.0
+Scenario  536 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -122.0
+2026-04-08 23:19 | WARNING  | robot_0 collided with obstacle_28 at state [12.45, 16.97, 0.44]
+Scenario  537 finished: 💥 COLLISION | Steps: 134 | Total Reward:   -123.4
+Scenario  538 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.0
+2026-04-08 23:20 | WARNING  | robot_0 collided with obstacle_28 at state [13.45, 16.9, 1.21]
+Scenario  539 finished: 💥 COLLISION | Steps: 335 | Total Reward:   -133.5
+2026-04-08 23:20 | WARNING  | robot_0 collided with obstacle_28 at state [12.56, 16.79, 0.66]
+Scenario  540 finished: 💥 COLLISION | Steps: 312 | Total Reward:   -101.5
+Scenario  541 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.5
+Scenario  542 finished: 🎯 GOAL | Steps: 195 | Total Reward:    161.5
+2026-04-08 23:20 | WARNING  | robot_0 collided with obstacle_24 at state [11.61, 17.98, 0.37]
+Scenario  543 finished: 💥 COLLISION | Steps: 312 | Total Reward:   -192.0
+Scenario  544 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -122.8
+2026-04-08 23:21 | WARNING  | robot_0 collided with obstacle_27 at state [13.86, 16.15, 1.22]
+Scenario  545 finished: 💥 COLLISION | Steps: 341 | Total Reward:   -229.4
+2026-04-08 23:21 | WARNING  | robot_0 collided with obstacle_26 at state [13.72, 16.47, -1.62]
+Scenario  546 finished: 💥 COLLISION | Steps: 330 | Total Reward:   -112.3
+Scenario  547 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -132.0
+Scenario  548 finished: 🎯 GOAL | Steps: 198 | Total Reward:    157.8
+2026-04-08 23:22 | WARNING  | robot_0 collided with obstacle_5 at state [14.75, 16.49, -1.87]
+Scenario  549 finished: 💥 COLLISION | Steps: 154 | Total Reward:    -96.7
+Scenario  550 finished: 🎯 GOAL | Steps: 226 | Total Reward:    156.6
+Scenario  551 finished: 🎯 GOAL | Steps: 212 | Total Reward:    164.8
+Scenario  552 finished: 🎯 GOAL | Steps: 218 | Total Reward:    153.5
+Scenario  553 finished: 🎯 GOAL | Steps: 230 | Total Reward:    153.9
+2026-04-08 23:23 | WARNING  | robot_0 collided with obstacle_24 at state [11.41, 17.83, 0.33]
+Scenario  554 finished: 💥 COLLISION | Steps: 133 | Total Reward:   -114.8
+Scenario  555 finished: 🎯 GOAL | Steps: 200 | Total Reward:    153.1
+2026-04-08 23:24 | WARNING  | robot_0 collided with obstacle_28 at state [12.45, 17.02, 1.34]
+Scenario  556 finished: 💥 COLLISION | Steps: 206 | Total Reward:   -242.8
+Scenario  557 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -101.7
+Scenario  558 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -129.7
+Scenario  559 finished: 🎯 GOAL | Steps: 205 | Total Reward:    154.1
+2026-04-08 23:26 | WARNING  | robot_0 collided with obstacle_27 at state [13.98, 16.09, 1.57]
+Scenario  560 finished: 💥 COLLISION | Steps: 216 | Total Reward:    -98.0
+Scenario  561 finished: 🎯 GOAL | Steps: 199 | Total Reward:    158.5
+2026-04-08 23:27 | WARNING  | robot_0 collided with obstacle_27 at state [13.89, 16.18, 1.06]
+Scenario  562 finished: 💥 COLLISION | Steps: 293 | Total Reward:   -228.3
+Scenario  563 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -144.3
+Scenario  564 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.6
+Scenario  565 finished: 🎯 GOAL | Steps: 232 | Total Reward:    156.7
+Scenario  566 finished: 🎯 GOAL | Steps: 203 | Total Reward:    160.1
+Scenario  567 finished: 🎯 GOAL | Steps: 251 | Total Reward:    155.8
+2026-04-08 23:30 | WARNING  | robot_0 collided with obstacle_28 at state [12.73, 16.99, 2.06]
+Scenario  568 finished: 💥 COLLISION | Steps: 274 | Total Reward:   -105.3
+Scenario  569 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.2
+Scenario  570 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.6
+Scenario  571 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -123.9
+Scenario  572 finished: 🎯 GOAL | Steps: 202 | Total Reward:    159.7
+Scenario  573 finished: 🎯 GOAL | Steps: 219 | Total Reward:    159.9
+Scenario  574 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -103.1
+Scenario  575 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.0
+Scenario  576 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -127.1
+Scenario  577 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.5
+Scenario  578 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -130.0
+Scenario  579 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:   -130.6
+Scenario  580 finished: 🎯 GOAL | Steps: 207 | Total Reward:    156.1
+Scenario  581 finished: 🎯 GOAL | Steps: 198 | Total Reward:    160.2
+Scenario  582 finished: 🎯 GOAL | Steps: 198 | Total Reward:    159.0
+Scenario  583 finished: 🎯 GOAL | Steps: 191 | Total Reward:    163.1
+Scenario  584 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -84.8
+Scenario  585 finished: 🎯 GOAL | Steps: 195 | Total Reward:    160.7
+Scenario  586 finished: 🎯 GOAL | Steps: 202 | Total Reward:    157.9
+Scenario  587 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.0
+Scenario  588 finished: 🎯 GOAL | Steps: 209 | Total Reward:    148.1
+Scenario  589 finished: 🎯 GOAL | Steps: 200 | Total Reward:    159.1
+Scenario  590 finished: 🎯 GOAL | Steps: 203 | Total Reward:    158.3
+Scenario  591 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -94.2
+Scenario  592 finished: 🎯 GOAL | Steps: 191 | Total Reward:    164.3
+Scenario  593 finished: 🎯 GOAL | Steps: 190 | Total Reward:    164.2
+Scenario  594 finished: 🎯 GOAL | Steps: 200 | Total Reward:    158.5
+Scenario  595 finished: 🎯 GOAL | Steps: 198 | Total Reward:    159.9
+Scenario  596 finished: 🎯 GOAL | Steps: 203 | Total Reward:    157.5
+2026-04-08 23:44 | WARNING  | robot_0 collided with obstacle_28 at state [13.7, 16.99, 1.01]
+Scenario  597 finished: 💥 COLLISION | Steps: 210 | Total Reward:    -92.5
+2026-04-08 23:45 | WARNING  | robot_0 collided with obstacle_5 at state [14.44, 16.2, -1.79]
+Scenario  598 finished: 💥 COLLISION | Steps: 331 | Total Reward:   -120.6
+Scenario  599 finished: 🎯 GOAL | Steps: 199 | Total Reward:    161.2
+Scenario  600 finished: 🎯 GOAL | Steps: 204 | Total Reward:    157.7
+======================================================================
+SUMMARY
+  Goal rate:       0.660 (396/600)
+  Collision rate:  0.140 (84/600)
+  Timeout rate:    0.200 (120/600)
+  Avg ep length:   246.0 steps
+  Avg step reward: 0.2407 ± 0.6188
+  Avg ep reward:   59.2160 ± 141.6093
+  Steps-to-goal:   201.73 ± 16.70 (on successful eps)
+  Mean lin cmd:    0.3570 ± 0.2153
+  Mean ang cmd:    -0.3322 ± 0.5423
+======================================================================
