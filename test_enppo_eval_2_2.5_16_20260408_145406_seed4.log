@@ -139,7 +139,7 @@ Scenario  115 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -18.9
 Scenario  116 finished: 🎯 GOAL | Steps: 322 | Total Reward:     86.2
 Scenario  117 finished: 🎯 GOAL | Steps: 322 | Total Reward:     86.7
 Scenario  118 finished: 🎯 GOAL | Steps: 321 | Total Reward:     87.3
-Scenario  119 finished: 🎯 GOAL | Steps: 321 | Total Reward:     87.0
+Scenario  119 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -17.2
 Scenario  120 finished: 🎯 GOAL | Steps: 322 | Total Reward:     86.1
 Scenario  121 finished: 🎯 GOAL | Steps: 325 | Total Reward:     86.7
 Scenario  122 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -10.9
@@ -245,7 +245,7 @@ Scenario  213 finished: 🎯 GOAL | Steps: 322 | Total Reward:     83.6
 Scenario  214 finished: 🎯 GOAL | Steps: 323 | Total Reward:     87.4
 2026-04-08 15:31 | WARNING  | robot_0 collided with obstacle_4 at state [8.77, 13.21, -0.78]
 Scenario  215 finished: 💥 COLLISION | Steps: 121 | Total Reward:   -106.2
-Scenario  216 finished: 🎯 GOAL | Steps: 322 | Total Reward:     86.2
+Scenario  216 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -13.6
 Scenario  217 finished: 🎯 GOAL | Steps: 322 | Total Reward:     86.6
 Scenario  218 finished: 🎯 GOAL | Steps: 325 | Total Reward:     89.0
 Scenario  219 finished: 🎯 GOAL | Steps: 322 | Total Reward:     84.8
@@ -592,7 +592,7 @@ Scenario  524 finished: 💥 COLLISION | Steps: 121 | Total Reward:   -105.7
 Scenario  525 finished: 💥 COLLISION | Steps: 121 | Total Reward:   -106.3
 Scenario  526 finished: 🎯 GOAL | Steps: 321 | Total Reward:     88.1
 Scenario  527 finished: 🎯 GOAL | Steps: 322 | Total Reward:     86.4
-Scenario  528 finished: 🎯 GOAL | Steps: 321 | Total Reward:     77.4
+Scenario  528 finished: ⏰ TIMEOUT | Steps: 400 | Total Reward:    -12.3
 Scenario  529 finished: 🎯 GOAL | Steps: 322 | Total Reward:     87.8
 Scenario  530 finished: 🎯 GOAL | Steps: 323 | Total Reward:     90.0
 Scenario  531 finished: 🎯 GOAL | Steps: 324 | Total Reward:     79.0
@@ -674,11 +674,11 @@ Scenario  599 finished: 🎯 GOAL | Steps: 321 | Total Reward:     84.9
 Scenario  600 finished: 🎯 GOAL | Steps: 322 | Total Reward:     85.5
 ======================================================================
 SUMMARY
-  Goal rate:       0.748 (449/600)
+  Goal rate:       0.743 (446/600)
   Collision rate:  0.103 (62/600)
-  Timeout rate:    0.148 (89/600)
-  Avg ep length:   313.1 steps
-  Avg step reward: 0.1636 ± 0.2429
-  Avg ep reward:   51.2077 ± 64.2792
+  Timeout rate:    0.153 (92/600)
+  Avg ep length:   313.5 steps
+  Avg step reward: 0.1618 ± 0.2432
+  Avg ep reward:   50.7182 ± 64.4035
   Steps-to-goal:   321.97 ± 1.09 (on successful eps)
 ======================================================================
