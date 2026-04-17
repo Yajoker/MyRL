@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="920" viewBox="0 0 1600 920" fill="none">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7A848F"/>
+    </marker>
+    <style>
+      .title { font: 700 26px Inter, Arial, Helvetica, sans-serif; fill: #22262B; }
+      .panel-title { font: 700 24px Inter, Arial, Helvetica, sans-serif; fill: #22262B; }
+      .label { font: 600 17px Inter, Arial, Helvetica, sans-serif; fill: #22262B; }
+      .small { font: 500 15px Inter, Arial, Helvetica, sans-serif; fill: #5C6670; }
+      .chip { font: 600 14px Inter, Arial, Helvetica, sans-serif; fill: #22262B; }
+      .stage { font: 700 16px Inter, Arial, Helvetica, sans-serif; fill: #22262B; letter-spacing: 0.02em; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1600" height="920" rx="0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0"/>
+  <text x="800.0" y="38" class="title" text-anchor="middle">Subgoal Planner</text>
+  <rect x="40" y="70" width="730" height="780" rx="28" fill="#FFFFFF" stroke="#C9CFD6" stroke-width="1.7"/>
+  <text x="68" y="114" class="panel-title" text-anchor="start">Candidate Subgoal Generation</text>
+  <line x1="68" y1="132" x2="742" y2="132" stroke="#7A848F" stroke-width="1.4" stroke-linecap="round"/>
+  <rect x="68" y="144" width="18" height="18" rx="4" fill="#C7DAB6" stroke="#D8DEE5" stroke-width="1.2"/>
+  <text x="96" y="159" class="small" text-anchor="start">Traversable</text>
+  <rect x="233" y="144" width="18" height="18" rx="4" fill="#E8EBEF" stroke="#D8DEE5" stroke-width="1.2"/>
+  <text x="261" y="159" class="small" text-anchor="start">Blocked</text>
+  <rect x="398" y="144" width="18" height="18" rx="4" fill="#F2E2A0" stroke="#D8DEE5" stroke-width="1.2"/>
+  <text x="426" y="159" class="small" text-anchor="start">Goal Dir.</text>
+  <path d="M 325 448 L 117.67 380.63 A 218 218 0 0 1 179.13 285.99 Z" fill="#C7DAB6" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 325 448 L 179.13 285.99 A 218 218 0 0 1 272.26 236.48 Z" fill="#E8EBEF" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 325 448 L 272.26 236.48 A 218 218 0 0 1 377.74 236.48 Z" fill="#C7DAB6" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 325 448 L 377.74 236.48 A 218 218 0 0 1 468.02 283.47 Z" fill="#E8EBEF" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 325 448 L 468.02 283.47 A 218 218 0 0 1 524.15 359.33 Z" fill="#F2E2A0" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 325 448 L 524.15 359.33 A 218 218 0 0 1 542.87 455.61 Z" fill="#E8EBEF" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 325 448 L 542.87 455.61 A 218 218 0 0 1 513.79 557.00 Z" fill="#C7DAB6" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 107 448 A 218 218 0 0 1 513.79 557.00" fill="none" stroke="#D8DEE5" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="307.8" y="428.64" width="34.4" height="36.12" rx="6.88" fill="#FFFFFF" stroke="#22262B" stroke-width="2.0"/>
+  <rect x="316.4" y="414.88" width="17.2" height="8.6" rx="4.3" fill="#FFFFFF" stroke="#22262B" stroke-width="2.0"/>
+  <line x1="319.84" y1="423.48" x2="319.84" y2="428.64" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round"/>
+  <line x1="330.16" y1="423.48" x2="330.16" y2="428.64" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round"/>
+  <circle cx="318.98" cy="444.98" r="2.8379999999999996" fill="#22262B" stroke="none" stroke-width="1.0"/>
+  <circle cx="331.02" cy="444.98" r="2.8379999999999996" fill="#22262B" stroke="none" stroke-width="1.0"/>
+  <rect x="318.12" y="454.44" width="13.76" height="6.02" rx="2.58" fill="#FFFFFF" stroke="#22262B" stroke-width="2.0"/>
+  <line x1="307.8" y1="449.28" x2="297.48" y2="455.3" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round"/>
+  <line x1="342.2" y1="449.28" x2="352.52" y2="455.3" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round"/>
+  <line x1="318.12" y1="464.76" x2="309.52" y2="474.22" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round"/>
+  <line x1="331.88" y1="464.76" x2="340.48" y2="474.22" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round"/>
+  <line x1="650" y1="202.0" x2="650" y2="246.0" stroke="#7A848F" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M 650 204.0 L 672.0 210.0 L 662.0 224.0 L 650 220.0 Z" fill="#FFFFFF" stroke="#22262B" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="650" cy="200.0" r="3.3" fill="#22262B" stroke="none" stroke-width="1.0"/>
+  <line x1="325" y1="452" x2="636" y2="234" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" stroke-dasharray="7 7"/>
+  <text x="68" y="618" class="stage" text-anchor="start">Initial Candidate Set</text>
+  <rect x="280" y="589" width="385" height="48" rx="16" fill="#FFFFFF" stroke="#C9CFD6" stroke-width="1.4"/>
+  <circle cx="310" cy="612" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="352" cy="612" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="394" cy="612" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="436" cy="612" r="10" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="478" cy="612" r="10" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="520" cy="612" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="562" cy="612" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="604" cy="612" r="11" fill="#F2E2A0" stroke="#FFFFFF" stroke-width="1.2"/>
+  <text x="578" y="613" class="label" text-anchor="middle">...</text>
+  <line x1="470" y1="646" x2="470" y2="700" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="393" y="676" class="stage" text-anchor="middle">Filter</text>
+  <rect x="82" y="696" width="180" height="46" rx="14" fill="#E9EFF6" stroke="#D2DAE5" stroke-width="1.2"/>
+  <text x="172" y="724" class="chip" text-anchor="middle">Goal Alignment</text>
+  <rect x="286" y="696" width="180" height="46" rx="14" fill="#E9EFF6" stroke="#D2DAE5" stroke-width="1.2"/>
+  <text x="376" y="724" class="chip" text-anchor="middle">Local Clearance</text>
+  <rect x="508" y="696" width="180" height="46" rx="14" fill="#E9EFF6" stroke="#D2DAE5" stroke-width="1.2"/>
+  <text x="598" y="724" class="chip" text-anchor="middle">Angular Diversity</text>
+  <line x1="470" y1="750" x2="470" y2="808" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="68" y="786" class="stage" text-anchor="start">Top-M Candidates</text>
+  <rect x="280" y="757" width="318" height="48" rx="16" fill="#FFFFFF" stroke="#C9CFD6" stroke-width="1.4"/>
+  <circle cx="314" cy="780" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="356" cy="780" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="398" cy="780" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="440" cy="780" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="482" cy="780" r="11" fill="#C9D5CA" stroke="#FFFFFF" stroke-width="1.2"/>
+  <circle cx="524" cy="780" r="11" fill="#F2E2A0" stroke="#FFFFFF" stroke-width="1.2"/>
+  <text x="494" y="781" class="label" text-anchor="middle">...</text>
+  <path d="M 781 392 L 796.4 392 L 809 414.0 L 796.4 436 L 781 436 L 792.76 414.0 Z" fill="#FFFFFF" stroke="#C9CFD6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="830" y="70" width="730" height="780" rx="28" fill="#FFFFFF" stroke="#C9CFD6" stroke-width="1.7"/>
+  <text x="858" y="114" class="panel-title" text-anchor="start">Value-Based Subgoal Scoring</text>
+  <line x1="858" y1="132" x2="1532" y2="132" stroke="#7A848F" stroke-width="1.4" stroke-linecap="round"/>
+  <rect x="978" y="168" width="252" height="48" rx="14" fill="#D6E3DD" stroke="#C0CDC6" stroke-width="1.2"/>
+  <text x="1104" y="199" class="label" text-anchor="middle">LiDAR Embedding</text>
+  <rect x="978" y="235" width="252" height="48" rx="14" fill="#D6E3DD" stroke="#C0CDC6" stroke-width="1.2"/>
+  <text x="1104" y="266" class="label" text-anchor="middle">Goal Embedding</text>
+  <rect x="978" y="302" width="252" height="48" rx="14" fill="#D6E3DD" stroke="#C0CDC6" stroke-width="1.2"/>
+  <text x="1104" y="333" class="label" text-anchor="middle">Candidate Embedding</text>
+  <line x1="1104" y1="352" x2="1104" y2="406" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <rect x="1006" y="414" width="196" height="92" rx="20" fill="#EDF3F1" stroke="#C4D1CA" stroke-width="1.5"/>
+  <text x="1104.0" y="468" class="label" text-anchor="middle">Shared Encoder</text>
+  <path d="M 1026 438 L 1052 452 L 1026 466 L 1058 480 M 1182 438 L 1156 452 L 1182 466 L 1150 480" fill="none" stroke="#92A49B" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="1052" y1="506" x2="1025" y2="525" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <line x1="1156" y1="506" x2="1365" y2="525" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <line x1="1014" y1="551" x2="1040" y2="545" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1014" y1="551" x2="1040" y2="573" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1014" y1="573" x2="1040" y2="545" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1014" y1="573" x2="1040" y2="573" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1014" y1="573" x2="1040" y2="601" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1014" y1="595" x2="1040" y2="573" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1014" y1="595" x2="1040" y2="601" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1040" y1="545" x2="1068" y2="557" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1040" y1="573" x2="1068" y2="557" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1040" y1="573" x2="1068" y2="589" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1040" y1="601" x2="1068" y2="589" stroke="#7FCB9A" stroke-width="2.1" stroke-linecap="round"/>
+  <circle cx="1014" cy="551" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <circle cx="1014" cy="573" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <circle cx="1014" cy="595" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <circle cx="1040" cy="545" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <circle cx="1040" cy="573" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <circle cx="1040" cy="601" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <circle cx="1068" cy="557" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <circle cx="1068" cy="589" r="4.5" fill="#FFFFFF" stroke="#7FCB9A" stroke-width="2.2"/>
+  <text x="1040" y="649" class="label" text-anchor="middle">Efficiency Head</text>
+  <line x1="1324" y1="551" x2="1350" y2="545" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1324" y1="551" x2="1350" y2="573" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1324" y1="573" x2="1350" y2="545" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1324" y1="573" x2="1350" y2="573" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1324" y1="573" x2="1350" y2="601" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1324" y1="595" x2="1350" y2="573" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1324" y1="595" x2="1350" y2="601" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1350" y1="545" x2="1378" y2="557" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1350" y1="573" x2="1378" y2="557" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1350" y1="573" x2="1378" y2="589" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <line x1="1350" y1="601" x2="1378" y2="589" stroke="#D98C83" stroke-width="2.1" stroke-linecap="round"/>
+  <circle cx="1324" cy="551" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <circle cx="1324" cy="573" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <circle cx="1324" cy="595" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <circle cx="1350" cy="545" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <circle cx="1350" cy="573" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <circle cx="1350" cy="601" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <circle cx="1378" cy="557" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <circle cx="1378" cy="589" r="4.5" fill="#FFFFFF" stroke="#D98C83" stroke-width="2.2"/>
+  <text x="1350" y="649" class="label" text-anchor="middle">Safety Head</text>
+  <line x1="1040" y1="667" x2="1160" y2="706" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <line x1="1350" y1="667" x2="1230" y2="706" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <rect x="1102" y="710" width="146" height="48" rx="14" fill="#F3F0E8" stroke="#D8D1C5" stroke-width="1.3"/>
+  <text x="1175.0" y="741" class="label" text-anchor="middle">Fusion Score</text>
+  <line x1="1175.0" y1="758" x2="1175.0" y2="805" stroke="#7A848F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <rect x="1127" y="804" width="96" height="30" rx="12" fill="#F7FAFD" stroke="#D3E0EE" stroke-width="1.3"/>
+  <circle cx="1149" cy="819" r="8.5" fill="#8EBDEB" stroke="none" stroke-width="1.0"/>
+  <text x="1177" y="825" class="label" text-anchor="start">Subgoal</text>
+</svg>
