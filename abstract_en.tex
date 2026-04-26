@@ -1,0 +1,21 @@
+% =============================================================
+% Part 1 [LaTeX]
+% =============================================================
+
+We propose an event-triggered hierarchical reinforcement learning framework to address the decision-making challenge in mapless navigation of mobile robots operating in unknown dynamic environments, where long-range goal pursuit, local obstacle avoidance, and dynamic risk response are tightly coupled. The framework comprises a high-level subgoal planner and a low-level goal-conditioned continuous controller. The high-level planner triggers replanning upon detecting elevated local risk, subgoal completion, execution timeout, or stagnation of navigation progress, and selects subgoals from a candidate set derived from local Light Detection and Ranging (LiDAR) geometry through a dual-head value evaluation that jointly considers efficiency and safety. The low-level controller, conditioned on the current subgoal, employs a Convolutional Neural Network (CNN)-enhanced Twin Delayed Deep Deterministic Policy Gradient (TD3) algorithm to optimize a continuous control policy that outputs linear and angular velocity commands for local goal tracking and collision avoidance. To reduce ineffective exploration in the continuous subgoal space, we construct a finite candidate set by combining traversable sectors with the global goal direction, and incorporate advancement gain, safety cost, and subgoal continuity into the high-level scoring mechanism. Experimental results demonstrate that our approach achieves the highest success rate in comparative evaluations on two previously unseen maps and under high dynamic obstacle densities, while maintaining a low collision rate.
+
+% =============================================================
+% Part 2 [Translation] — 中文直译（用于核对逻辑是否符合原意）
+% =============================================================
+
+% 我们提出一种事件触发的分层强化学习框架，以解决在未知动态环境中移动机器人
+% 无图导航所面临的决策挑战，其中长程目标推进、局部避障和动态风险响应紧密耦合。
+% 该框架由高层子目标规划器和低层目标条件连续控制器组成。高层规划器在检测到
+% 局部风险升高、子目标完成、执行超时或导航进展停滞时触发重规划，并通过同时
+% 考虑效率和安全性的双头价值评估，从基于局部LiDAR几何生成的候选子目标集中
+% 选择子目标。低层控制器在当前子目标条件约束下，采用卷积神经网络（CNN）增强
+% 的双延迟深度确定性策略梯度（TD3）算法优化连续控制策略，输出线速度和角速度
+% 命令以实现局部目标跟踪和避碰。为减少连续子目标空间中的无效探索，我们结合
+% 可通行扇区与全局目标方向构造有限候选集合，并将推进收益、安全代价和子目标
+% 连续性纳入高层评分机制。实验结果表明，我们的方法在两个此前未见的地图和高
+% 动态障碍密度条件下的对比评估中均取得了最高的成功率，同时保持了较低的碰撞率。
