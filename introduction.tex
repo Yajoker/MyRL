@@ -1,0 +1,51 @@
+% ============================================================
+% Part 1 [LaTeX]
+% ============================================================
+
+\section{Introduction}
+\label{sec:introduction}
+
+In recent years, as autonomous mobile robots continue to be deployed in hospitals, warehouse logistics facilities, transportation hubs, and public service spaces, robot navigation has progressively shifted from path search on static maps toward real-time decision-making and safe control in complex dynamic environments. In such applications, robots must not only reach designated goals but also maintain safe, stable, and efficient motion under conditions of limited local perception, partially observable environmental states, unpredictable dynamic obstacle behavior, and constrained control frequencies \cite{1}.
+
+Conventional navigation frameworks typically adopt a modular pipeline of perception, mapping, global planning, and local control, relying on explicit environment modeling, hand-crafted cost functions, and local replanning mechanisms for path generation and obstacle avoidance. Fox et al. \cite{2} proposed the Dynamic Window Approach (DWA), which searches the velocity space for local control commands that satisfy kinodynamic constraints. Van den Berg et al. introduced Reciprocal Velocity Obstacles (RVO) \cite{3} and Optimal Reciprocal Collision Avoidance (ORCA) \cite{4} to resolve multi-agent motion conflicts through the principle of reciprocal avoidance. Helbing et al. \cite{5} proposed the Social Force Model, which characterizes crowd motion patterns from the perspective of pedestrian interaction dynamics. When scenes involve dense dynamic obstacles, complex local topological variations, and persistent interactive disturbances, however, these methods often require frequent replanning and extensive parameter tuning, and their performance tends to be limited by model accuracy, prediction errors, and local optima.
+
+Deep Reinforcement Learning (DRL) methods learn closed-loop policies that map sensory inputs to control outputs through environment interaction, offering a promising approach to mapless navigation in dynamic environments. DRL approaches based on Light Detection and Ranging (LiDAR), depth images, or visual information have shown the ability to partially eliminate the dependence on accurate maps and explicit rules, demonstrating considerable potential in dynamic obstacle avoidance, adaptive local decision-making, and end-to-end policy learning. Liu et al. \cite{6} combined LiDAR perception with Soft Actor-Critic (SAC), expert trajectories, and a Recurrent Neural Network (RNN) to improve training safety and obstacle avoidance in dynamic settings. Several studies have further incorporated memory structures, attention mechanisms, reward shaping, and path-level action modeling to enhance policy adaptation to complex interactions and partially observable environments. Samsani et al. \cite{7} proposed a memory-augmented navigation method for crowded environments that employs a Gated Recurrent Unit (GRU) to store relative dependencies among pedestrians and model human-robot interactions, improving collision-free navigation in dense crowds. Li et al. \cite{8}, addressing interactive visual navigation in cluttered environments, introduced Transformer memory to exploit historical interaction information for spatiotemporal dependency modeling, alleviating partial observability and non-stationarity during decision-making. Sun et al. \cite{9} incorporated attention mechanisms and value decomposition into the Actor-Critic framework to improve collision avoidance stability in dynamic scenes. Despite these advances, flat end-to-end DRL still faces evident challenges in long-range dynamic navigation: the policy must simultaneously handle long-range goal pursuit, local obstacle avoidance, and risk response, which readily leads to training difficulties and decision coupling, while reward design, training distribution shifts, and variations in scene complexity can also markedly degrade stability and generalization performance. Cheng et al. \cite{10} and Xue et al. \cite{11} both highlighted the multi-objective trade-off among safety, efficiency, comfort, and dynamic interaction from the perspective of crowd-aware navigation, yet these challenges remain largely unresolved in mapless long-range navigation scenarios.
+
+% ============================================================
+% Part 2 [Translation] (中文回译，用于核对逻辑是否符合原意)
+% ============================================================
+
+% 第一段：
+% 近年来，随着自主移动机器人在医院、仓储物流设施、交通枢纽和公共服务空间中的
+% 持续部署，机器人导航已逐步从静态地图上的路径搜索转向面向复杂动态环境的实时
+% 决策与安全控制。在这类应用中，机器人不仅需要到达指定目标，还必须在局部感知
+% 受限、环境状态部分可观测、动态障碍物行为难以预测以及控制频率受限的条件下，
+% 持续保持安全、稳定和高效的运动。
+
+% 第二段：
+% 传统导航框架通常采用感知、建图、全局规划和局部控制的模块化流水线结构，依靠
+% 显式环境建模、人工设计的代价函数以及局部重规划机制完成路径生成与避障控制。
+% Fox等人提出了动态窗口法（DWA），从速度空间中搜索满足运动学约束的局部控制指令。
+% Van den Berg等人提出了互惠速度障碍（RVO）和最优互惠碰撞避免（ORCA），通过
+% 互惠避障原则解决多智能体运动冲突。Helbing等人提出了社会力模型，该模型从行人
+% 交互动力学角度描述人群运动规律。然而，当场景中存在密集动态障碍、复杂的局部
+% 拓扑变化以及持续的交互扰动时，这类方法往往需要频繁重规划和大量参数调节，
+% 其性能容易受限于模型精度、预测误差和局部最优问题。
+
+% 第三段：
+% 深度强化学习（DRL）方法通过与环境交互，学习从传感输入到控制输出的闭环策略，
+% 为动态环境下的无图导航提供了一种有前景的技术路径。基于LiDAR、深度图像或视觉
+% 信息的DRL方法已经展现出部分摆脱对精确地图和显式规则依赖的能力，在动态障碍
+% 规避、局部决策自适应及端到端策略学习方面表现出可观的潜力。Liu等人将LiDAR感知
+% 与SAC、专家轨迹和RNN相结合，以提升动态环境中的训练安全性与避障能力。一些研究
+% 进一步引入了记忆结构、注意力机制、奖励塑形与路径级动作建模，以增强策略对复杂
+% 交互和部分可观测环境的适应能力。Samsani等人提出了面向拥挤环境的记忆增强导航
+% 方法，利用GRU存储行人间的相对依赖关系并建模人机交互，从而改善密集人群中的
+% 无碰撞导航。Li等人针对杂乱环境中的交互式视觉导航，引入Transformer记忆以利用
+% 历史交互信息建模时空依赖，缓解决策过程中的部分可观测性与非平稳性。Sun等人在
+% Actor-Critic框架中引入注意力机制和价值分解，以提升动态场景下的碰撞规避稳定性。
+% 尽管取得了上述进展，单层端到端DRL在长距离动态导航中仍面临明显挑战：策略需要
+% 同时承担长程目标推进、局部避障和风险响应等多重职责，容易导致训练困难和决策
+% 耦合，而奖励设计、训练分布偏移和场景复杂度变化也会显著影响其稳定性与泛化
+% 表现。Cheng等人和Xue等人均从crowd-aware导航角度强调了安全、效率、舒适性和
+% 动态交互之间的多目标权衡，但这些挑战在无图长程导航场景中仍未得到充分解决。
