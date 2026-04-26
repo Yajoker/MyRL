@@ -16,6 +16,15 @@ For dynamic obstacle and crowd interaction scenarios, traditional methods have f
 
 These methods offer a clear separation among mapping, planning, and control, with each functional module amenable to independent design and debugging, yet they rely heavily on environment representation and cost modeling. In scenarios involving dense dynamic interactions, perceptual uncertainty, or long-range tasks, the computational burden and local-optimality risks arising from frequent replanning and parameter sensitivity remain prominent, motivating the further adoption of policy learning methods within the navigation loop.
 
+\subsection{DRL-based Navigation Methods}
+\label{subsec:drl_navigation}
+
+DRL-based navigation typically formulates mobile robot navigation as a sequential decision-making problem, learning a closed-loop policy that maps sensory inputs to control outputs through interaction with the environment. Compared with traditional planning methods that depend on complete maps, explicit obstacle models, and hand-crafted cost functions, DRL methods can directly consume inputs such as two-dimensional or three-dimensional Light Detection and Ranging (LiDAR) scans, depth images, visual information, relative goal poses, and action histories, and output linear velocities, angular velocities, or local motion commands, yielding stronger adaptability in unknown environments, dynamic obstacle avoidance, and crowd interaction scenarios. Zhu et al. \cite{28} surveyed recent DRL navigation methods for dynamic environments, categorizing them into value-based, policy-based, and actor-critic approaches, and noted that existing studies still face insufficient generalization, inadequate training in complex dynamic environments, difficulties in real-time deployment, and the simulation-to-reality transfer gap. In LiDAR-based mapless navigation tasks, the robot typically takes local laser scans together with the relative distance and bearing to the goal as state inputs, and completes obstacle avoidance and goal reaching through a continuous control policy. Liu et al. \cite{6} used LiDAR as the primary input to learn obstacle avoidance and goal-directed policies under mapless conditions, incorporating demonstration or constraint mechanisms to reduce exploration risk. To alleviate the decision instability caused by relying solely on instantaneous observations, Li et al. \cite{8} and Samsani et al. \cite{7} introduced memory mechanisms and GRU structures, respectively, to exploit historical interaction information, while the Transformer memory method proposed by Li et al. \cite{8} further enhanced spatiotemporal modeling in interactive visual navigation. These efforts indicate that historical information and interaction modeling play an important role in stabilizing decisions under partially observable dynamic environments.
+
+Beyond directly outputting low-level velocity actions, some studies have sought to raise the abstraction level of policy outputs or to strengthen risk assessment capabilities. Yu et al. \cite{27} proposed PathRL, which extends the reinforcement learning output from velocity control to path generation so as to better align collision avoidance, geometric constraints, and trajectory smoothness. Sun et al. \cite{9} employed attention mechanisms and categorical value estimation to enhance the reliability of collision-related decisions. Cheng et al. \cite{10} considered safety, time efficiency, obstacle avoidance, and smoothness simultaneously through multi-objective rewards. Xue et al. \cite{11} leveraged spatiotemporal reasoning and value networks to achieve socially compatible navigation. Sun et al. \cite{15} further proposed RS-DDPG, which reduces redundant updates and improves convergence through event-triggered activation and network structure adjustment, demonstrating that state-change-driven update mechanisms can enhance the adaptability of DRL-based motion planning.
+
+Flat single-level policies, however, still exhibit structural limitations in long-range dynamic navigation. A single policy must simultaneously handle goal pursuit, local obstacle avoidance, risk response, and action smoothing, which tends to complicate reward design, destabilize training, and induce action oscillations. When dynamic obstacle density increases or the environment topology becomes complex, single-step velocity control also struggles to sustain consistent progress over long distances. Navigation decision-making therefore calls for the introduction of temporal abstraction and task decomposition mechanisms that separate long-range intent generation from local continuous control.
+
 % ============================================================
 % Part 2 [Translation] (中文回译，用于核对逻辑是否符合原意)
 % ============================================================
@@ -52,3 +61,35 @@ These methods offer a clear separation among mapping, planning, and control, wit
 % 但对环境表征和代价建模依赖较强。在涉及密集动态交互、感知不确定或长程任务的
 % 场景中，频繁重规划和参数敏感性带来的计算负担与局部最优风险仍较突出，从而推动
 % 了策略学习方法在导航闭环中的进一步引入。
+
+% 2.2段落1：
+% 基于DRL的导航通常将移动机器人导航建模为序列决策问题，通过与环境交互学习从
+% 传感输入到控制输出的闭环策略。与依赖完整地图、显式障碍物模型和人工代价函数
+% 的传统规划方法相比，DRL方法可以直接利用二维或三维LiDAR扫描、深度图像、视觉
+% 信息、目标相对位姿和动作历史等输入，输出线速度、角速度或局部运动指令，在未知
+% 环境、动态避障和人群交互场景中具有更强的适应性。Zhu等人综述了近年来面向动态
+% 环境的DRL导航方法，将其分为基于价值、基于策略和actor-critic等路线，并指出现有
+% 研究仍面临泛化能力不足、复杂动态环境训练不充分、实时部署困难以及仿真到现实
+% 迁移差距等问题。在基于LiDAR的无图导航任务中，机器人通常以局部激光扫描及目标
+% 相对距离和方位角作为状态输入，通过连续控制策略完成避障与目标到达。Liu等人以
+% LiDAR为主要输入，在无图条件下学习避障和目标导引策略，并结合示教或约束机制
+% 降低探索风险。为缓解仅依赖瞬时观测导致的决策不稳定，Li等人和Samsani等人分别
+% 引入记忆机制和GRU结构以利用历史交互信息，而Li等人提出的Transformer记忆方法
+% 进一步增强了交互式视觉导航中的时空建模能力。这些工作表明，历史信息和交互建模
+% 对于部分可观测动态环境中的稳定决策具有重要作用。
+
+% 2.2段落2：
+% 除了直接输出底层速度动作外，部分研究尝试提升策略输出的抽象层级或增强风险评估
+% 能力。Yu等人提出PathRL，将强化学习输出从速度控制扩展为路径生成，以更好地对齐
+% 碰撞规避、几何约束与轨迹平滑。Sun等人采用注意力机制和分类式价值评估增强碰撞
+% 相关决策的可靠性。Cheng等人通过多目标奖励同时考虑安全性、时间效率、避障和
+% 平滑性。Xue等人利用时空推理和值网络实现社会兼容导航。Sun等人进一步提出
+% RS-DDPG，通过事件触发激活和网络结构调整减少冗余更新并改善收敛过程，表明
+% 状态变化驱动的更新机制能够提升DRL运动规划的适应性。
+
+% 2.2段落3：
+% 然而，单层策略在长距离动态导航中仍存在结构性局限。同一策略需要同时处理目标
+% 推进、局部避障、风险响应和动作平滑，容易导致奖励设计复杂化、训练不稳定和动作
+% 振荡；当动态障碍物密度增加或环境拓扑变得复杂时，单步速度控制也难以在长距离
+% 任务中维持一致的推进。因此，导航决策需要引入时间抽象和任务分解机制，将长程
+% 意图生成与局部连续控制分离。
