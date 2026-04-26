@@ -93,3 +93,37 @@ Flat single-level policies, however, still exhibit structural limitations in lon
 % 振荡；当动态障碍物密度增加或环境拓扑变得复杂时，单步速度控制也难以在长距离
 % 任务中维持一致的推进。因此，导航决策需要引入时间抽象和任务分解机制，将长程
 % 意图生成与局部连续控制分离。
+
+\subsection{HRL-based Navigation Methods}
+\label{subsec:hrl_navigation}
+
+Hierarchical Reinforcement Learning (HRL) leverages temporal abstraction to decompose navigation into high-level subgoal or skill selection and low-level continuous control execution. The Options framework proposed by Sutton et al. \cite{12} established a formal foundation for temporally abstract reinforcement learning, enabling a high-level policy to select options, or subtasks that persist over multiple low-level time steps, within a semi-Markov decision process. Nachum et al. \cite{28} proposed HIRO, which improves trainability and data efficiency in two-level structures through goal-conditioned low-level policies and high-level off-policy correction. Recent studies have shown that hierarchical structures and subgoal mechanisms can alleviate the myopic behavior of flat policies in long-range tasks. Jing et al. \cite{14} adopted a two-stage reinforcement learning framework that decomposes long-distance indoor navigation in dense crowds into stage-wise decision-making and local execution, improving deadlock recovery in structurally complex environments. Gao et al. \cite{13} used congestion estimation to assist subgoal updates for safe mapless navigation in complex crowd environments. To avoid ineffective replanning and constrain the high-level update frequency, event-triggered mechanisms have been further integrated into hierarchical navigation frameworks. Chen et al. \cite{16} proposed an event-triggered hierarchical planner that activates high-level decisions only when risk events arise during autonomous navigation in unknown environments, with the high-level module producing intermediate goals and the low-level controller performing goal tracking. Chen and Xue \cite{29} adopted event-triggered hierarchical DRL for UAV navigation, reducing redundant computation while maintaining responsiveness to obstacle appearances. Hierarchical frameworks show potential for decoupling long-range decision-making from local feasible control, yet the design of inter-level interfaces, including subgoal spaces and termination conditions, cross-level credit assignment, and training pipeline complexity still constrain reusability and deployability, particularly in dense dynamic and long-range tasks where safety constraints, online adaptation, and computational budgets must be balanced simultaneously.
+
+Existing hierarchical navigation methods, however, still face several issues in dynamic long-range tasks. If the high-level policy updates at a fixed period or under simple termination conditions, it may respond with delay when local risks change rapidly, or produce redundant replanning when the environment is relatively stable. In crowded or topologically complex environments, the robot may still experience local stagnation, reduced detour efficiency, or policy oscillation. Many methods also rely on a single reward or value signal to coordinate goal pursuit and safe obstacle avoidance, making it difficult to maintain a stable safety-efficiency trade-off under high dynamic obstacle densities. To address these issues, we construct an event-triggered hierarchical decision framework that integrates geometric constraints and risk perception, employing adaptive replanning, LiDAR-based candidate subgoal generation, and dual-head value evaluation to improve the stability and safety of long-range mapless navigation in dynamic environments.
+
+% 2.3段落1：
+% 分层强化学习（HRL）利用时间抽象将导航分解为高层子目标或技能选择与低层连续
+% 控制执行。Sutton等人提出的Options框架为基于时间抽象的强化学习建立了形式化
+% 基础，使高层策略能够在半马尔可夫决策过程中选择持续若干低层时间步的选项或
+% 子任务。Nachum等人提出HIRO，通过目标条件低层策略和高层离策略校正提升两层
+% 结构的可训练性和数据效率。近期研究表明，分层结构和子目标机制能够缓解单层
+% 策略在长程任务中的短视行为。Jing等人采用两阶段强化学习框架，将密集人群中的
+% 长距离室内导航分解为阶段性决策与局部执行，改善了结构复杂环境中的脱困能力。
+% Gao等人利用拥堵估计辅助子目标更新，服务于复杂人群环境下的安全无图导航。为
+% 避免无效重规划并约束高层更新频率，事件触发机制被进一步引入分层导航框架。
+% Chen等人提出事件触发分层规划器，仅在风险事件出现时激活高层决策，由高层模块
+% 产生中间目标，低层控制器负责目标跟踪。Chen和Xue在无人机导航中采用事件触发
+% 分层DRL，减少冗余计算同时保持对障碍物出现的响应能力。分层框架在长程决策与
+% 局部可行控制的解耦方面具备潜力，但层级接口（包括子目标空间和终止条件）的设计、
+% 跨层信用分配以及训练流程复杂度仍对复用性和可部署性构成约束，尤其在密集动态
+% 与长程任务中需要同时平衡安全约束、在线适应与计算预算。
+
+% 2.3段落2：
+% 然而，现有分层导航方法在动态长程任务中仍面临若干问题。若高层策略以固定周期
+% 或简单终止条件进行更新，可能在局部风险快速变化时响应滞后，也可能在环境相对
+% 稳定时产生冗余重规划。在拥挤或拓扑复杂的环境中，机器人仍可能出现局部停滞、
+% 绕行效率下降或策略振荡等现象。许多方法还依赖单一奖励或价值信号协调目标推进
+% 与安全避障，难以在高动态障碍密度下保持稳定的安全效率权衡。针对这些问题，我们
+% 构建了融合几何约束与风险感知机制的事件触发分层决策框架，通过自适应重规划、
+% 基于LiDAR的候选子目标生成和双头价值评估，以提高动态环境下长程无图导航的
+% 稳定性与安全性。
