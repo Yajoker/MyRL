@@ -1,0 +1,54 @@
+% ============================================================
+% Part 1 [LaTeX]
+% ============================================================
+
+\section{Related Work}
+\label{sec:related_work}
+
+Mapless navigation in unknown dynamic environments requires coordinating goal pursuit, risk response, and obstacle avoidance under local observations. To contextualize our approach, this section reviews traditional planning methods, Deep Reinforcement Learning (DRL) based navigation, and Hierarchical Reinforcement Learning (HRL) based navigation in turn, tracing the methodological evolution from explicit modeling to closed-loop policy learning, and further to temporal abstraction with subgoal-level decision-making.
+
+\subsection{Traditional Planning Methods}
+\label{subsec:traditional_planning}
+
+Classical navigation systems predominantly adopt a modular architecture that couples global path planning with local obstacle avoidance and trajectory generation. The global layer typically produces a reference path through graph search, sampling-based planning, or optimization-based planning. Hart et al. \cite{17} proposed the A* search algorithm, which performs heuristic path search over discrete graph structures. Kavraki et al. \cite{18} introduced the Probabilistic Roadmap Method (PRM), which samples configurations and constructs a connectivity graph to characterize reachable regions in the configuration space. LaValle \cite{19} proposed the Rapidly-exploring Random Tree (RRT) for feasible path search in high-dimensional continuous spaces, and Karaman and Frazzoli \cite{20} later extended it to RRT*, strengthening its theoretical properties regarding asymptotic optimality. The local layer converts the global path into executable trajectories and control sequences that satisfy the kinematic constraints of the robot. Fox et al. \cite{2} proposed the Dynamic Window Approach (DWA), which samples feasible control commands in the velocity space for real-time obstacle avoidance. R\"{o}smann et al. \cite{21} introduced the Timed Elastic Band (TEB) method, which jointly optimizes trajectory topology and temporal parameters to improve local trajectory feasibility under dynamic constraints. To address trajectory generation under high-dimensional and collision constraints, Schulman et al. \cite{22} proposed TrajOpt, which employs sequential convex optimization and continuous-time collision checking to efficiently refine an initial trajectory into a feasible one.
+
+For dynamic obstacle and crowd interaction scenarios, traditional methods have further incorporated risk modeling and multi-agent avoidance mechanisms. Montero et al. \cite{23} improved safety and passing efficiency in crowded environments through dynamic vigilance zones and short-range targets, demonstrating that geometric rules can still provide useful insights for risk-aware and local goal design. Some studies have also attempted to embed learning mechanisms into the planning process. Veerapaneni et al. \cite{24} learned local heuristics to reduce node expansion, Li et al. \cite{25} proposed EARN to incorporate edge-collaborative computation into planning decisions for resource-constrained settings, and Zhao et al. \cite{26} introduced E(2)-equivariant structures into graph-based planning to improve representation sharing and generalization.
+
+These methods offer a clear separation among mapping, planning, and control, with each functional module amenable to independent design and debugging, yet they rely heavily on environment representation and cost modeling. In scenarios involving dense dynamic interactions, perceptual uncertainty, or long-range tasks, the computational burden and local-optimality risks arising from frequent replanning and parameter sensitivity remain prominent, motivating the further adoption of policy learning methods within the navigation loop.
+
+% ============================================================
+% Part 2 [Translation] (中文回译，用于核对逻辑是否符合原意)
+% ============================================================
+
+% 引言段：
+% 未知动态环境下的无图导航需要在局部观测中协调目标推进、风险响应与避障控制。
+% 为了为我们的方法提供背景，本节依次回顾传统规划方法、基于深度强化学习的导航
+% 和基于分层强化学习的导航，追溯从显式建模到闭环策略学习，再到时间抽象与子目标
+% 级决策的方法演进。
+
+% 2.1段落1：
+% 经典导航系统主要采用全局路径规划与局部避障/轨迹生成相结合的模块化架构。全局
+% 层通常通过图搜索、基于采样的规划或基于优化的规划生成参考路径。Hart等人提出了
+% A*搜索算法，在离散图结构上进行启发式路径搜索。Kavraki等人提出了概率路图方法
+% （PRM），通过在构型空间中采样并构建连通图来描述可达区域。LaValle提出了快速扩展
+% 随机树（RRT），用于高维连续空间中的可行路径搜索，Karaman和Frazzoli后来将其
+% 扩展为RRT*，增强了其在渐近最优性方面的理论性质。局部层将全局路径转化为满足
+% 机器人运动学约束的可执行轨迹和控制序列。Fox等人提出了动态窗口法（DWA），通过
+% 在速度空间中采样可行控制指令实现实时避障。Rösmann等人提出了时间弹性带（TEB）
+% 方法，通过联合优化轨迹拓扑和时间参数来提高动态约束下局部轨迹的可执行性。为
+% 解决高维和碰撞约束下的轨迹生成问题，Schulman等人提出了TrajOpt，利用序列凸
+% 优化和连续时间碰撞检测将初始轨迹高效修正为可行轨迹。
+
+% 2.1段落2：
+% 针对动态障碍和人群交互场景，传统方法进一步引入了风险建模和多智能体避障机制。
+% Montero等人通过动态警戒区和短距离目标改善了拥挤环境中的安全性和通行效率，
+% 表明几何规则仍能为风险感知和局部目标设计提供有益启发。一些研究还尝试将学习
+% 机制嵌入规划过程。Veerapaneni等人学习局部启发以减少节点展开，Li等人提出EARN
+% 将边缘协同计算纳入规划决策以适配资源约束设置，Zhao等人在基于图的规划中引入
+% E(2)等变结构以提升表征共享与泛化。
+
+% 2.1段落3：
+% 这类方法在建图、规划和控制之间提供了清晰的分离，各功能模块便于独立设计和调试，
+% 但对环境表征和代价建模依赖较强。在涉及密集动态交互、感知不确定或长程任务的
+% 场景中，频繁重规划和参数敏感性带来的计算负担与局部最优风险仍较突出，从而推动
+% 了策略学习方法在导航闭环中的进一步引入。
