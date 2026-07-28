@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from high_level_planner import HighLevelPlanner, TriggerFlags
+from temporal_lidar import TemporalLidarObservation
 
 
 @dataclass
@@ -15,7 +16,7 @@ class PeriodicReplanState:
 class HighLevelPlannerPeriodic(HighLevelPlanner):
     """A1 ablation: replace event-triggered replanning with fixed K-step replanning.
 
-    This class keeps the existing trigger computation interface intact:
+    This class keeps the canonical trigger computation interface intact:
     - `check_triggers(...)` still returns TriggerFlags (useful for logging)
     - `should_replan(flags)` ignores risk/stagnation/time rules and uses a periodic schedule
 
@@ -38,20 +39,14 @@ class HighLevelPlannerPeriodic(HighLevelPlanner):
 
     def check_triggers(
         self,
-        laser_scan,
+        observation: TemporalLidarObservation,
         robot_pose,
-        goal_info,
-        risk_index: float,
         current_step: int = 0,
-        window_metrics: Optional[dict] = None,
     ) -> TriggerFlags:
         flags = super().check_triggers(
-            laser_scan,
+            observation,
             robot_pose,
-            goal_info,
-            risk_index=risk_index,
             current_step=current_step,
-            window_metrics=window_metrics,
         )
         self._periodic.last_check_step = int(current_step)
         return flags
@@ -71,3 +66,12 @@ class HighLevelPlannerPeriodic(HighLevelPlanner):
             current_step = int(getattr(self._periodic, "last_check_step", 0))
         self._periodic.last_replan_step = int(current_step)
         return result
+
+    def reset_runtime_state(self) -> None:
+        """Reset base trigger state and the episode-local periodic schedule."""
+
+        super().reset_runtime_state()
+        self._periodic = PeriodicReplanState(
+            last_replan_step=0,
+            last_check_step=0,
+        )
