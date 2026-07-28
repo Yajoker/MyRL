@@ -1,7 +1,10 @@
+import argparse
+import os
 from dataclasses import dataclass
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
-import math
 
 import numpy as np
 import torch
@@ -11,7 +14,12 @@ from config import ConfigBundle, HighLevelRewardConfig, LowLevelRewardConfig, Tr
 from integration import HierarchicalNavigationSystem
 from rewards import compute_high_level_reward, compute_low_level_reward, compute_step_safety_cost
 from robot_nav.SIM_ENV.sim import SIM
-from replay_buffer import HighLevelReplayBuffer, ReplayBuffer
+from replay_buffer import (
+    HighLevelReplayBuffer,
+    ReplayBuffer,
+    has_sufficient_replay_samples,
+)
+from reproducibility import seed_everything, timestamped_seed_output_directory
 
 
 @dataclass
@@ -250,11 +258,10 @@ def evaluate(
     for ep_idx in range(config.eval_episodes):  # 遍历每个评估情节
         system.reset()  # 重置系统状态
         latest_scan, distance, cos, sin, collision, goal, _, _ = sim.reset()  # 重置仿真环境
+        packet = system.prepare_observation(sim.get_last_lidar_observation())
         prev_policy_action = np.zeros(2, dtype=np.float32)  # 初始化策略动作
-        prev_env_action = [0.0, 0.0]  # 初始化物理动作
         current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标世界坐标
-        robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-        eval_goal_pose = get_goal_pose(sim)  # 获取评估目标位姿
+        robot_pose = tuple(float(value) for value in packet.pose_xytheta)
         done = False  # 终止标志
         steps = 0  # 步数计数器
         episode_reward = 0.0  # 情节奖励
@@ -262,37 +269,16 @@ def evaluate(
 
         # 单次评估情节循环
         while not done and steps < config.max_steps:  # 当未终止且未超时时循环
-            robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-            active_waypoints: list = []
-            window_metrics: dict = {}
-            goal_info = [distance, cos, sin]  # 目标信息
-
-            # 动作前：用当前激光计算风险，只用于事件触发
-            scan_arr = np.asarray(latest_scan, dtype=np.float32)
-            pre_risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
+            robot_pose = tuple(float(value) for value in packet.pose_xytheta)
 
             trigger_flags = system.high_level_planner.check_triggers(
-                latest_scan,  # 最新激光数据
+                packet,
                 robot_pose,  # 机器人位姿
-                goal_info,  # 目标信息
-                risk_index=pre_risk_index,
                 current_step=steps,  # 当前步数
-                window_metrics=None,  # 窗口指标
-            )
-            goal_dir = math.atan2(float(sin), float(cos))
-            goal_sector_clear = system.high_level_planner._goal_sector_min_clearance(scan_arr, goal_dir)
-            prev_blocked = getattr(system, "_ext_goal_sector_prev_blocked", False)
-            goal_sector_blocked = goal_sector_clear <= system.high_level_planner.goal_lock_clearance
-            just_cleared_last_obstacle = prev_blocked and (not goal_sector_blocked)
-            system._ext_goal_sector_prev_blocked = goal_sector_blocked
-            force_goal_replan = (
-                float(distance) < system.high_level_planner.goal_lock_distance
-                and just_cleared_last_obstacle
             )
             # 检查是否需要重新规划
             should_replan = (
                 system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
-                or force_goal_replan  # 刚绕开目标方向最后障碍且接近终点
                 or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
             )
 
@@ -303,19 +289,15 @@ def evaluate(
             if should_replan:  # 如果需要重新规划
                 # 生成新子目标
                 subgoal_distance, subgoal_angle, metadata = system.high_level_planner.generate_subgoal(
-                    latest_scan,  # 激光数据
+                    packet,
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
                     robot_pose=robot_pose,  # 机器人位姿
                     current_step=steps,  # 当前步数
-                    waypoints=None,  # 活动航点
-                    window_metrics=None,  # 窗口指标
                 )
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
-                # 仅在成功生成新子目标后重置事件触发时间
-                system.high_level_planner.event_trigger.reset_time(steps)
                 if current_subgoal_world is None:  # 如果没有子目标世界坐标
                     current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)  # 计算子目标世界坐标
                 current_subgoal_completed = False  # 重置子目标完成标志
@@ -346,7 +328,7 @@ def evaluate(
 
             # 处理低层观测
             state = system.low_level_controller.process_observation(  # 处理低层观测
-                latest_scan,  # 激光数据
+                packet,
                 subgoal_distance,  # 子目标距离
                 subgoal_angle,  # 子目标角度
                 prev_policy_action,  # 上次策略动作
@@ -358,16 +340,21 @@ def evaluate(
             env_action = system.low_level_controller.scale_action_for_env(policy_action)
             lin_cmd = float(env_action[0])
             ang_cmd = float(env_action[1])
-            lin_cmd, ang_cmd = system.apply_velocity_shielding(lin_cmd, ang_cmd, latest_scan)  # 应用速度屏蔽
+            lin_cmd, ang_cmd = system.apply_velocity_shielding(
+                lin_cmd, ang_cmd, packet.current_scan_m
+            )
 
             # 执行动作
             latest_scan, distance, cos, sin, collision, goal, _, _ = sim.step(  # 执行一步仿真
                 lin_velocity=lin_cmd,  # 线性速度
                 ang_velocity=ang_cmd,  # 角速度
             )
+            next_packet = system.prepare_observation(
+                sim.get_last_lidar_observation()
+            )
 
             # 使用动作后的激光数据计算奖励所需的最小障碍距离
-            post_scan = np.asarray(latest_scan, dtype=np.float32)
+            post_scan = np.asarray(next_packet.raw_scan_m, dtype=np.float32)
             finite_scan = post_scan[np.isfinite(post_scan)]
             if finite_scan.size > 0:
                 risk_percentile = getattr(
@@ -380,8 +367,9 @@ def evaluate(
                 min_obstacle_distance = 8.0
 
             # 更新子目标距离
-            next_pose = get_robot_pose(sim)  # 获取下一时刻机器人位姿
-            post_window_metrics: dict = {}
+            next_pose = tuple(
+                float(value) for value in next_packet.pose_xytheta
+            )
             current_subgoal_distance = None  # 当前子目标距离
             if current_subgoal_world is not None:  # 如果有当前子目标世界坐标
                 next_pos = np.array(next_pose[:2], dtype=np.float32)  # 下一时刻位置
@@ -393,12 +381,6 @@ def evaluate(
                 subgoal_alignment_angle = float(relative_after[1])  # 子目标对齐角度
                 if current_subgoal_distance is None:  # 如果没有当前子目标距离
                     current_subgoal_distance = float(relative_after[0])  # 使用相对距离
-
-            action_delta: Optional[List[float]] = None  # 动作变化量
-            if prev_env_action is not None:  # 如果有上次动作
-                delta_lin = float(lin_cmd - prev_env_action[0])  # 线性速度变化
-                delta_ang = float(ang_cmd - prev_env_action[1])  # 角速度变化
-                action_delta = [delta_lin, delta_ang]  # 动作变化量
 
             # 检查终止条件
             just_reached_subgoal = False  # 刚刚到达子目标标志
@@ -432,8 +414,8 @@ def evaluate(
             # 更新统计
             episode_reward += low_reward  # 累加情节奖励
             steps += 1  # 步数加1
-            prev_env_action = [lin_cmd, ang_cmd]
             prev_policy_action = policy_action.astype(np.float32, copy=False)
+            packet = next_packet
 
             # 检查终止
             if collision:  # 如果碰撞
@@ -498,17 +480,71 @@ def evaluate(
     writer.add_scalar("eval_raw/collision_count", collision_count, epoch)  # 记录碰撞计数
 
 
+def _parse_training_args(args=None):
+    """Parse optional per-process overrides while keeping config.py as default."""
+
+    parser = argparse.ArgumentParser(
+        description="Train the hierarchical mapless navigation policy."
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help=(
+            "Override TrainingConfig.random_seed for this process. "
+            "Omit it to use the value configured in config.py."
+        ),
+    )
+    return parser.parse_args(args)
+
+
 def main(args=None):
     """主要训练循环"""
 
     # ========== 训练配置与设备初始化 ==========
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # 设置设备
+    parsed_args = _parse_training_args(args)
     bundle = ConfigBundle()  # 配置包
+    if parsed_args.seed is not None:
+        training_override = replace(
+            bundle.training,
+            random_seed=parsed_args.seed,
+        )
+        bundle = bundle.with_updates(
+            integration=bundle.integration.with_updates(
+                training=training_override,
+            )
+        )
     config = bundle.training  # 训练配置
     integration_config = bundle.integration  # 集成配置
+    candidate_budget = int(
+        integration_config.planner.frontier_num_candidates
+    )  # 高层候选预算M
+    training_seed = seed_everything(config.random_seed)
+    run_started_at = datetime.now()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # 设置设备
 
     raw_world = Path(config.world_file)  # 世界文件路径
     base_dir = Path(__file__).resolve().parent  # 基础目录
+    models_root = (
+        base_dir / "myrl" / "models" / "models_7.24"
+    ).resolve()
+    seed_models_directory = timestamped_seed_output_directory(
+        models_root,
+        training_seed,
+        run_started_at,
+    )
+    models_directory = seed_models_directory.with_name(
+        f"M{candidate_budget}_{seed_models_directory.name}"
+    ).resolve()  # M与训练种子、时间戳共同标识本次模型目录
+    # 在构造网络前原子预占本次运行目录。若同名目录已存在，安全退出而非覆盖。
+    models_directory.mkdir(parents=True, exist_ok=False)
+    run_name = models_directory.name
+    tensorboard_directory = (
+        base_dir / "runs" / run_name
+    ).resolve()
+    # 环境变量只作用于当前Python进程及其子进程；并发训练不会互相覆盖。
+    os.environ["MYRL_TENSORBOARD_ROOT"] = str(tensorboard_directory)
+    os.environ["MYRL_RUN_TAG"] = run_name
     candidate_paths: List[Path] = []  # 候选路径列表
     if raw_world.is_absolute():  # 如果是绝对路径
         candidate_paths.append(raw_world)  # 添加绝对路径
@@ -541,6 +577,9 @@ def main(args=None):
     print("="*60)
     print(f"📋 Training Configuration:")  # 训练配置标题
     print(f"   • Device: {device}")  # 设备信息
+    print(f"   • Random seed: {training_seed} (global deterministic setup)")  # 随机种子
+    print(f"   • Candidate budget: M={candidate_budget}")  # 高层候选数量上限
+    print(f"   • Run name: {run_name}")  # 本次训练的唯一目录标识
     print(
         f"   • Max epochs: {config.max_epochs}, Episodes per epoch: {config.episodes_per_epoch}"  # 最大轮次和每轮情节数
     )
@@ -550,6 +589,8 @@ def main(args=None):
     print(f"   • Max steps per episode: {config.max_steps}")  # 每情节最大步数
     print(f"   • Train every {config.train_every_n_episodes} episodes")  # 训练频率
     print(f"   • World file: {world_path}")  # 世界文件路径
+    print(f"   • Model directory: {models_directory}")  # 模型输出路径
+    print(f"   • TensorBoard directory: {tensorboard_directory}")  # 可视化输出路径
     print("   • Global planner: disabled (mapless mode)")  # 全局规划器关闭，启用无图导航
     if config.save_every > 0:  # 如果设置了保存频率
         print(f"   • Save models every {config.save_every} episodes")  # 保存模型频率
@@ -557,24 +598,26 @@ def main(args=None):
         print("   • Save models at end of training only")  # 仅在训练结束时保存
     print("="*60)
 
-    # ========== 系统初始化 ==========
+    # ========== 环境与系统初始化 ==========
+    # 传感器几何和采样周期由真实仿真器提供，必须先于网络构造。
+    print("🔄 Initializing simulation environment...")
+    sim = SIM(world_file=world_path_str, disable_plotting=False)
+    lidar_metadata = sim.get_lidar_metadata()
+    print("✅ Environment initialization completed")
+
     print("🔄 Initializing system...")  # 系统初始化信息
     system = HierarchicalNavigationSystem(  # 创建分层导航系统
+        lidar_metadata=lidar_metadata,
         device=device,  # 设备
         subgoal_threshold=config.subgoal_radius,  # 子目标阈值
-        waypoint_lookahead=config.waypoint_lookahead,  # 航点前瞻数量（对 mapless 分支无影响）
         integration_config=integration_config,  # 集成配置
+        models_directory=models_directory,  # 模型输出根目录
     )
     replay_buffer = TD3ReplayAdapter(  # 创建回放缓冲区适配器
         buffer_size=config.buffer_size,  # 缓冲区大小
-        random_seed=config.random_seed or 666,  # 随机种子
+        random_seed=training_seed,  # 随机种子
     )
     print("✅ System initialization completed")  # 系统初始化完成
-
-    # ========== 环境初始化 ==========
-    print("🔄 Initializing simulation environment...")  # 环境初始化信息
-    sim = SIM(world_file=world_path_str, disable_plotting=False)  # 创建仿真环境
-    print("✅ Environment initialization completed")  # 环境初始化完成
 
     # ========== 训练统计变量初始化 ==========
     episode_reward = 0.0  # 情节奖励
@@ -583,7 +626,9 @@ def main(args=None):
     epoch_goal_count = 0  # 轮次目标计数
     epoch_collision_count = 0  # 轮次碰撞计数
 
-    # best model 保存相关：保存所有 Success Rate 达到 100% 的 epoch
+    # best model：以 TRAINING SUMMARY 的训练成功率为准。更高分会替换旧最优，
+    # 同分会追加保存到 <checkpoint 父目录>/best_models/{high_level,low_level}/。
+    best_train_success_rate = -1.0
 
     # 训练计数器初始化
     episode = 0  # 情节计数器
@@ -596,7 +641,10 @@ def main(args=None):
     low_reward_cfg = bundle.low_level_reward  # 低层奖励配置
     high_reward_cfg = bundle.high_level_reward  # 高层奖励配置
     trigger_cfg = integration_config.trigger
-    high_level_buffer = HighLevelReplayBuffer(buffer_size=config.buffer_size, random_seed=config.random_seed or 666)
+    high_level_buffer = HighLevelReplayBuffer(
+        buffer_size=config.buffer_size,
+        random_seed=training_seed,
+    )
     current_subgoal_context: Optional[SubgoalContext] = None  # 当前子目标上下文
 
     # ========== 主训练循环 ==========
@@ -607,53 +655,36 @@ def main(args=None):
         system.current_subgoal = None  # 重置当前子目标
 
         latest_scan, distance, cos, sin, collision, goal, _, _ = sim.reset()  # 重置仿真环境
+        packet = system.prepare_observation(sim.get_last_lidar_observation())
         prev_policy_action = np.zeros(2, dtype=np.float32)  # 归一化动作历史
-        prev_env_action = [0.0, 0.0]  # 物理动作历史
         current_subgoal_world: Optional[np.ndarray] = None  # 当前子目标世界坐标
 
-        robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-        episode_goal_pose = get_goal_pose(sim)  # 获取情节目标位姿
-
+        robot_pose = tuple(float(value) for value in packet.pose_xytheta)
         steps = 0  # 步数计数器
         episode_reward = 0.0  # 情节奖励
         done = False  # 终止标志
         current_subgoal_completed = False  # 当前子目标完成标志
+        # 动作后预判得到的 t+1 重规划决策在下一轮直接复用，保证
+        # low_level_done 与实际 option 切换始终使用同一个边界。
+        pending_should_replan: Optional[bool] = None
 
         # ========== 单次情节循环 ==========
         while not done and steps < config.max_steps:  # 当未终止且未超时时循环
-            robot_pose = get_robot_pose(sim)  # 获取机器人位姿
-            window_metrics: dict = {}
-            waypoint_sequence: list = []
-            goal_info = [distance, cos, sin]  # 目标信息
+            robot_pose = tuple(float(value) for value in packet.pose_xytheta)
 
-            # 动作前：用当前激光计算风险，只用于事件触发
-            scan_arr = np.asarray(latest_scan, dtype=np.float32)
-            pre_risk_index, d_min, d_percentile = system.high_level_planner.compute_risk_index(scan_arr)
-
-            trigger_flags = system.high_level_planner.check_triggers(
-                latest_scan,  # 最新激光数据
-                robot_pose,  # 机器人位姿
-                goal_info,  # 目标信息
-                risk_index=pre_risk_index,
-                current_step=steps,  # 当前步数
-                window_metrics=None,  # 窗口指标
-            )
-            goal_dir = math.atan2(float(sin), float(cos))
-            goal_sector_clear = system.high_level_planner._goal_sector_min_clearance(scan_arr, goal_dir)
-            prev_blocked = getattr(system, "_ext_goal_sector_prev_blocked", False)
-            goal_sector_blocked = goal_sector_clear <= system.high_level_planner.goal_lock_clearance
-            just_cleared_last_obstacle = prev_blocked and (not goal_sector_blocked)
-            system._ext_goal_sector_prev_blocked = goal_sector_blocked
-            force_goal_replan = (
-                float(distance) < system.high_level_planner.goal_lock_distance
-                and just_cleared_last_obstacle
-            )
-            # 检查是否需要重新规划子目标
-            should_replan = (
-                system.high_level_planner.current_subgoal_world is None  # 没有当前子目标
-                or force_goal_replan  # 刚绕开目标方向最后障碍且接近终点
-                or system.high_level_planner.should_replan(trigger_flags)  # 或触发器条件满足
-            )
+            if pending_should_replan is None:
+                trigger_flags = system.high_level_planner.check_triggers(
+                    packet,
+                    robot_pose,  # 机器人位姿
+                    current_step=steps,  # 当前步数
+                )
+                should_replan = (
+                    system.high_level_planner.current_subgoal_world is None
+                    or system.high_level_planner.should_replan(trigger_flags)
+                )
+            else:
+                should_replan = pending_should_replan
+                pending_should_replan = None
 
             metadata = {}  # 元数据字典
             subgoal_distance = None  # 子目标距离
@@ -688,30 +719,24 @@ def main(args=None):
 
                 # 生成新子目标
                 subgoal_distance, subgoal_angle, metadata = system.high_level_planner.generate_subgoal(  # 生成子目标
-                    latest_scan,  # 激光数据
+                    packet,
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
                     robot_pose=robot_pose,  # 机器人位姿
                     current_step=steps,  # 当前步数
-                    waypoints=None,  # 活动航点
-                    window_metrics=None,  # 窗口指标
                 )
                 planner_world = system.high_level_planner.current_subgoal_world  # 规划器子目标世界坐标
                 current_subgoal_world = np.asarray(planner_world, dtype=np.float32) if planner_world is not None else None  # 当前子目标世界坐标
-                # 生成新的子目标后统一重置事件触发时间
-                system.high_level_planner.event_trigger.reset_time(steps)
                 if current_subgoal_world is None:  # 如果没有子目标世界坐标
                     current_subgoal_world = compute_subgoal_world(robot_pose, subgoal_distance, subgoal_angle)  # 计算子目标世界坐标
 
                 # 构建高层状态向量
                 start_state = system.high_level_planner.build_state_vector(  # 构建状态向量
-                    latest_scan,  # 激光数据
+                    packet,
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
-                    waypoints=waypoint_sequence,  # 航点序列
-                    robot_pose=robot_pose,  # 机器人位姿
                 )
 
                 # 创建新的子目标上下文
@@ -727,7 +752,7 @@ def main(args=None):
                     last_state=start_state.astype(np.float32, copy=False),  # 最后状态
                     subgoal_angle_at_start=float(subgoal_angle) if subgoal_angle is not None else None,  # 子目标开始角度
                 )
-                scan_arr = np.asarray(latest_scan, dtype=np.float32)  # 激光数据数组
+                scan_arr = np.asarray(packet.raw_scan_m, dtype=np.float32)
                 finite_scan = scan_arr[np.isfinite(scan_arr)]  # 有限值扫描
                 if finite_scan.size:  # 如果有有限值
                     current_subgoal_context.min_dmin = float(min(current_subgoal_context.min_dmin, finite_scan.min()))  # 更新最小障碍距离
@@ -759,7 +784,7 @@ def main(args=None):
 
             # 处理低层观测
             state = system.low_level_controller.process_observation(  # 处理低层观测
-                latest_scan,  # 激光数据
+                packet,
                 subgoal_distance,  # 子目标距离
                 subgoal_angle,  # 子目标角度
                 prev_policy_action,  # 上次归一化策略动作
@@ -777,16 +802,21 @@ def main(args=None):
             env_action = system.low_level_controller.scale_action_for_env(policy_action)
             env_lin_cmd = float(env_action[0])  # 线性速度命令
             env_ang_cmd = float(env_action[1])  # 角速度命令
-            lin_cmd, ang_cmd = system.apply_velocity_shielding(env_lin_cmd, env_ang_cmd, latest_scan)  # 应用速度屏蔽
+            lin_cmd, ang_cmd = system.apply_velocity_shielding(
+                env_lin_cmd, env_ang_cmd, packet.current_scan_m
+            )
 
             # 执行动作
-            latest_scan, distance, cos, sin, collision, goal, executed_action, _ = sim.step(  # 执行一步仿真
+            latest_scan, distance, cos, sin, collision, goal, _, _ = sim.step(  # 执行一步仿真
                 lin_velocity=lin_cmd,  # 线性速度
                 ang_velocity=ang_cmd,  # 角速度
             )
+            next_packet = system.prepare_observation(
+                sim.get_last_lidar_observation()
+            )
 
             # 使用动作后的激光数据刷新奖励所需的最小障碍距离
-            post_scan = np.asarray(latest_scan, dtype=np.float32)
+            post_scan = np.asarray(next_packet.raw_scan_m, dtype=np.float32)
             finite_scan = post_scan[np.isfinite(post_scan)]
             if finite_scan.size > 0:
                 risk_percentile = getattr(
@@ -798,12 +828,14 @@ def main(args=None):
             else:
                 min_obstacle_distance = 8.0
 
-            # 使用动作后的激光重新计算风险，用于安全成本统计
-            post_risk_index, _, _ = system.high_level_planner.compute_risk_index(post_scan)
+            # 奖励/成本仍只消费净空风险；TTC/联合风险仅路由到
+            # 事件触发和低层上下文，避免改变冻结的奖励定义。
+            post_clearance_risk = float(next_packet.risk.clearance)
 
             # 更新子目标距离
-            next_pose = get_robot_pose(sim)  # 获取下一时刻机器人位姿
-            post_window_metrics: dict = {}
+            next_pose = tuple(
+                float(value) for value in next_packet.pose_xytheta
+            )
             current_subgoal_distance = None  # 当前子目标距离
             if current_subgoal_world is not None:  # 如果有当前子目标世界坐标
                 next_pos = np.array(next_pose[:2], dtype=np.float32)  # 下一时刻位置
@@ -835,24 +867,18 @@ def main(args=None):
 
             system.current_subgoal = (post_subgoal_distance, post_subgoal_angle)  # 设置系统当前子目标
 
-            action_delta: Optional[List[float]] = None  # 动作变化量
-            if executed_action is not None and prev_env_action is not None:  # 如果有执行动作和上次动作
-                delta_lin = float(executed_action[0] - prev_env_action[0])  # 线性速度变化
-                delta_ang = float(executed_action[1] - prev_env_action[1])  # 角速度变化
-                action_delta = [delta_lin, delta_ang]  # 动作变化量
-
             if current_subgoal_context is not None:  # 如果有当前子目标上下文
                 current_subgoal_context.min_dmin = min(  # 更新最小障碍距离
                     current_subgoal_context.min_dmin,
                     min_obstacle_distance,
                 )
                 step_cost = compute_step_safety_cost(
-                    post_risk_index,
+                    post_clearance_risk,
                     collision,
                     config=high_reward_cfg,
                 )
                 current_subgoal_context.short_cost_sum += step_cost
-                if post_risk_index >= trigger_cfg.risk_near_threshold:
+                if post_clearance_risk >= trigger_cfg.risk_near_threshold:
                     current_subgoal_context.near_obstacle_steps += 1
                 if collision:  # 如果碰撞
                     current_subgoal_context.collision_occurred = True  # 标记碰撞发生
@@ -899,33 +925,52 @@ def main(args=None):
                 current_subgoal_context.last_goal_distance = distance  # 更新最后目标距离
                 # 构建下一状态向量（mapless 模式不再使用全局航点）
                 next_state_vector = system.high_level_planner.build_state_vector(  # 构建下一状态向量
-                    latest_scan,  # 激光数据
+                    next_packet,
                     distance,  # 目标距离
                     cos,  # 目标余弦
                     sin,  # 目标正弦
-                    waypoints=None,  # mapless: 不再提供活动航点
-                    robot_pose=next_pose,  # 下一时刻机器人位姿
                 )
                 current_subgoal_context.last_state = next_state_vector.astype(np.float32, copy=False)  # 更新最后状态
 
             # 准备下一状态
             next_policy_action = policy_action.astype(np.float32, copy=False)
             next_state = system.low_level_controller.process_observation(  # 处理下一状态观测
-                latest_scan,  # 激光数据
+                next_packet,
                 post_subgoal_distance,  # 后子目标距离
                 post_subgoal_angle,  # 后子目标角度
                 next_policy_action,  # 下一时刻策略动作
             )
 
-            # 检查终止条件
-            done = collision or goal or steps == config.max_steps - 1  # 终止条件
+            # 环境回合终止与低层 option 终止是两个不同边界。当前动作后，
+            # 在 s_{t+1} 上预判下一轮是否重规划，使 TD3 不跨 option bootstrap。
+            env_done = bool(collision or goal or timed_out)
+            next_should_replan = False
+            if not env_done:
+                next_trigger_flags = system.high_level_planner.check_triggers(
+                    next_packet,
+                    next_pose,
+                    current_step=steps + 1,
+                )
+                next_should_replan = (
+                    system.high_level_planner.current_subgoal_world is None
+                    or system.high_level_planner.should_replan(next_trigger_flags)
+                )
 
-            # 添加经验到回放缓冲区（存储未屏蔽的环境动作）
-            scaled_env_action = np.array([env_lin_cmd, env_ang_cmd], dtype=np.float32)
+            option_will_end = bool(just_reached_subgoal or next_should_replan)
+            if not env_done:
+                pending_should_replan = option_will_end
+            low_level_done = bool(env_done or option_will_end)
+            done = env_done
 
-            #replay_buffer.add(state, scaled_env_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
-            # ✅ 用 policy_action 作为 replay buffer 里的动作
-            replay_buffer.add(state, policy_action, low_reward, float(done), next_state)  # 添加到回放缓冲区
+            # Replay stores the normalized policy action and the low-level
+            # terminal mask; ``done`` above remains the environment-loop mask.
+            replay_buffer.add(
+                state,
+                policy_action,
+                low_reward,
+                float(low_level_done),
+                next_state,
+            )
 
             # 定期输出回放缓冲区大小与奖励
             if steps % 50 == 0:  # 每50步输出一次
@@ -938,7 +983,7 @@ def main(args=None):
                 )
 
             prev_policy_action = next_policy_action  # 更新策略动作
-            prev_env_action = [executed_action[0], executed_action[1]]  # 更新物理动作
+            packet = next_packet
             steps += 1  # 步数加1
 
         # ========== 情节结束处理 ==========
@@ -992,7 +1037,11 @@ def main(args=None):
 
         # ========== 训练低层控制器 ==========
         if (
-            replay_buffer.size() >= config.min_buffer_size  # 如果缓冲区大小达到最小值
+            has_sufficient_replay_samples(
+                replay_buffer,
+                batch_size=config.batch_size,
+                min_buffer_size=config.min_buffer_size,
+            )
             and episode % config.train_every_n_episodes == 0  # 且达到训练频率
         ):
             current_buffer_size = replay_buffer.size()  # 当前缓冲区大小
@@ -1050,27 +1099,32 @@ def main(args=None):
             print("=" * 60)
 
             # ========== Best Model 保存（独立于常规 checkpoint） ==========
-            # 需求：保存整个训练周期中每个 Success Rate 达到 100% 的模型（而不是只保存首次）。
-            # 注意：此处不改变原有 checkpoint 保存逻辑与频率。
-            if epoch_success_rate >= 100.0 - 1e-9:
-                # best_models 根目录：与 myrl/models 同级的独立子目录
+            # 仅依据 TRAINING SUMMARY 的 Success Rate：
+            # - 严格高于历史最佳时，清理旧的较低分模型并保存当前模型；
+            # - 等于历史最佳时，保留已有同分模型并追加保存当前模型。
+            if epoch_success_rate >= best_train_success_rate:
+                is_new_best = epoch_success_rate > best_train_success_rate
                 models_root = Path(system.high_level_planner.save_directory).parent
-                best_root = models_root / "best_models_3.24"
+                best_root = models_root / "best_models"
                 best_high_dir = best_root / "high_level"
                 best_low_dir = best_root / "low_level"
-
-                # 确保目录存在（避免 save_model 不创建目录导致报错）
                 best_high_dir.mkdir(parents=True, exist_ok=True)
                 best_low_dir.mkdir(parents=True, exist_ok=True)
+                if is_new_best:
+                    for d in (best_high_dir, best_low_dir):
+                        for p in d.iterdir():
+                            if p.is_file():
+                                p.unlink()
+                    best_train_success_rate = epoch_success_rate
 
-                # 文件名包含 epoch 与 Success Rate，避免覆盖并便于后续分析
                 tag = f"epoch{epoch:03d}_sr{epoch_success_rate:05.1f}"
-                high_best_name = f"{system.high_level_planner.model_name}_perfect_{tag}"
-                low_best_name = f"{system.low_level_controller.model_name}_perfect_{tag}"
+                high_best_name = f"{system.high_level_planner.model_name}_best_{tag}"
+                low_best_name = f"{system.low_level_controller.model_name}_best_{tag}"
 
+                best_status = "New best" if is_new_best else "Tied best"
                 print(
-                    f"🏆 Perfect Success Rate: {epoch_success_rate:.1f}% | "
-                    f"Saving perfect models to: {best_root}"
+                    f"🏆 {best_status} train success rate: {epoch_success_rate:.1f}% "
+                    f"(epoch {epoch:03d}) | Saving to {best_root}"
                 )
                 system.high_level_planner.save_model(
                     filename=high_best_name,
