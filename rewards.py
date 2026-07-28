@@ -65,16 +65,15 @@ def compute_low_level_reward(
     # 2. 安全塑形奖励 R_safety
     #    离障碍越近，惩罚越大；超过安全距离则不惩罚。
     # ------------------------------------------------------------
-    if min_obstacle_distance < config.collision_distance:
-        safety_raw = -1.0
-    elif min_obstacle_distance < config.safety_clearance:
-        # 在线性区间 [collision_distance, safety_clearance] 内插值
-        ratio = (config.safety_clearance - min_obstacle_distance) / (
-            config.safety_clearance - config.collision_distance
-        )
-        safety_raw = -0.3 - 0.7 * ratio  # 从 -0.3 到 -1.0
-    else:
-        safety_raw = 0.0
+    # 复用碰撞距离和安全净空作为线性区间的两个端点，不引入额外超参数：
+    # d <= d_collision 时为 -1，随后连续衰减，并在 d >= d_safe 时变为 0。
+    safety_ratio = np.clip(
+        (config.safety_clearance - float(min_obstacle_distance))
+        / (config.safety_clearance - config.collision_distance),
+        0.0,
+        1.0,
+    )
+    safety_raw = -float(safety_ratio)
 
     safety_reward = config.safety_weight * safety_raw
     components["safety"] = float(safety_reward)
