@@ -1,7 +1,9 @@
 """高层规划器"""
 
 import math
+import os
 import socket
+from collections import deque
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +16,8 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from config import PlannerConfig, TriggerConfig
+from robot_nav.SIM_ENV.sensor_metadata import LidarMetadata
+from temporal_lidar import TemporalLidarObservation
 
 
 class HighLevelValueNet(nn.Module):
@@ -22,7 +26,8 @@ class HighLevelValueNet(nn.Module):
     def __init__(self, belief_dim: int = 90, goal_info_dim: int = 3, geom_dim: int = 2, hidden_dim: int = 192):
         super().__init__()
 
-        self.cnn1 = nn.Conv1d(1, 8, kernel_size=5, stride=2)
+        self.belief_dim = int(belief_dim)
+        self.cnn1 = nn.Conv1d(2, 8, kernel_size=5, stride=2)
         self.cnn2 = nn.Conv1d(8, 16, kernel_size=3, stride=2)
         self.cnn3 = nn.Conv1d(16, 8, kernel_size=3, stride=1)
 
@@ -43,7 +48,7 @@ class HighLevelValueNet(nn.Module):
         self.q_safe_head = nn.Linear(branch_hidden_dim, 1)
 
     def _get_cnn_output_dim(self, belief_dim: int) -> int:
-        dummy = torch.zeros(1, 1, belief_dim)
+        dummy = torch.zeros(1, 2, belief_dim)
         x = self.cnn1(dummy)
         x = self.cnn2(x)
         x = self.cnn3(x)
@@ -56,7 +61,13 @@ class HighLevelValueNet(nn.Module):
         subgoal_geom: torch.Tensor,
         return_heads: bool = False,
     ):
-        x = laser.unsqueeze(1)
+        if laser.dim() == 2 and laser.shape == (2, self.belief_dim):
+            laser = laser.unsqueeze(0)
+        if laser.dim() != 3 or laser.shape[1:] != (2, self.belief_dim):
+            raise ValueError(
+                f"laser must have shape [B, 2, {self.belief_dim}], got {tuple(laser.shape)}"
+            )
+        x = laser
         x = F.relu(self.cnn1(x))
         x = F.relu(self.cnn2(x))
         x = F.relu(self.cnn3(x))
@@ -91,111 +102,162 @@ class EventTrigger:
         *,
         config: TriggerConfig,
         step_duration: float,
-        min_interval: Optional[float] = None,
+        max_angular_velocity: float,
         subgoal_reach_threshold: Optional[float] = None,
     ) -> None:
+        if step_duration <= 0:
+            raise ValueError("step_duration must be positive")
+        if max_angular_velocity <= 0:
+            raise ValueError("max_angular_velocity must be positive")
+
         self._config = config
-        self.safety_trigger_distance = config.safety_trigger_distance
+        self.safety_trigger_distance = float(config.safety_trigger_distance)
         self.subgoal_reach_threshold = (
-            subgoal_reach_threshold if subgoal_reach_threshold is not None else config.subgoal_reach_threshold
+            float(subgoal_reach_threshold)
+            if subgoal_reach_threshold is not None
+            else float(config.subgoal_reach_threshold)
         )
-        self.stagnation_steps = max(1, int(config.stagnation_steps))
         self.step_duration = float(step_duration)
-        self.progress_abs = float(config.progress_epsilon_abs)
-        self.progress_rel = float(config.progress_epsilon_rel)
+        self.max_angular_velocity = float(max_angular_velocity)
         self.risk_alpha = float(config.risk_alpha)
         self.risk_trigger_threshold = float(config.risk_trigger_threshold)
         self.risk_near_threshold = float(config.risk_near_threshold)
         self.risk_percentile = float(config.risk_percentile)
+        self.min_interval = float(config.min_interval)
+        self.max_interval = float(config.max_interval)
+        self.min_step_interval = max(1, int(math.ceil(self.min_interval / self.step_duration)))
+        self.max_step_interval = max(1, int(math.ceil(self.max_interval / self.step_duration)))
+        if self.max_step_interval < self.min_step_interval:
+            raise ValueError("max_interval must yield at least min_interval steps")
 
-        if min_interval is not None and min_interval > 0:
-            self.min_interval = float(min_interval)
-        elif getattr(config, "min_interval", 0) and config.min_interval > 0:
-            self.min_interval = float(config.min_interval)
-        else:
-            steps_cfg = max(1, int(getattr(config, "min_step_interval", 1)))
-            self.min_interval = float(steps_cfg * self.step_duration) if self.step_duration > 0 else 0.0
-
-        if self.step_duration > 0:
-            self.min_step_interval = max(1, int(math.ceil(self.min_interval / self.step_duration)))
-            self.max_step_interval = max(1, int(math.ceil(config.max_interval / self.step_duration)))
-        else:
-            self.min_step_interval = max(1, int(getattr(config, "min_step_interval", 1)))
-            self.max_step_interval = max(1, int(getattr(config, "max_step_interval", 1)))
-
-        self.last_trigger_step = -self.min_step_interval
-        self.best_goal_distance: Optional[float] = None
-        self.last_progress_step = 0
-
-    def _delta_progress_min(self, reference_distance: float) -> float:
-        return self.progress_abs + self.progress_rel * max(reference_distance, 0.0)
-
-    def risk_trigger(self, risk_index: float) -> bool:
-        return risk_index >= self.risk_trigger_threshold
+        self._distance_history = deque(maxlen=self.min_step_interval + 1)
+        self.reset_state()
 
     def subgoal_reached(self, dist_to_subgoal: Optional[float]) -> bool:
         return dist_to_subgoal is not None and dist_to_subgoal <= self.subgoal_reach_threshold
 
-    def global_progress_stagnant(self, goal_distance: float, current_step: int) -> bool:
-        if not np.isfinite(goal_distance):
-            return False
+    def start_option(
+        self,
+        current_step: int,
+        initial_subgoal_distance: float,
+        initial_subgoal_angle: float,
+    ) -> None:
+        """Start a new option without re-arming the risk rising-edge latch."""
 
-        if self.best_goal_distance is None:
-            self.best_goal_distance = goal_distance
-            self.last_progress_step = current_step
-            return False
+        self.last_trigger_step = int(current_step)
+        self.option_start_step = int(current_step)
+        wrapped_angle = math.atan2(math.sin(initial_subgoal_angle), math.cos(initial_subgoal_angle))
+        turn_steps = int(
+            math.ceil(abs(wrapped_angle) / (self.max_angular_velocity * self.step_duration))
+        )
+        self.turn_wait_steps = min(
+            max(self.max_step_interval - self.min_step_interval, 0),
+            max(turn_steps, 0),
+        )
+        self._distance_history.clear()
+        if np.isfinite(initial_subgoal_distance):
+            self._distance_history.append((int(current_step), float(initial_subgoal_distance)))
 
-        improvement = self.best_goal_distance - goal_distance
-        threshold = self._delta_progress_min(self.best_goal_distance)
-
-        if improvement >= threshold:
-            self.best_goal_distance = goal_distance
-            self.last_progress_step = current_step
-            return False
-
-        return (current_step - self.last_progress_step) >= self.stagnation_steps
-
-    def reset_progress(self, goal_distance: float, current_step: int) -> None:
-        if not np.isfinite(goal_distance):
-            self.best_goal_distance = None
-            self.last_progress_step = current_step
+    def _append_distance(self, current_step: int, distance: Optional[float]) -> None:
+        if distance is None or not np.isfinite(distance):
             return
-        self.best_goal_distance = goal_distance
-        self.last_progress_step = current_step
-
-    def update_progress(self, goal_distance: float, current_step: int) -> None:
-        if not np.isfinite(goal_distance):
+        if self._distance_history and self._distance_history[-1][0] == int(current_step):
             return
-        if self.best_goal_distance is None:
-            self.best_goal_distance = goal_distance
-            self.last_progress_step = current_step
-            return
-        improvement = self.best_goal_distance - goal_distance
-        if improvement >= self._delta_progress_min(self.best_goal_distance):
-            self.best_goal_distance = goal_distance
-            self.last_progress_step = current_step
+        self._distance_history.append((int(current_step), float(distance)))
 
-    def is_stagnated(self, current_step: int) -> bool:
-        if self.best_goal_distance is None:
+    def _theil_sen_stagnant(self, current_step: int) -> bool:
+        if self.option_start_step is None:
             return False
-        return (current_step - self.last_progress_step) >= self.stagnation_steps
+        age = int(current_step) - self.option_start_step
+        if age < self.turn_wait_steps + self.min_step_interval:
+            return False
+        if age >= self.max_step_interval:
+            return False
+        if len(self._distance_history) < self.min_step_interval + 1:
+            return False
+
+        points = list(self._distance_history)
+        slopes: List[float] = []
+        for i in range(len(points) - 1):
+            step_i, distance_i = points[i]
+            for j in range(i + 1, len(points)):
+                step_j, distance_j = points[j]
+                delta_steps = step_j - step_i
+                if delta_steps <= 0:
+                    continue
+                slopes.append(
+                    (distance_j - distance_i) / (float(delta_steps) * self.step_duration)
+                )
+        if not slopes:
+            return False
+        return float(np.median(np.asarray(slopes, dtype=np.float64))) >= 0.0
 
     def can_replan(self, current_step: int) -> bool:
-        return current_step - self.last_trigger_step >= self.min_step_interval
+        return (
+            self.option_start_step is not None
+            and int(current_step) - self.option_start_step >= self.min_step_interval
+        )
 
     def time_upper_bound(self, current_step: int) -> bool:
-        return current_step - self.last_trigger_step >= self.max_step_interval
+        return (
+            self.option_start_step is not None
+            and int(current_step) - self.option_start_step >= self.max_step_interval
+        )
 
-    def reset_time(self, current_step: int) -> None:
-        self.last_trigger_step = current_step
+    def evaluate(
+        self,
+        *,
+        observation_id: int,
+        current_step: int,
+        combined_risk: float,
+        distance_to_subgoal: Optional[float],
+    ) -> "TriggerFlags":
+        cache_input = (
+            int(observation_id),
+            int(current_step),
+            float(combined_risk),
+            None if distance_to_subgoal is None else float(distance_to_subgoal),
+        )
+        if self._last_check_input is not None:
+            last_id = self._last_check_input[0]
+            if observation_id < last_id:
+                raise ValueError("event trigger observation_id must not move backwards")
+            if observation_id == last_id:
+                if cache_input != self._last_check_input:
+                    raise ValueError("same observation_id was checked with different trigger inputs")
+                assert self._last_flags is not None
+                return self._last_flags
+
+        above = bool(float(combined_risk) >= self.risk_trigger_threshold)
+        risk_event = bool(above and self.risk_armed)
+        if above:
+            self.risk_armed = False
+        else:
+            self.risk_armed = True
+
+        self._append_distance(current_step, distance_to_subgoal)
+        flags = TriggerFlags(
+            time_ready=self.can_replan(current_step),
+            time_over=self.time_upper_bound(current_step),
+            progress_stagnant=self._theil_sen_stagnant(current_step),
+            risk=risk_event,
+            subgoal_reached=self.subgoal_reached(distance_to_subgoal),
+        )
+        self._last_check_input = cache_input
+        self._last_flags = flags
+        return flags
 
     def reset_state(self) -> None:
         self.last_trigger_step = -self.min_step_interval
-        self.best_goal_distance = None
-        self.last_progress_step = 0
+        self.option_start_step: Optional[int] = None
+        self.turn_wait_steps = 0
+        self._distance_history.clear()
+        self.risk_armed = True
+        self._last_check_input = None
+        self._last_flags: Optional[TriggerFlags] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class TriggerFlags:
     time_ready: bool
     time_over: bool
@@ -209,22 +271,33 @@ class HighLevelPlanner:
 
     def __init__(
         self,
-        belief_dim: int = 90,
+        belief_dim: Optional[int] = None,
         device=None,
         save_directory: Path = Path("models/high_level"),
         model_name: str = "high_level_planner",
         load_model: bool = False,
         load_directory=None,
         step_duration: float = 0.3,
-        min_interval: Optional[float] = None,
         subgoal_reach_threshold: Optional[float] = None,
-        waypoint_lookahead: Optional[int] = None,
         *,
+        lidar_metadata: LidarMetadata,
+        max_angular_velocity: float,
         trigger_config: Optional[TriggerConfig] = None,
         planner_config: Optional[PlannerConfig] = None,
     ) -> None:
         trigger_cfg = trigger_config or TriggerConfig()
         planner_cfg = planner_config or PlannerConfig()
+        self.lidar_metadata = lidar_metadata
+        self.belief_dim = int(lidar_metadata.beam_count)
+        if belief_dim is not None and int(belief_dim) != self.belief_dim:
+            raise ValueError(
+                f"belief_dim={belief_dim} does not match lidar beam count {self.belief_dim}"
+            )
+        if not np.isclose(float(step_duration), float(lidar_metadata.sample_period_s)):
+            raise ValueError(
+                "step_duration must match lidar metadata sample_period_s "
+                f"({step_duration} != {lidar_metadata.sample_period_s})"
+            )
         self.planner_config = planner_cfg
         self.safety_q_weight = float(planner_cfg.safety_q_weight)
         self.safety_loss_weight = float(planner_cfg.safety_loss_weight)
@@ -237,41 +310,28 @@ class HighLevelPlanner:
 
         if subgoal_reach_threshold is None:
             subgoal_reach_threshold = trigger_cfg.subgoal_reach_threshold
-        if waypoint_lookahead is None:
-            waypoint_lookahead = planner_cfg.waypoint_lookahead
-        if min_interval is None:
-            min_interval = (
-                trigger_cfg.min_interval
-                if trigger_cfg.min_interval > 0
-                else trigger_cfg.min_step_interval * step_duration
-            )
-
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.save_directory = Path(save_directory)
         self.save_directory.mkdir(parents=True, exist_ok=True)
         self.model_name = model_name
 
-        self.waypoint_lookahead = max(1, int(waypoint_lookahead))
-        self.active_window_feature_dim = 6
-        self.per_window_feature_dim = 4
-        self.goal_feature_dim = 3 + self.active_window_feature_dim + self.per_window_feature_dim * self.waypoint_lookahead
-        self.belief_dim = belief_dim
+        self.goal_feature_dim = 3
 
         if self.high_level_double_q_enabled:
-            self.value_net_a = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
+            self.value_net_a = HighLevelValueNet(belief_dim=self.belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
                 self.device
             )
-            self.value_net_b = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
+            self.value_net_b = HighLevelValueNet(belief_dim=self.belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
                 self.device
             )
             self.value_net_a.safety_q_weight = self.safety_q_weight
             self.value_net_b.safety_q_weight = self.safety_q_weight
 
             self.target_value_net_a = HighLevelValueNet(
-                belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
+                belief_dim=self.belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
             ).to(self.device)
             self.target_value_net_b = HighLevelValueNet(
-                belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
+                belief_dim=self.belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
             ).to(self.device)
             self.target_value_net_a.load_state_dict(self.value_net_a.state_dict())
             self.target_value_net_b.load_state_dict(self.value_net_b.state_dict())
@@ -286,12 +346,12 @@ class HighLevelPlanner:
             self.value_optimizer_b = torch.optim.Adam(self.value_net_b.parameters(), lr=3e-4)  #1e-3改为了3e-4
             self.value_net = self.value_net_a
         else:
-            self.value_net = HighLevelValueNet(belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
+            self.value_net = HighLevelValueNet(belief_dim=self.belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2).to(
                 self.device
             )
             self.value_net.safety_q_weight = self.safety_q_weight
             self.target_value_net = HighLevelValueNet(
-                belief_dim=belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
+                belief_dim=self.belief_dim, goal_info_dim=self.goal_feature_dim, geom_dim=2
             ).to(self.device)
             self.target_value_net.load_state_dict(self.value_net.state_dict())
             self.target_value_net.safety_q_weight = self.safety_q_weight
@@ -305,16 +365,26 @@ class HighLevelPlanner:
         self.event_trigger = EventTrigger(
             config=trigger_cfg,
             step_duration=step_duration,
-            min_interval=min_interval,
+            max_angular_velocity=max_angular_velocity,
             subgoal_reach_threshold=subgoal_reach_threshold,
         )
         self.step_duration = step_duration
 
-        tb_root = Path(__file__).resolve().parent / "runs"
+        configured_tb_root = os.environ.get("MYRL_TENSORBOARD_ROOT")
+        tb_root = (
+            Path(configured_tb_root).expanduser()
+            if configured_tb_root
+            else Path(__file__).resolve().parent / "runs"
+        )
         tb_root.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%b%d_%H-%M-%S")
         host = socket.gethostname()
-        tb_run_dir = tb_root / f"{timestamp}_{host}{model_name}"
+        run_tag = os.environ.get("MYRL_RUN_TAG", "").strip()
+        tag_suffix = f"_{run_tag}" if run_tag else ""
+        tb_run_dir = (
+            tb_root
+            / f"{timestamp}_{host}_pid{os.getpid()}{tag_suffix}_{model_name}"
+        )
         self.writer = SummaryWriter(log_dir=str(tb_run_dir))
         self.iter_count = 0
 
@@ -328,25 +398,19 @@ class HighLevelPlanner:
         self.frontier_max_distance = planner_cfg.frontier_max_dist
         self.frontier_gap_min_width = planner_cfg.frontier_gap_min_width
         self.frontier_num_candidates = planner_cfg.frontier_num_candidates
-        self.consistency_lambda = planner_cfg.consistency_lambda
-        self.consistency_sigma_r = planner_cfg.consistency_sigma_r
-        self.consistency_sigma_theta = planner_cfg.consistency_sigma_theta
         self.diverse_frontier_enabled = bool(getattr(planner_cfg, "diverse_frontier_enabled", False))
         self.frontier_bucket_k_align = int(getattr(planner_cfg, "frontier_bucket_k_align", 0))
         self.frontier_bucket_k_clear = int(getattr(planner_cfg, "frontier_bucket_k_clear", 0))
         self.frontier_bucket_k_diverse = int(getattr(planner_cfg, "frontier_bucket_k_diverse", 0))
         self.frontier_clear_window = int(getattr(planner_cfg, "frontier_clear_window", 0))
-        self.frontier_diverse_method = getattr(planner_cfg, "frontier_diverse_method", "farthest_angle")
         self.frontier_keep_goal_candidate = bool(getattr(planner_cfg, "frontier_keep_goal_candidate", True))
-        self._rng = np.random.default_rng(getattr(planner_cfg, "frontier_diverse_seed", None))
-        self.goal_lock_distance = float(getattr(planner_cfg, "goal_lock_distance", 3.0))
-        self.goal_lock_clearance = float(getattr(planner_cfg, "goal_lock_clearance", 1.0))
-        self.goal_lock_sector_half_width = float(
-            getattr(planner_cfg, "goal_lock_sector_half_width", math.radians(12.0))
+        print(
+            "   • Candidate budget: "
+            f"M={self.frontier_num_candidates} | "
+            f"align={self.frontier_bucket_k_align}, "
+            f"clearance={self.frontier_bucket_k_clear}, "
+            f"diversity={self.frontier_bucket_k_diverse}"
         )
-        self.goal_lock_recent_clear_steps = max(1, int(getattr(planner_cfg, "goal_lock_recent_clear_steps", 6)))
-        self._goal_sector_prev_blocked = False
-        self._goal_lock_recent_clear_countdown = 0
 
         if load_model:
             load_dir = load_directory if load_directory else save_directory
@@ -356,19 +420,34 @@ class HighLevelPlanner:
     def reset_subgoal_hidden(self) -> None:
         self.subgoal_hidden = None
 
+    def reset_runtime_state(self) -> None:
+        """Reset episode-local planner and trigger state."""
+
+        self.current_subgoal = None
+        self.current_subgoal_world = None
+        self.last_goal_distance = float("inf")
+        self.last_goal_direction = 0.0
+        self.event_trigger.reset_state()
+        self.reset_subgoal_hidden()
+
     def _wrap_angle(self, angle: float) -> float:
         return math.atan2(math.sin(angle), math.cos(angle))
 
-    def _candidate_index_from_theta(self, theta: float, n: int) -> int:
-        pos = (theta + math.pi) / (2 * math.pi)
-        return int(round(pos * n)) % n
+    def _candidate_index_from_theta(self, theta: float, n: Optional[int] = None) -> Optional[int]:
+        angles = np.asarray(self.lidar_metadata.beam_angles_rad, dtype=np.float64)
+        if n is not None and int(n) != angles.size:
+            raise ValueError(f"scan length {n} does not match lidar metadata {angles.size}")
+        if theta < float(angles[0]) or theta > float(angles[-1]):
+            return None
+        return int(np.argmin(np.abs(angles - float(theta))))
 
     def _clearance_score(self, scan: np.ndarray, idx: int, window: int) -> float:
         if window <= 0 or scan.size == 0:
             return float(scan[idx])
         n = scan.shape[0]
-        indices = [((idx + offset) % n) for offset in range(-window, window + 1)]
-        return float(np.min(scan[indices]))
+        start = max(0, int(idx) - int(window))
+        stop = min(n, int(idx) + int(window) + 1)
+        return float(np.min(scan[start:stop]))
 
     def _select_topk(self, scores: Sequence[float], k: int, exclude: Optional[set[int]] = None) -> List[int]:
         if k <= 0:
@@ -443,32 +522,31 @@ class HighLevelPlanner:
         return distance, angle
 
     # ------------------------- 状态处理 -------------------------
-    def process_laser_scan(self, laser_scan):
-        laser_scan = np.array(laser_scan)
-        inf_mask = np.isinf(laser_scan)
-        laser_scan[inf_mask] = 9.0
-        laser_scan = laser_scan / 9.0
-        return torch.FloatTensor(laser_scan).to(self.device)
-
-    def process_goal_info(self, distance, cos_angle, sin_angle, waypoint_features=None):
+    def process_goal_info(self, distance, cos_angle, sin_angle):
         norm_distance = min(float(distance) / 30.0, 1.0)
-        goal_tensor = torch.tensor([norm_distance, float(cos_angle), float(sin_angle)], device=self.device, dtype=torch.float32)
-        if waypoint_features is not None:
-            goal_tensor = torch.cat((goal_tensor, torch.tensor(waypoint_features, device=self.device, dtype=torch.float32)))
-        return goal_tensor
+        return torch.tensor(
+            [norm_distance, float(cos_angle), float(sin_angle)],
+            device=self.device,
+            dtype=torch.float32,
+        )
 
-    def build_waypoint_features(self, waypoints, robot_pose) -> List[float]:
-        active_features = [0.0] * self.active_window_feature_dim
-        sequence_features = [0.0] * (self.per_window_feature_dim * self.waypoint_lookahead)
-        return active_features + sequence_features
-
-    def build_state_vector(self, laser_scan, distance, cos_angle, sin_angle, waypoints=None, robot_pose=None):
-        with torch.no_grad():
-            laser_tensor = self.process_laser_scan(laser_scan)
-            waypoint_features = self.build_waypoint_features(waypoints, robot_pose)
-            goal_tensor = self.process_goal_info(distance, cos_angle, sin_angle, waypoint_features)
-            state_tensor = torch.cat((laser_tensor, goal_tensor))
-        return state_tensor.cpu().numpy()
+    def build_state_vector(
+        self,
+        observation: TemporalLidarObservation,
+        distance,
+        cos_angle,
+        sin_angle,
+        **_,
+    ) -> np.ndarray:
+        channels = np.asarray(observation.lidar_channels, dtype=np.float32)
+        expected = (2, self.belief_dim)
+        if channels.shape != expected:
+            raise ValueError(f"lidar_channels must have shape {expected}, got {channels.shape}")
+        goal = np.asarray(
+            [min(float(distance) / 30.0, 1.0), float(cos_angle), float(sin_angle)],
+            dtype=np.float32,
+        )
+        return np.concatenate((channels.reshape(-1), goal)).astype(np.float32, copy=False)
 
     def compute_risk_index(self, laser_scan: np.ndarray) -> Tuple[float, float, float]:
         scan = np.asarray(laser_scan, dtype=np.float32)
@@ -486,57 +564,19 @@ class HighLevelPlanner:
         risk_index = min(1.0, alpha * r_min + (1.0 - alpha) * r_p)
         return risk_index, d_min, percentile
 
-    def _goal_sector_min_clearance(
-        self,
-        laser_scan: np.ndarray,
-        goal_dir: float,
-        sector_half_width: Optional[float] = None,
-    ) -> float:
-        scan = np.asarray(laser_scan, dtype=np.float32)
-        if scan.size == 0:
-            return float("inf")
-
-        width = self.goal_lock_sector_half_width if sector_half_width is None else float(sector_half_width)
-        n = scan.shape[0]
-        angles = np.linspace(-math.pi, math.pi, n, endpoint=False)
-        angle_delta = np.abs(np.arctan2(np.sin(angles - goal_dir), np.cos(angles - goal_dir)))
-        sector_mask = angle_delta <= max(width, 1e-4)
-        if not np.any(sector_mask):
-            return float("inf")
-
-        sector_values = scan[sector_mask]
-        sector_values = sector_values[np.isfinite(sector_values)]
-        if sector_values.size == 0:
-            return float("inf")
-        return float(np.min(sector_values))
-
     # ------------------------- 事件触发 -------------------------
     def check_triggers(
         self,
-        laser_scan,
+        observation: TemporalLidarObservation,
         robot_pose,
-        goal_info,
-        risk_index: float,
         current_step: int = 0,
-        window_metrics: Optional[dict] = None,
     ) -> TriggerFlags:
-        goal_distance = float(goal_info[0]) if goal_info else float("inf")
-        self.event_trigger.update_progress(goal_distance, current_step)
-
         dist_to_subgoal, _ = self.get_relative_subgoal(robot_pose)
-
-        time_ready = self.event_trigger.can_replan(current_step)
-        time_event = self.event_trigger.time_upper_bound(current_step)
-        risk_event = self.event_trigger.risk_trigger(risk_index)
-        progress_event = self.event_trigger.global_progress_stagnant(goal_distance, current_step)
-        subgoal_event = self.event_trigger.subgoal_reached(dist_to_subgoal)
-
-        return TriggerFlags(
-            time_ready=time_ready,
-            time_over=time_event,
-            progress_stagnant=progress_event,
-            risk=risk_event,
-            subgoal_reached=subgoal_event,
+        return self.event_trigger.evaluate(
+            observation_id=observation.observation_id,
+            current_step=current_step,
+            combined_risk=observation.risk.combined,
+            distance_to_subgoal=dist_to_subgoal,
         )
 
     def should_replan(self, flags: TriggerFlags) -> bool:
@@ -549,16 +589,20 @@ class HighLevelPlanner:
     # ------------------------- 子目标生成 -------------------------
     def _generate_frontier_candidates(self, laser_scan: np.ndarray, goal_distance: float, goal_cos: float, goal_sin: float) -> List[Tuple[float, float]]:
         scan = np.asarray(laser_scan, dtype=np.float32)
+        if scan.shape != (self.belief_dim,):
+            raise ValueError(
+                f"laser scan must have shape ({self.belief_dim},), got {scan.shape}"
+            )
         scan = np.nan_to_num(
             scan,
-            nan=self.frontier_max_distance,
-            posinf=self.frontier_max_distance,
+            nan=float(self.lidar_metadata.range_max_m),
+            posinf=float(self.lidar_metadata.range_max_m),
             neginf=0.0,
         )
         scan = np.clip(scan, 0.0, self.frontier_max_distance)
 
         n = scan.shape[0]
-        angles = np.linspace(-math.pi, math.pi, n, endpoint=False)
+        angles = np.asarray(self.lidar_metadata.beam_angles_rad, dtype=np.float32)
 
         safe_dist = max(float(self.event_trigger.safety_trigger_distance), float(self.frontier_min_distance))
         valid = scan[scan > safe_dist]
@@ -572,12 +616,15 @@ class HighLevelPlanner:
         frontier_dist = min(frontier_max, raw_frontier_dist)
         mask_frontier = scan >= frontier_dist
 
-        diffs = np.abs(np.diff(scan, append=scan[0]))
+        diffs = np.abs(np.diff(scan))
         delta_d = max(0.4, 0.5 * safe_dist)
         jump_mask = np.zeros_like(scan, dtype=bool)
-        for i_diff in range(n):
-            if diffs[i_diff] > delta_d and max(scan[i_diff], scan[(i_diff + 1) % n]) > safe_dist:
-                jump_mask[i_diff] = True
+        if diffs.size:
+            discontinuity = (diffs > delta_d) & (
+                np.maximum(scan[:-1], scan[1:]) > safe_dist
+            )
+            jump_mask[:-1] |= discontinuity
+            jump_mask[1:] |= discontinuity
 
         combined_mask = mask_frontier | jump_mask
 
@@ -613,7 +660,11 @@ class HighLevelPlanner:
                 for _, theta in candidates:
                     align_scores.append(math.cos(theta - goal_dir))
                     idx = self._candidate_index_from_theta(theta, n)
-                    clear_scores.append(self._clearance_score(scan, idx, self.frontier_clear_window))
+                    clear_scores.append(
+                        float("-inf")
+                        if idx is None
+                        else self._clearance_score(scan, idx, self.frontier_clear_window)
+                    )
                     theta_list.append(theta)
 
                 k_align = min(self.frontier_bucket_k_align, self.frontier_num_candidates)
@@ -630,16 +681,9 @@ class HighLevelPlanner:
                     max(self.frontier_num_candidates - len(selected_align) - len(selected_clear), 0),
                 )
                 excluded = set(selected_align) | set(selected_clear)
-                if self.frontier_diverse_method == "random":
-                    remaining = [i for i in range(len(candidates)) if i not in excluded]
-                    self._rng = getattr(self, "_rng", np.random.default_rng())
-                    if remaining:
-                        chosen = self._rng.choice(remaining, size=min(k_diverse, len(remaining)), replace=False)
-                        selected_diverse = [int(i) for i in np.atleast_1d(chosen).tolist()]
-                    else:
-                        selected_diverse = []
-                else:
-                    selected_diverse = self._farthest_angle_sampling(theta_list, k_diverse, exclude=excluded)
+                selected_diverse = self._farthest_angle_sampling(
+                    theta_list, k_diverse, exclude=excluded
+                )
 
                 selected_ordered: List[int] = []
                 for idx in selected_align + selected_clear + selected_diverse:
@@ -670,7 +714,7 @@ class HighLevelPlanner:
 
     def _select_best_subgoal(
         self,
-        laser_scan,
+        lidar_channels: np.ndarray,
         goal_info: Tuple[float, float, float],
         candidates: List[Tuple[float, float]],
         robot_pose: Optional[Sequence[float]] = None,
@@ -686,16 +730,17 @@ class HighLevelPlanner:
             self.value_net_b.eval()
         else:
             self.value_net.eval()
-        scan = np.asarray(laser_scan, dtype=np.float32)
-        scan = np.nan_to_num(scan, nan=self.frontier_max_distance, posinf=self.frontier_max_distance, neginf=0.0)
-        scan = np.clip(scan, 0.0, self.frontier_max_distance)
-        laser_t = torch.as_tensor(scan[None, :], dtype=torch.float32, device=self.device)
-        dummy_waypoints = self.build_waypoint_features(waypoints=None, robot_pose=None)
-        goal_t_single = self.process_goal_info(goal_info[0], goal_info[1], goal_info[2], dummy_waypoints)
+        channels = np.asarray(lidar_channels, dtype=np.float32)
+        if channels.shape != (2, self.belief_dim):
+            raise ValueError(
+                f"lidar_channels must have shape (2, {self.belief_dim}), got {channels.shape}"
+            )
+        laser_t = torch.as_tensor(channels[None, :, :], dtype=torch.float32, device=self.device)
+        goal_t_single = self.process_goal_info(goal_info[0], goal_info[1], goal_info[2])
         goal_t = goal_t_single.unsqueeze(0)
         geom_t = torch.as_tensor(np.asarray(candidates, dtype=np.float32), dtype=torch.float32, device=self.device)
 
-        laser_batch = laser_t.repeat(geom_t.shape[0], 1)
+        laser_batch = laser_t.repeat(geom_t.shape[0], 1, 1)
         goal_batch = goal_t.repeat(geom_t.shape[0], 1)
 
         with torch.no_grad():
@@ -712,47 +757,13 @@ class HighLevelPlanner:
                 q_eff, q_safe = self.value_net(laser_batch, goal_batch, geom_t, return_heads=True)
                 q_vals = (q_eff - self.safety_q_weight * q_safe).cpu().numpy()
 
-        scores = q_vals.copy()
-
-        goal_distance, goal_cos, goal_sin = goal_info
-        goal_dir = math.atan2(goal_sin, goal_cos)
-        goal_idx = int(
-            np.argmin(
-                [
-                    abs(math.atan2(math.sin(theta - goal_dir), math.cos(theta - goal_dir)))
-                    for _, theta in candidates
-                ]
-            )
-        )
-        near_terminal = goal_distance < self.goal_lock_distance
-
-        if near_terminal:
-            goal_bias = 1.5 + 0.5 * max(0.0, self.goal_lock_distance - goal_distance)
-            scores[goal_idx] += goal_bias
-
-        lambda_cons = 0.0 if near_terminal else self.consistency_lambda
-        if robot_pose is not None and self.current_subgoal_world is not None and lambda_cons > 0.0:
-            last_r, last_theta = self.get_relative_subgoal(robot_pose)
-            if last_r is not None:
-                sigma_r = max(self.consistency_sigma_r, 1e-6)
-                sigma_theta = max(self.consistency_sigma_theta, 1e-6)
-
-                bonuses: List[float] = []
-                for (r, theta) in candidates:
-                    dr = (r - last_r) / sigma_r
-                    dtheta = (theta - last_theta) / sigma_theta
-                    bonus = math.exp(-0.5 * (dr * dr + dtheta * dtheta))
-                    bonuses.append(lambda_cons * bonus)
-
-                scores = scores + np.asarray(bonuses, dtype=np.float32)
-
-        best_idx = int(np.argmax(scores))
+        best_idx = int(np.argmax(q_vals))
         best_r, best_theta = candidates[best_idx]
         return float(best_r), float(best_theta)
 
     def generate_subgoal(
         self,
-        laser_scan,
+        observation: TemporalLidarObservation,
         goal_distance,
         goal_cos,
         goal_sin,
@@ -764,67 +775,11 @@ class HighLevelPlanner:
     ):
         goal_distance = float(goal_distance)
         goal_dir = math.atan2(float(goal_sin), float(goal_cos))
-
-        # 强制近终点直达策略：目标近且目标扇区清晰时，跳过普通子目标选择。
-        goal_sector_clear = self._goal_sector_min_clearance(np.asarray(laser_scan, dtype=np.float32), goal_dir)
-        goal_sector_blocked = goal_sector_clear <= self.goal_lock_clearance
-        just_cleared_last_obstacle = self._goal_sector_prev_blocked and not goal_sector_blocked
-        if just_cleared_last_obstacle:
-            self._goal_lock_recent_clear_countdown = self.goal_lock_recent_clear_steps
-        elif goal_sector_blocked:
-            self._goal_lock_recent_clear_countdown = 0
-        elif self._goal_lock_recent_clear_countdown > 0:
-            self._goal_lock_recent_clear_countdown -= 1
-        self._goal_sector_prev_blocked = goal_sector_blocked
-
-        recently_cleared = just_cleared_last_obstacle or self._goal_lock_recent_clear_countdown > 0
-        if goal_distance < self.goal_lock_distance and (goal_sector_clear > self.goal_lock_clearance or recently_cleared):
-            goal_eps = 0.05
-            final_distance = max(goal_distance, goal_eps)
-            final_angle = goal_dir
-            world_target = None
-            if robot_pose is not None:
-                world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
-
-            self.current_subgoal = (final_distance, final_angle)
-            self.current_subgoal_world = world_target
-            self.last_goal_distance = goal_distance
-            self.last_goal_direction = goal_dir
-
-            progress_step = current_step if current_step is not None else 0
-            self.event_trigger.reset_progress(goal_distance, progress_step)
-            return final_distance, final_angle, {
-                "mode": "goal_lock",
-                "goal_sector_clear": float(goal_sector_clear),
-                "recently_cleared": bool(recently_cleared),
-            }
-
-        near_goal_switch = 1.0
-        goal_eps = 0.05
-
-        # near-goal: 直接把真实目标当子目标
-        risk_index, _, _ = self.compute_risk_index(np.asarray(laser_scan, dtype=np.float32))
-        if goal_distance <= near_goal_switch and risk_index < 0.2:
-            final_distance = max(goal_distance, goal_eps)
-            final_angle = goal_dir
-            world_target = None
-            if robot_pose is not None:
-                world_target = self._relative_to_world(robot_pose, final_distance, final_angle)
-
-            self.current_subgoal = (final_distance, final_angle)
-            self.current_subgoal_world = world_target
-            self.last_goal_distance = goal_distance
-            self.last_goal_direction = goal_dir
-
-            progress_step = current_step if current_step is not None else 0
-            self.event_trigger.reset_progress(goal_distance, progress_step)
-            return final_distance, final_angle, {"num_candidates": 1, "mode": "goal_snap"}
-        
         goal_info = (float(goal_distance), float(goal_cos), float(goal_sin))
 
-        candidates = self._generate_frontier_candidates(laser_scan, *goal_info)
+        candidates = self._generate_frontier_candidates(observation.current_scan_m, *goal_info)
         final_distance, final_angle = self._select_best_subgoal(
-            laser_scan,
+            observation.lidar_channels,
             goal_info,
             candidates,
             robot_pose=robot_pose,
@@ -842,8 +797,12 @@ class HighLevelPlanner:
         else:
             self.current_subgoal_world = None
 
-        progress_step = current_step if current_step is not None else 0
-        self.event_trigger.reset_progress(goal_distance, progress_step)
+        option_step = int(current_step) if current_step is not None else int(observation.observation_id)
+        self.event_trigger.start_option(
+            option_step,
+            initial_subgoal_distance=float(final_distance),
+            initial_subgoal_angle=float(final_angle),
+        )
 
         metadata = {"num_candidates": len(candidates)}
         return final_distance, final_angle, metadata
@@ -872,12 +831,24 @@ class HighLevelPlanner:
         dones_t = torch.as_tensor(dones, dtype=torch.float32, device=self.device)
         not_done = 1.0 - dones_t
 
-        laser_dim = states_t.shape[1] - self.goal_feature_dim
-        laser_t = states_t[:, :laser_dim]
-        goal_t = states_t[:, laser_dim:]
+        expected_state_dim = 2 * self.belief_dim + self.goal_feature_dim
+        if states_t.ndim != 2 or states_t.shape[1] != expected_state_dim:
+            raise ValueError(
+                f"high-level states must have shape [B, {expected_state_dim}], "
+                f"got {tuple(states_t.shape)}"
+            )
+        if next_states_t.shape != states_t.shape:
+            raise ValueError(
+                f"next_states must match states shape {tuple(states_t.shape)}, "
+                f"got {tuple(next_states_t.shape)}"
+            )
+        laser_t = states_t[:, : 2 * self.belief_dim].reshape(-1, 2, self.belief_dim)
+        goal_t = states_t[:, 2 * self.belief_dim :]
 
-        laser_next_t = next_states_t[:, :laser_dim]
-        goal_next_t = next_states_t[:, laser_dim:]
+        laser_next_t = next_states_t[:, : 2 * self.belief_dim].reshape(
+            -1, 2, self.belief_dim
+        )
+        goal_next_t = next_states_t[:, 2 * self.belief_dim :]
 
         if self.high_level_double_q_enabled:
             updating_a = self._doubleq_toggle % 2 == 0
@@ -902,7 +873,7 @@ class HighLevelPlanner:
                 self.target_value_net.eval()
                 eval_net = self.target_value_net
                 sel_net = self.target_value_net
-            laser_next_np = (laser_next_t.cpu().numpy() * 9.0).astype(np.float32)
+            laser_next_np = laser_next_t.cpu().numpy().astype(np.float32)
             goal_next_np = goal_next_t.cpu().numpy().astype(np.float32)
 
             norm_dist = goal_next_np[:, 0]
@@ -914,7 +885,9 @@ class HighLevelPlanner:
             q_safe_next_list: List[float] = []
 
             for i in range(states_t.shape[0]):
-                scan_next = laser_next_np[i]
+                scan_next = (
+                    laser_next_np[i, 0] * float(self.lidar_metadata.range_max_m)
+                ).astype(np.float32, copy=False)
                 gd = float(goal_dist_next[i])
                 gc = float(cos_next[i])
                 gs = float(sin_next[i])
@@ -926,8 +899,7 @@ class HighLevelPlanner:
                     continue
 
                 subgoals = torch.tensor(candidates, dtype=torch.float32, device=self.device)
-                laser_i = torch.tensor(scan_next / 9.0, dtype=torch.float32, device=self.device).unsqueeze(0)
-                laser_i = laser_i.repeat(subgoals.size(0), 1)
+                laser_i = laser_next_t[i].unsqueeze(0).repeat(subgoals.size(0), 1, 1)
                 goal_i = torch.tensor(goal_next_np[i], dtype=torch.float32, device=self.device).unsqueeze(0)
                 goal_i = goal_i.repeat(subgoals.size(0), 1)
 
@@ -999,30 +971,45 @@ class HighLevelPlanner:
             print(f"模型已保存到 {directory}/{filename}.pth")
 
     def load_model(self, filename, directory):
-        try:
-            if self.high_level_double_q_enabled:
-                path_a = Path(directory) / f"{filename}_A.pth"
-                path_b = Path(directory) / f"{filename}_B.pth"
-                single_path = Path(directory) / f"{filename}.pth"
-                if path_a.exists() and path_b.exists():
-                    self.value_net_a.load_state_dict(torch.load(path_a, map_location=self.device))
-                    self.value_net_b.load_state_dict(torch.load(path_b, map_location=self.device))
-                    self.target_value_net_a.load_state_dict(self.value_net_a.state_dict())
-                    self.target_value_net_b.load_state_dict(self.value_net_b.state_dict())
-                    print(f"模型已从 {path_a} 和 {path_b} 加载")
-                elif single_path.exists():
-                    state_dict = torch.load(single_path, map_location=self.device)
-                    self.value_net_a.load_state_dict(state_dict)
-                    self.value_net_b.load_state_dict(state_dict)
-                    self.target_value_net_a.load_state_dict(state_dict)
-                    self.target_value_net_b.load_state_dict(state_dict)
-                    print(f"模型已从 {single_path} 加载并同步到双网络")
-                else:
-                    raise FileNotFoundError(f"未找到 {path_a} 或 {single_path}")
-            else:
-                self.value_net.load_state_dict(torch.load(f"{directory}/{filename}.pth", map_location=self.device))
-                if hasattr(self, "target_value_net"):
-                    self.target_value_net.load_state_dict(self.value_net.state_dict())
-                print(f"模型已从 {directory}/{filename}.pth 加载")
-        except FileNotFoundError as e:
-            print(f"加载模型时出错: {e}")
+        if self.high_level_double_q_enabled:
+            path_a = Path(directory) / f"{filename}_A.pth"
+            path_b = Path(directory) / f"{filename}_B.pth"
+            if not path_a.is_file() or not path_b.is_file():
+                raise FileNotFoundError(
+                    f"double-Q checkpoint requires both {path_a} and {path_b}"
+                )
+            self.value_net_a.load_state_dict(
+                torch.load(
+                    path_a,
+                    map_location=self.device,
+                    weights_only=True,
+                ),
+                strict=True,
+            )
+            self.value_net_b.load_state_dict(
+                torch.load(
+                    path_b,
+                    map_location=self.device,
+                    weights_only=True,
+                ),
+                strict=True,
+            )
+            self.target_value_net_a.load_state_dict(self.value_net_a.state_dict(), strict=True)
+            self.target_value_net_b.load_state_dict(self.value_net_b.state_dict(), strict=True)
+            print(f"模型已从 {path_a} 和 {path_b} 加载")
+            return
+
+        path = Path(directory) / f"{filename}.pth"
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        self.value_net.load_state_dict(
+            torch.load(
+                path,
+                map_location=self.device,
+                weights_only=True,
+            ),
+            strict=True,
+        )
+        if hasattr(self, "target_value_net"):
+            self.target_value_net.load_state_dict(self.value_net.state_dict(), strict=True)
+        print(f"模型已从 {path} 加载")
