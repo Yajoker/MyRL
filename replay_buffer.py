@@ -10,6 +10,54 @@ from typing import Deque, Tuple
 
 import numpy as np
 
+
+def _validate_batch_size(batch_size):
+    """Return a validated positive integer batch size."""
+
+    if isinstance(batch_size, bool) or not isinstance(batch_size, (int, np.integer)):
+        raise TypeError("batch_size must be an integer")
+
+    batch_size = int(batch_size)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    return batch_size
+
+
+def _require_full_batch(available_size, batch_size, *, buffer_name):
+    """Validate that a replay buffer can return the requested full batch."""
+
+    batch_size = _validate_batch_size(batch_size)
+    if available_size < batch_size:
+        raise ValueError(
+            f"{buffer_name} cannot sample a full batch of {batch_size}: "
+            f"only {available_size} samples are available"
+        )
+    return batch_size
+
+
+def has_sufficient_replay_samples(
+    buffer,
+    *,
+    batch_size,
+    min_buffer_size=0,
+):
+    """Return whether replay satisfies both warm-up and full-batch thresholds."""
+
+    batch_size = _validate_batch_size(batch_size)
+    if (
+        isinstance(min_buffer_size, bool)
+        or not isinstance(min_buffer_size, (int, np.integer))
+    ):
+        raise TypeError("min_buffer_size must be an integer")
+
+    min_buffer_size = int(min_buffer_size)
+    if min_buffer_size < 0:
+        raise ValueError("min_buffer_size must be non-negative")
+
+    required_samples = max(min_buffer_size, batch_size)
+    return buffer.size() >= required_samples
+
+
 class ReplayBuffer(object):
     """
     标准的经验回放缓冲区，用于离策略强化学习算法
@@ -29,7 +77,7 @@ class ReplayBuffer(object):
         self.buffer_size = buffer_size  # 缓冲区的最大容量
         self.count = 0  # 当前缓冲区中的样本数量
         self.buffer = deque()  # 使用双端队列存储经验样本
-        random.seed(random_seed)  # 设置随机种子以保证可重复性
+        self._rng = random.Random(random_seed)  # 缓冲区私有随机源，避免相互污染
 
     def add(self, s, a, r, t, s2):
         """
@@ -73,11 +121,13 @@ class ReplayBuffer(object):
         返回:
             元组，包含批次的：状态、动作、奖励、完成标志、下一状态
         """
-        # 如果请求的批次大小大于当前缓冲区大小，则采样所有可用样本
-        if self.count < batch_size:
-            batch = random.sample(self.buffer, self.count)
-        else:
-            batch = random.sample(self.buffer, batch_size)
+        # TD3更新必须使用配置中声明的完整批次；禁止在训练早期静默缩小batch。
+        batch_size = _require_full_batch(
+            self.count,
+            batch_size,
+            buffer_name=type(self).__name__,
+        )
+        batch = self._rng.sample(self.buffer, batch_size)
 
         # 将采样的批次数据分别提取到不同的数组中
         s_batch = np.array([_[0] for _ in batch])  # 状态批次
@@ -131,7 +181,7 @@ class RolloutReplayBuffer(object):
         self.buffer_size = buffer_size  # 缓冲区的最大容量（按回合数）
         self.count = 0  # 完整回合的数量
         self.buffer = deque(maxlen=buffer_size)  # 使用固定长度的双端队列
-        random.seed(random_seed)  # 设置随机种子
+        self._rng = random.Random(random_seed)  # 轨迹缓冲区私有随机源
         self.buffer.append([])  # 初始化第一个空回合
         self.history_len = history_len  # 历史序列的长度
 
@@ -187,13 +237,13 @@ class RolloutReplayBuffer(object):
         # 采样回合批次
         if self.count < batch_size:
             # 如果可用回合数少于批次大小，采样所有可用回合
-            batch = random.sample(available_episodes, self.count)
+            batch = self._rng.sample(available_episodes, self.count)
         else:
             # 否则采样指定数量的回合
-            batch = random.sample(available_episodes, batch_size)
+            batch = self._rng.sample(available_episodes, batch_size)
 
         # 为每个采样的回合随机选择一个时间步索引
-        idx = [random.randint(0, len(b) - 1) for b in batch]
+        idx = [self._rng.randint(0, len(b) - 1) for b in batch]
 
         # 初始化批次数组
         s_batch = []  # 状态序列批次
@@ -256,7 +306,7 @@ class HighLevelReplayBuffer:
 
     def __init__(self, buffer_size: int, random_seed: int = 666) -> None:
         self._buffer: Deque[Tuple[np.ndarray, np.ndarray, float, float, float, np.ndarray]] = deque(maxlen=buffer_size)
-        random.seed(random_seed)
+        self._rng = random.Random(random_seed)
 
     def add(self, state, action, reward_eff: float, safety_cost: float, done: bool, next_state) -> None:
         state_arr = np.asarray(state, dtype=np.float32)
@@ -271,7 +321,12 @@ class HighLevelReplayBuffer:
         return len(self._buffer)
 
     def sample(self, batch_size: int):
-        batch = random.sample(self._buffer, min(batch_size, len(self._buffer)))
+        batch_size = _require_full_batch(
+            len(self._buffer),
+            batch_size,
+            buffer_name=type(self).__name__,
+        )
+        batch = self._rng.sample(self._buffer, batch_size)
         states = np.stack([entry[0] for entry in batch])
         actions = np.stack([entry[1] for entry in batch])
         rewards_eff = np.array([entry[2] for entry in batch], dtype=np.float32)
