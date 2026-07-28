@@ -29,8 +29,18 @@ class LowLevelRewardConfig:
         """数据类初始化后验证方法"""
         if self.efficiency_penalty < 0:
             raise ValueError("efficiency_penalty must be non-negative")
-        if self.safety_clearance <= 0:
-            raise ValueError("safety_clearance must be positive")
+        if not math.isfinite(self.safety_weight) or self.safety_weight < 0:
+            raise ValueError("safety_weight must be finite and non-negative")
+        if not math.isfinite(self.collision_distance) or self.collision_distance < 0:
+            raise ValueError(
+                "collision_distance must be finite and non-negative"
+            )
+        if not math.isfinite(self.safety_clearance):
+            raise ValueError("safety_clearance must be finite")
+        if self.safety_clearance <= self.collision_distance:
+            raise ValueError(
+                "safety_clearance must be greater than collision_distance"
+            )
 
 
 @dataclass(frozen=True)
@@ -91,17 +101,10 @@ class TriggerConfig:
 
     safety_trigger_distance: float = 0.8             # 安全触发距离阈值
     subgoal_reach_threshold: float = 0.4             # 子目标到达判定阈值
-    stagnation_steps: int = 30                       # 停滞步数阈值（检测是否卡住）
-    stagnation_turn_threshold: float = 3.5           # 累计转向阈值（弧度）
-    # 进度阈值：Δd_min(d) = eps_abs + eps_rel * d
-    progress_epsilon_abs: float = 0.2                # 绝对改善下限（米）
-    progress_epsilon_rel: float = 0.05               # 相对改善比例
 
-    # 触发节奏：下限 + 上限
-    min_interval: float = 1.2                        # 最小触发间隔时间（秒，优先使用步数配置）
-    min_step_interval: int = 10                      # 最小触发间隔步数
-    max_interval: float = 3.6                        # 最大触发间隔时间（秒，优先使用步数配置）
-    max_step_interval: int = 30                      # 最大触发间隔步数
+    # 触发节奏只由秒制配置给出；运行时根据实际控制周期换算为步数。
+    min_interval: float = 1.2                        # 最小触发间隔时间（秒）
+    max_interval: float = 3.6                        # 最大触发间隔时间（秒）
 
     # 风险判定：统一 risk_index
     risk_alpha: float = 0.6                          # min 与分位数加权
@@ -117,24 +120,10 @@ class TriggerConfig:
             raise ValueError("safety_trigger_distance must be positive")
         if self.subgoal_reach_threshold <= 0:
             raise ValueError("subgoal_reach_threshold must be positive")
-        if self.stagnation_steps <= 0:
-            raise ValueError("stagnation_steps must be positive")
-        if self.stagnation_turn_threshold < 0:
-            raise ValueError("stagnation_turn_threshold must be non-negative")
-        if self.progress_epsilon_abs < 0:
-            raise ValueError("progress_epsilon_abs must be non-negative")
-        if self.progress_epsilon_rel < 0:
-            raise ValueError("progress_epsilon_rel must be non-negative")
-        if self.min_interval < 0:
-            raise ValueError("min_interval must be non-negative")
-        if self.min_step_interval <= 0:
-            raise ValueError("min_step_interval must be positive")
-        if self.max_interval < 0:
-            raise ValueError("max_interval must be non-negative")
-        if self.max_step_interval <= 0:
-            raise ValueError("max_step_interval must be positive")
-        if self.max_step_interval < self.min_step_interval:
-            raise ValueError("max_step_interval must be >= min_step_interval")
+        if self.min_interval <= 0:
+            raise ValueError("min_interval must be positive")
+        if self.max_interval < self.min_interval:
+            raise ValueError("max_interval must be >= min_interval")
         if self.risk_alpha < 0 or self.risk_alpha > 1:
             raise ValueError("risk_alpha must be in [0, 1]")
         if self.risk_trigger_threshold < 0:
@@ -153,26 +142,20 @@ class TriggerConfig:
 class PlannerConfig:
     """High-level subgoal configuration for mapless navigation."""
 
-    waypoint_lookahead: int = 3                      # 高层输入的前瞻占位维度
     anchor_radius: float = 0.6                       # 子目标基准半径（用于距离/角度裁剪）
 
     # 前沿引导的候选子目标生成
-    frontier_num_candidates: int = 7                 # 每次生成的候选子目标总数
+    frontier_num_candidates: int = 5                 # 每次生成的候选子目标总数
     frontier_min_dist: float = 0.8                   # 子目标距离下限（米）
     frontier_max_dist: float = 3.5                   # 子目标距离上限（米）
     frontier_gap_min_width: float = 0.2              # 最小前沿角宽（弧度）
     diverse_frontier_enabled: bool = True           # 是否启用多桶候选保留策略
-    frontier_bucket_k_align: int = 3                 # 与目标方向对齐的保留数量
-    frontier_bucket_k_clear: int = 2                 # 空旷度优先保留数量
-    frontier_bucket_k_diverse: int = 2               # 多样性采样保留数量
+    # 三个桶配额仅由frontier_num_candidates自动派生，不再单独配置。
+    frontier_bucket_k_align: int = field(init=False)    # 与目标方向对齐的保留数量
+    frontier_bucket_k_clear: int = field(init=False)    # 空旷度优先保留数量
+    frontier_bucket_k_diverse: int = field(init=False)  # 多样性采样保留数量
     frontier_clear_window: int = 3                   # 计算空旷度时的窗口半径
-    frontier_diverse_method: str = "farthest_angle"  # 多样性采样方式
     frontier_keep_goal_candidate: bool = True        # 是否强制保留目标方向候选
-
-    # 连续性约束参数
-    consistency_lambda: float = 0.5
-    consistency_sigma_r: float = 1.0
-    consistency_sigma_theta: float = 0.5
 
     # === 新增：多目标 Q 组合相关超参 ===
     safety_q_weight: float = 1.0       # λ_q: 决策时 Q_safe 的权重
@@ -184,19 +167,27 @@ class PlannerConfig:
     high_level_double_q_fuse_mode: str = "mean"         # 推理融合方式
     high_level_double_q_target_eval: bool = True         # 目标网络是否用于评估
     high_level_double_q_log_net_id: bool = True          # 是否记录本轮更新的网络编号
-    goal_lock_distance: float = 3.0                      # 近终点强切换半径
-    goal_lock_clearance: float = 1.0                     # 目标方向扇区净空阈值
-    goal_lock_recent_clear_steps: int = 6                # 刚绕开最后障碍后的保持步数
-
-
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
-        if self.waypoint_lookahead <= 0:
-            raise ValueError("waypoint_lookahead must be positive")
+        bucket_allocations = {
+            5: (2, 1, 2),
+            7: (3, 2, 2),
+            9: (4, 2, 3),
+        }
+        if self.frontier_num_candidates not in bucket_allocations:
+            raise ValueError(
+                "frontier_num_candidates must be one of {5, 7, 9}; "
+                f"got {self.frontier_num_candidates}"
+            )
+        bucket_align, bucket_clear, bucket_diverse = bucket_allocations[
+            self.frontier_num_candidates
+        ]
+        object.__setattr__(self, "frontier_bucket_k_align", bucket_align)
+        object.__setattr__(self, "frontier_bucket_k_clear", bucket_clear)
+        object.__setattr__(self, "frontier_bucket_k_diverse", bucket_diverse)
+
         if self.anchor_radius <= 0:
             raise ValueError("anchor_radius must be positive")
-        if self.frontier_num_candidates <= 0:
-            raise ValueError("frontier_num_candidates must be positive")
         if self.frontier_min_dist <= 0:
             raise ValueError("frontier_min_dist must be positive")
         if self.frontier_max_dist <= 0:
@@ -206,16 +197,12 @@ class PlannerConfig:
         if self.frontier_bucket_k_align < 0 or self.frontier_bucket_k_clear < 0 or self.frontier_bucket_k_diverse < 0:
             raise ValueError("frontier bucket sizes must be non-negative")
         total_bucket = self.frontier_bucket_k_align + self.frontier_bucket_k_clear + self.frontier_bucket_k_diverse
-        if total_bucket > self.frontier_num_candidates:
-            raise ValueError("sum of frontier buckets must not exceed frontier_num_candidates")
+        if total_bucket != self.frontier_num_candidates:
+            raise ValueError(
+                "derived frontier bucket sizes must sum to frontier_num_candidates"
+            )
         if self.frontier_clear_window < 0:
             raise ValueError("frontier_clear_window must be non-negative")
-        if self.consistency_lambda < 0:
-            raise ValueError("consistency_lambda must be non-negative")
-        if self.consistency_sigma_r <= 0:
-            raise ValueError("consistency_sigma_r must be positive")
-        if self.consistency_sigma_theta <= 0:
-            raise ValueError("consistency_sigma_theta must be positive")
         if self.safety_q_weight < 0:
             raise ValueError("safety_q_weight must be non-negative")
         if self.safety_loss_weight < 0:
@@ -228,12 +215,6 @@ class PlannerConfig:
             raise ValueError("high_level_double_q_update_mode must be 'alternate'")
         if self.high_level_double_q_fuse_mode not in {"mean", "min"}:
             raise ValueError("high_level_double_q_fuse_mode must be 'mean' or 'min'")
-        if self.goal_lock_distance <= 0:
-            raise ValueError("goal_lock_distance must be positive")
-        if self.goal_lock_clearance <= 0:
-            raise ValueError("goal_lock_clearance must be positive")
-        if self.goal_lock_recent_clear_steps <= 0:
-            raise ValueError("goal_lock_recent_clear_steps must be positive")
 
 
 @dataclass(frozen=True)
@@ -248,20 +229,22 @@ class TrainingConfig:
     train_every_n_episodes: int = 1                  # 每N个回合训练一次
     training_iterations: int = 20                   # 每次训练的迭代次数
     exploration_noise: float = 0.17                  # 探索噪声系数
-    min_buffer_size: int = 0                        # 开始训练的最小缓冲区大小
+    # 额外的回放预热门槛；train.py 始终还会要求至少达到 batch_size。
+    min_buffer_size: int = 0
     max_lin_velocity: float = 1.0                    # 最大线速度
     max_ang_velocity: float = 1.0                    # 最大角速度
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
     world_file: str = "env1.yaml"                  # 环境配置文件
-    waypoint_lookahead: int = 3                      # 高层使用的前瞻航点数
     discount: float = 0.99                           # 折扣因子
     tau: float = 0.005                               # 目标网络软更新系数
     policy_noise: float = 0.2                        # 策略噪声
     noise_clip: float = 0.5                          # 噪声裁剪范围
     policy_freq: int = 2                             # 策略更新频率
-    random_seed: Optional[int] = 666                 # 随机种子
+    # 每次完整训练使用一个不同值（例如 666、777、888）。
+    # train.py 会据此统一设置 Python/NumPy/PyTorch/CUDA 随机源，并隔离输出目录。
+    random_seed: int = 888                           # 全局训练随机种子
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
@@ -297,6 +280,10 @@ class TrainingConfig:
             raise ValueError("noise_clip must be non-negative")
         if self.policy_freq <= 0:
             raise ValueError("policy_freq must be positive")
+        if isinstance(self.random_seed, bool) or not isinstance(self.random_seed, int):
+            raise TypeError("random_seed must be a non-negative integer")
+        if self.random_seed < 0:
+            raise ValueError("random_seed must be a non-negative integer")
 
 
 @dataclass(frozen=True)
