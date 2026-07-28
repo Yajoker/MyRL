@@ -4,6 +4,9 @@
 处理激光雷达数据和子目标信息，生成底层控制指令
 """
 
+import os
+import socket
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +16,43 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 
+def _validate_num_beams(num_beams):
+    """Return a validated LiDAR beam count."""
+
+    if isinstance(num_beams, bool) or not isinstance(num_beams, (int, np.integer)):
+        raise TypeError("num_beams must be an integer.")
+    num_beams = int(num_beams)
+    if num_beams <= 0:
+        raise ValueError("num_beams must be positive.")
+    return num_beams
+
+
+def _split_low_level_state(state, num_beams):
+    """Split the frozen ``[range, closure, context, previous action]`` layout."""
+
+    if state.dim() == 1:
+        state = state.unsqueeze(0)
+    if state.dim() != 2:
+        raise ValueError(
+            "Low-level state must have shape [state_dim] or [batch, state_dim], "
+            f"got {tuple(state.shape)}."
+        )
+
+    expected_dim = 2 * num_beams + 5
+    if state.shape[1] != expected_dim:
+        raise ValueError(
+            "Invalid low-level state dimension: "
+            f"expected {expected_dim} (= 2 * {num_beams} beams + 5), "
+            f"got {state.shape[1]}."
+        )
+
+    lidar_end = 2 * num_beams
+    lidar = state[:, :lidar_end].reshape(-1, 2, num_beams)
+    context = state[:, lidar_end:lidar_end + 3]
+    previous_action = state[:, lidar_end + 3:lidar_end + 5]
+    return lidar, context, previous_action
+
+
 class LowLevelActorNetwork(nn.Module):
     """
     低层控制器的Actor网络
@@ -20,31 +60,36 @@ class LowLevelActorNetwork(nn.Module):
     输出机器人的线速度和角速度控制指令
     """
 
-    def __init__(self, action_dim):
+    def __init__(self, action_dim, num_beams):
         """初始化Actor网络
 
         Args:
             action_dim: 动作空间的维度，通常为2（线速度和角速度）
+            num_beams: 每个LiDAR通道的beam数量
         """
         super(LowLevelActorNetwork, self).__init__()
+        self.num_beams = _validate_num_beams(num_beams)
+        self.action_dim = int(action_dim)
+        if self.action_dim <= 0:
+            raise ValueError("action_dim must be positive.")
 
         # CNN层用于处理激光雷达扫描数据
-        # 输入: 1通道的激光数据，输出: 4个特征图
-        self.cnn1 = nn.Conv1d(1, 4, kernel_size=8, stride=4)
+        # 输入: 当前距离和径向闭合量两个通道，输出: 4个特征图
+        self.cnn1 = nn.Conv1d(2, 4, kernel_size=8, stride=4)
         # 第二层CNN，输入4个特征图，输出8个特征图
         self.cnn2 = nn.Conv1d(4, 8, kernel_size=8, stride=4)
         # 第三层CNN，输入8个特征图，输出4个特征图
         self.cnn3 = nn.Conv1d(8, 4, kernel_size=4, stride=2)
 
-        # 子目标信息嵌入层（距离和角度）
-        self.subgoal_embed = nn.Linear(2, 10)
+        # 低层上下文（子目标距离、角度和联合风险）
+        self.context_embed = nn.Linear(3, 10)
 
         # 历史动作嵌入层
         self.action_embed = nn.Linear(2, 10)
 
-        # 全连接层
-        # 输入维度: 16(CNN输出) + 10(子目标) + 10(历史动作) = 36
-        self.layer_1 = nn.Linear(36, 400)
+        # 根据beam数量动态计算CNN展平维度，避免依赖180-beam的隐式常量。
+        cnn_output_dim = self._get_cnn_output_dim()
+        self.layer_1 = nn.Linear(cnn_output_dim + 10 + 10, 400)
         # 使用Kaiming初始化权重，适用于LeakyReLU激活函数
         torch.nn.init.kaiming_uniform_(self.layer_1.weight, nonlinearity="leaky_relu")
 
@@ -53,9 +98,20 @@ class LowLevelActorNetwork(nn.Module):
         torch.nn.init.kaiming_uniform_(self.layer_2.weight, nonlinearity="leaky_relu")
 
         # 输出层，生成动作
-        self.layer_3 = nn.Linear(300, action_dim)
+        self.layer_3 = nn.Linear(300, self.action_dim)
         # Tanh激活函数将输出限制在[-1, 1]范围内
         self.tanh = nn.Tanh()
+
+    def _get_cnn_output_dim(self):
+        try:
+            with torch.no_grad():
+                dummy = torch.zeros(1, 2, self.num_beams)
+                dummy = self.cnn3(self.cnn2(self.cnn1(dummy)))
+        except RuntimeError as exc:
+            raise ValueError(
+                f"num_beams={self.num_beams} is too small for the low-level CNN."
+            ) from exc
+        return int(dummy.flatten(start_dim=1).shape[1])
 
     def forward(self, s):
         """
@@ -68,24 +124,16 @@ class LowLevelActorNetwork(nn.Module):
         Returns:
             动作张量，值在范围[-1, 1]内
         """
-        # 如果输入是1维张量，增加batch维度
-        if len(s.shape) == 1:
-            s = s.unsqueeze(0)
+        laser, context, prev_act = _split_low_level_state(s, self.num_beams)
 
-        # 分割状态张量的各个部分
-        laser = s[:, :-4]  # 激光雷达扫描数据
-        subgoal = s[:, -4:-2]  # 子目标信息（距离，角度）
-        prev_act = s[:, -2:]  # 历史动作（线速度，角速度）
-
-        # 处理激光雷达数据
-        laser = laser.unsqueeze(1)  # 增加通道维度
+        # 处理双通道激光雷达数据
         l = F.leaky_relu(self.cnn1(laser))  # 第一层CNN + LeakyReLU激活
         l = F.leaky_relu(self.cnn2(l))  # 第二层CNN + LeakyReLU激活
         l = F.leaky_relu(self.cnn3(l))  # 第三层CNN + LeakyReLU激活
         l = l.flatten(start_dim=1)  # 展平特征图
 
-        # 处理子目标信息
-        g = F.leaky_relu(self.subgoal_embed(subgoal))
+        # 处理子目标信息和联合风险
+        g = F.leaky_relu(self.context_embed(context))
 
         # 处理历史动作
         a = F.leaky_relu(self.action_embed(prev_act))
@@ -107,44 +155,63 @@ class LowLevelCriticNetwork(nn.Module):
     评估状态-动作对的Q值，使用双Q网络结构减少过估计
     """
 
-    def __init__(self, action_dim):
+    def __init__(self, action_dim, num_beams):
         """初始化Critic网络
 
         Args:
             action_dim: 动作空间的维度
+            num_beams: 每个LiDAR通道的beam数量
         """
         super(LowLevelCriticNetwork, self).__init__()
+        self.num_beams = _validate_num_beams(num_beams)
+        self.action_dim = int(action_dim)
+        if self.action_dim <= 0:
+            raise ValueError("action_dim must be positive.")
 
         # CNN层用于处理激光雷达数据（与Actor网络相同结构）
-        self.cnn1 = nn.Conv1d(1, 4, kernel_size=8, stride=4)
+        self.cnn1 = nn.Conv1d(2, 4, kernel_size=8, stride=4)
         self.cnn2 = nn.Conv1d(4, 8, kernel_size=8, stride=4)
         self.cnn3 = nn.Conv1d(8, 4, kernel_size=4, stride=2)
 
-        # 子目标信息嵌入层
-        self.subgoal_embed = nn.Linear(2, 10)
+        # 低层上下文（子目标距离、角度和联合风险）
+        self.context_embed = nn.Linear(3, 10)
 
         # 历史动作嵌入层
         self.action_embed = nn.Linear(2, 10)
 
+        cnn_output_dim = self._get_cnn_output_dim()
+        state_feature_dim = cnn_output_dim + 10 + 10
+
         # Q1网络结构
-        self.layer_1 = nn.Linear(36, 400)  # 第一层全连接
+        self.layer_1 = nn.Linear(state_feature_dim, 400)  # 第一层全连接
         torch.nn.init.kaiming_uniform_(self.layer_1.weight, nonlinearity="leaky_relu")
         self.layer_2_s = nn.Linear(400, 300)  # 状态分支
         torch.nn.init.kaiming_uniform_(self.layer_2_s.weight, nonlinearity="leaky_relu")
-        self.layer_2_a = nn.Linear(action_dim, 300)  # 动作分支
+        self.layer_2_a = nn.Linear(self.action_dim, 300)  # 动作分支
         torch.nn.init.kaiming_uniform_(self.layer_2_a.weight, nonlinearity="leaky_relu")
         self.layer_3 = nn.Linear(300, 1)  # Q值输出
         torch.nn.init.kaiming_uniform_(self.layer_3.weight, nonlinearity="leaky_relu")
 
         # Q2网络结构（与Q1结构相同但参数独立）
-        self.layer_4 = nn.Linear(36, 400)
+        self.layer_4 = nn.Linear(state_feature_dim, 400)
         torch.nn.init.kaiming_uniform_(self.layer_4.weight, nonlinearity="leaky_relu")
         self.layer_5_s = nn.Linear(400, 300)
         torch.nn.init.kaiming_uniform_(self.layer_5_s.weight, nonlinearity="leaky_relu")
-        self.layer_5_a = nn.Linear(action_dim, 300)
+        self.layer_5_a = nn.Linear(self.action_dim, 300)
         torch.nn.init.kaiming_uniform_(self.layer_5_a.weight, nonlinearity="leaky_relu")
         self.layer_6 = nn.Linear(300, 1)
         torch.nn.init.kaiming_uniform_(self.layer_6.weight, nonlinearity="leaky_relu")
+
+    def _get_cnn_output_dim(self):
+        try:
+            with torch.no_grad():
+                dummy = torch.zeros(1, 2, self.num_beams)
+                dummy = self.cnn3(self.cnn2(self.cnn1(dummy)))
+        except RuntimeError as exc:
+            raise ValueError(
+                f"num_beams={self.num_beams} is too small for the low-level CNN."
+            ) from exc
+        return int(dummy.flatten(start_dim=1).shape[1])
 
     def forward(self, s, action):
         """
@@ -157,20 +224,26 @@ class LowLevelCriticNetwork(nn.Module):
         Returns:
             两个Q值的元组 (Q1, Q2)
         """
-        if s.dim() == 1:
-            s = s.unsqueeze(0)
+        laser, context, prev_act = _split_low_level_state(s, self.num_beams)
         if action.dim() == 1:
             action = action.unsqueeze(0)
+        if action.dim() != 2:
+            raise ValueError(
+                "Action must have shape [action_dim] or [batch, action_dim], "
+                f"got {tuple(action.shape)}."
+            )
+        if action.shape[1] != self.action_dim:
+            raise ValueError(
+                f"Expected action_dim={self.action_dim}, got {action.shape[1]}."
+            )
+        if action.shape[0] != laser.shape[0]:
+            raise ValueError(
+                "State and action batch sizes must match: "
+                f"got {laser.shape[0]} and {action.shape[0]}."
+            )
 
-        if action.device != s.device:
-            action = action.to(s.device)
-
-        # 分割状态张量的各个部分
-        laser = s[:, :-4]  # 激光雷达数据
-        subgoal = s[:, -4:-2]  # 子目标信息
-        prev_act = s[:, -2:]  # 历史动作
-
-        laser = laser.unsqueeze(1)  # 增加通道维度
+        if action.device != laser.device or action.dtype != laser.dtype:
+            action = action.to(device=laser.device, dtype=laser.dtype)
 
         # 处理激光雷达数据
         l = F.leaky_relu(self.cnn1(laser))
@@ -178,8 +251,8 @@ class LowLevelCriticNetwork(nn.Module):
         l = F.leaky_relu(self.cnn3(l))
         l = l.flatten(start_dim=1)
 
-        # 处理子目标信息
-        g = F.leaky_relu(self.subgoal_embed(subgoal))
+        # 处理子目标信息和联合风险
+        g = F.leaky_relu(self.context_embed(context))
 
         # 处理历史动作
         a = F.leaky_relu(self.action_embed(prev_act))
@@ -223,6 +296,7 @@ class LowLevelController:
             model_name="low_level_controller",
             load_directory=None,
             *,
+            num_beams=None,
             max_lin_velocity: float = 1.0,
             max_ang_velocity: float = 1.0,
     ):
@@ -240,30 +314,65 @@ class LowLevelController:
             save_directory: 模型保存目录
             model_name: 模型文件名
             load_directory: 模型加载目录（如果为None则使用save_directory）
+            num_beams: 每个LiDAR通道的beam数量；未提供时从state_dim推导
         """
         self.device = device
-        self.action_dim = action_dim
+        self.action_dim = int(action_dim)
+        if self.action_dim != 2:
+            raise ValueError(
+                "action_dim must be 2 for normalized [linear, angular] actions."
+            )
         self.max_action = float(max_action)
         if not np.isclose(self.max_action, 1.0):
             raise ValueError("max_action must be 1.0 to keep TD3 actions normalized in [-1, 1].")
-        self.state_dim = state_dim
+        self.state_dim = int(state_dim)
+        if num_beams is None:
+            lidar_state_dim = self.state_dim - 5
+            if lidar_state_dim <= 0 or lidar_state_dim % 2 != 0:
+                raise ValueError(
+                    "state_dim must equal 2 * num_beams + 5; "
+                    f"cannot infer num_beams from state_dim={self.state_dim}."
+                )
+            num_beams = lidar_state_dim // 2
+        self.num_beams = _validate_num_beams(num_beams)
+        expected_state_dim = 2 * self.num_beams + 5
+        if self.state_dim != expected_state_dim:
+            raise ValueError(
+                "state_dim must equal 2 * num_beams + 5: "
+                f"expected {expected_state_dim}, got {self.state_dim}."
+            )
         self.max_lin_velocity = float(max_lin_velocity)
         self.max_ang_velocity = float(max_ang_velocity)
 
         # 初始化Actor网络和目标网络
-        self.actor = LowLevelActorNetwork(action_dim).to(device)
-        self.actor_target = LowLevelActorNetwork(action_dim).to(device)
+        self.actor = LowLevelActorNetwork(self.action_dim, self.num_beams).to(device)
+        self.actor_target = LowLevelActorNetwork(self.action_dim, self.num_beams).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())  # 复制初始权重
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
         # 初始化Critic网络和目标网络
-        self.critic = LowLevelCriticNetwork(action_dim).to(device)
-        self.critic_target = LowLevelCriticNetwork(action_dim).to(device)
+        self.critic = LowLevelCriticNetwork(self.action_dim, self.num_beams).to(device)
+        self.critic_target = LowLevelCriticNetwork(self.action_dim, self.num_beams).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
         # 训练设置
-        self.writer = SummaryWriter(comment=model_name)  # TensorBoard记录器
+        configured_tb_root = os.environ.get("MYRL_TENSORBOARD_ROOT")
+        tb_root = (
+            Path(configured_tb_root).expanduser()
+            if configured_tb_root
+            else Path(__file__).resolve().parent / "runs"
+        )
+        tb_root.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%b%d_%H-%M-%S")
+        host = socket.gethostname()
+        run_tag = os.environ.get("MYRL_RUN_TAG", "").strip()
+        tag_suffix = f"_{run_tag}" if run_tag else ""
+        tb_run_dir = (
+            tb_root
+            / f"{timestamp}_{host}_pid{os.getpid()}{tag_suffix}_{model_name}"
+        )
+        self.writer = SummaryWriter(log_dir=str(tb_run_dir))  # TensorBoard记录器
         self.iter_count = 0  # 迭代计数器
         self.save_every = save_every  # 保存频率
         self.model_name = model_name  # 模型名称
@@ -291,12 +400,19 @@ class LowLevelController:
         scaled = np.stack((lin_cmd, ang_cmd), axis=-1)
         return scaled.astype(np.float32, copy=False)
 
-    def process_observation(self, laser_scan, subgoal_distance, subgoal_angle, prev_action):
+    def process_observation(
+            self,
+            temporal_observation,
+            subgoal_distance,
+            subgoal_angle,
+            prev_action,
+    ):
         """
         处理原始观测数据，转换为网络期望的状态向量
 
         Args:
-            laser_scan: 原始激光雷达扫描数据
+            temporal_observation: TemporalLidarObservation，须包含双通道
+                ``lidar_channels`` 和 ``risk.combined``
             subgoal_distance: 到子目标的距离
             subgoal_angle: 到子目标的角度
             prev_action: 历史动作 [线速度, 角速度]
@@ -304,27 +420,66 @@ class LowLevelController:
         Returns:
             处理后的状态向量
         """
-        # 归一化激光雷达数据（处理无穷大值）
-        laser_scan = np.array(laser_scan)
-        inf_mask = np.isinf(laser_scan)  # 检测无穷大值
-        laser_scan[inf_mask] = 9.0  # 将无穷大替换为最大范围值
-        laser_scan /= 9.0  # 归一化到[0, 1]范围
+        try:
+            lidar_channels = np.asarray(
+                temporal_observation.lidar_channels, dtype=np.float32
+            )
+            combined_risk = float(temporal_observation.risk.combined)
+        except AttributeError as exc:
+            raise TypeError(
+                "temporal_observation must expose lidar_channels and risk.combined."
+            ) from exc
+
+        expected_lidar_shape = (2, self.num_beams)
+        if lidar_channels.shape != expected_lidar_shape:
+            raise ValueError(
+                "lidar_channels must have shape "
+                f"{expected_lidar_shape}, got {lidar_channels.shape}."
+            )
+        if not np.all(np.isfinite(lidar_channels)):
+            raise ValueError("lidar_channels must contain only finite normalized values.")
+        if not np.isfinite(combined_risk):
+            raise ValueError("risk.combined must be finite.")
+        if not 0.0 <= combined_risk <= 1.0:
+            raise ValueError(
+                f"risk.combined must be in [0, 1], got {combined_risk}."
+            )
 
         # 归一化子目标距离和角度
-        # norm_distance = min(subgoal_distance / 10.0, 1.0)  # 归一化到[0, 1]，最大10米
+        subgoal_distance = float(subgoal_distance)
+        subgoal_angle = float(subgoal_angle)
+        if not np.isfinite(subgoal_distance) or not np.isfinite(subgoal_angle):
+            raise ValueError("subgoal_distance and subgoal_angle must be finite.")
         norm_distance = float(np.tanh(subgoal_distance / 20.0))
-        norm_angle = subgoal_angle / np.pi  # 归一化到[-1, 1]范围
+        norm_angle = float(subgoal_angle / np.pi)
 
         # 处理历史动作（已经是[-1,1]范围的归一化动作）
         prev_action = np.asarray(prev_action, dtype=np.float32)
-        if prev_action.shape[-1] != 2:
-            raise ValueError("prev_action must contain 2 elements: [linear, angular].")
+        if prev_action.shape != (2,):
+            raise ValueError(
+                "prev_action must have shape (2,) for [linear, angular], "
+                f"got {prev_action.shape}."
+            )
+        if not np.all(np.isfinite(prev_action)):
+            raise ValueError("prev_action must contain only finite values.")
         prev_action = np.clip(prev_action, -self.max_action, self.max_action)
 
-        # 组合所有组件
-        state = laser_scan.tolist() + [norm_distance, norm_angle] + prev_action.tolist()
-
-        return np.array(state)
+        # 冻结布局:
+        # [range_N, closure_N, tanh(dsg/20), angle/pi, combined_risk, prev_action_2]
+        state = np.concatenate((
+            lidar_channels.reshape(-1),
+            np.asarray(
+                [norm_distance, norm_angle, combined_risk],
+                dtype=np.float32,
+            ),
+            prev_action,
+        )).astype(np.float32, copy=False)
+        if state.shape != (self.state_dim,):
+            raise RuntimeError(
+                f"Internal low-level state layout error: expected {self.state_dim}, "
+                f"got {state.shape}."
+            )
+        return state
 
     def predict_action(self, state, add_noise=False, noise_scale=0.1):
         """
@@ -339,7 +494,16 @@ class LowLevelController:
             动作 [线速度, 角速度]
         """
         # 将状态转换为张量并移动到设备
-        state_tensor = torch.FloatTensor(state).to(self.device)
+        state_array = np.asarray(state, dtype=np.float32)
+        if state_array.shape != (self.state_dim,):
+            raise ValueError(
+                f"state must have shape ({self.state_dim},), got {state_array.shape}."
+            )
+        if not np.all(np.isfinite(state_array)):
+            raise ValueError("state must contain only finite values.")
+        state_tensor = torch.as_tensor(
+            state_array, dtype=torch.float32, device=self.device
+        )
 
         # 通过Actor网络获取动作（不计算梯度）
         with torch.no_grad():
@@ -466,12 +630,55 @@ class LowLevelController:
             filename: 要加载的文件的基础名称
             directory: 加载目录
         """
-        try:
-            # 加载所有网络参数
-            self.actor.load_state_dict(torch.load(f"{directory}/{filename}_actor.pth"))
-            self.actor_target.load_state_dict(torch.load(f"{directory}/{filename}_actor_target.pth"))
-            self.critic.load_state_dict(torch.load(f"{directory}/{filename}_critic.pth"))
-            self.critic_target.load_state_dict(torch.load(f"{directory}/{filename}_critic_target.pth"))
-            print(f"模型已从 {directory}/{filename}_*.pth 加载")
-        except FileNotFoundError as e:
-            print(f"加载模型时出错: {e}")
+        directory = Path(directory)
+        model_paths = {
+            "actor": directory / f"{filename}_actor.pth",
+            "actor_target": directory / f"{filename}_actor_target.pth",
+            "critic": directory / f"{filename}_critic.pth",
+            "critic_target": directory / f"{filename}_critic_target.pth",
+        }
+        missing = [str(path) for path in model_paths.values() if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "Low-level checkpoint is incomplete; missing: " + ", ".join(missing)
+            )
+
+        state_dicts = {
+            name: torch.load(
+                path, map_location=self.device, weights_only=True
+            )
+            for name, path in model_paths.items()
+        }
+        networks = {
+            "actor": self.actor,
+            "actor_target": self.actor_target,
+            "critic": self.critic,
+            "critic_target": self.critic_target,
+        }
+
+        # Validate every file before mutating any live network. Old
+        # single-channel checkpoints therefore fail without a partial load.
+        for name, network in networks.items():
+            expected = network.state_dict()
+            loaded = state_dicts[name]
+            if set(loaded) != set(expected):
+                missing_keys = sorted(set(expected) - set(loaded))
+                unexpected_keys = sorted(set(loaded) - set(expected))
+                raise RuntimeError(
+                    f"Incompatible {name} checkpoint keys; "
+                    f"missing={missing_keys}, unexpected={unexpected_keys}."
+                )
+            shape_mismatches = {
+                key: (tuple(loaded[key].shape), tuple(expected[key].shape))
+                for key in expected
+                if loaded[key].shape != expected[key].shape
+            }
+            if shape_mismatches:
+                raise RuntimeError(
+                    f"Incompatible {name} checkpoint tensor shapes: "
+                    f"{shape_mismatches}."
+                )
+
+        for name, network in networks.items():
+            network.load_state_dict(state_dicts[name], strict=True)
+        print(f"模型已从 {directory}/{filename}_*.pth 加载")
