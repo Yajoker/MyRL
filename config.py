@@ -108,7 +108,7 @@ class TriggerConfig:
 
     # 风险判定：统一 risk_index
     risk_alpha: float = 0.6                          # min 与分位数加权
-    risk_trigger_threshold: float = 0.8              # 事件触发阈值
+    risk_trigger_threshold: float = 0.7              # 事件触发阈值
     risk_near_threshold: float = 0.3                 # 近障计数阈值（奖励用）
     risk_percentile: float = 10.0                    # 计算分位数使用的百分位
     window_inside_hold: int = 3                      # 进入窗口后至少驻留的步数
@@ -145,7 +145,7 @@ class PlannerConfig:
     anchor_radius: float = 0.6                       # 子目标基准半径（用于距离/角度裁剪）
 
     # 前沿引导的候选子目标生成
-    frontier_num_candidates: int = 5                 # 每次生成的候选子目标总数
+    frontier_num_candidates: int = 7                 # 每次生成的候选子目标总数
     frontier_min_dist: float = 0.8                   # 子目标距离下限（米）
     frontier_max_dist: float = 3.5                   # 子目标距离上限（米）
     frontier_gap_min_width: float = 0.2              # 最小前沿角宽（弧度）
@@ -236,15 +236,15 @@ class TrainingConfig:
     eval_episodes: int = 10                          # 评估回合数
     subgoal_radius: float = 0.4                      # 子目标判定阈值
     save_every: int = 5                              # 保存模型的频率（每N个周期）
-    world_file: str = "env1.yaml"                  # 环境配置文件
+    world_file: str = "env1_1.yaml"                  # 环境配置文件
     discount: float = 0.99                           # 折扣因子
     tau: float = 0.005                               # 目标网络软更新系数
     policy_noise: float = 0.2                        # 策略噪声
     noise_clip: float = 0.5                          # 噪声裁剪范围
     policy_freq: int = 2                             # 策略更新频率
-    # 每次完整训练使用一个不同值（例如 666、777、888）。
+    # 每次完整训练使用一个不同值（例如 666、200、888）。
     # train.py 会据此统一设置 Python/NumPy/PyTorch/CUDA 随机源，并隔离输出目录。
-    random_seed: int = 888                           # 全局训练随机种子
+    random_seed: int = 888                          # 全局训练随机种子
 
     def __post_init__(self) -> None:  # type: ignore[override]
         """数据类初始化后验证方法"""
