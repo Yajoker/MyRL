@@ -1,0 +1,97 @@
+% ============================================================
+% Part 1 [LaTeX]
+% ============================================================
+
+\section{Introduction}
+\label{sec:introduction}
+
+In recent years, as autonomous mobile robots continue to be deployed in hospitals, warehouse logistics facilities, transportation hubs, and public service spaces, robot navigation has progressively shifted from path search on static maps toward real-time decision-making and safe control in complex dynamic environments. In such applications, robots must not only reach designated goals but also maintain safe, stable, and efficient motion under conditions of limited local perception, partially observable environmental states, unpredictable dynamic obstacle behavior, and constrained control frequencies \cite{1}.
+
+Conventional navigation frameworks typically adopt a modular pipeline of perception, mapping, global planning, and local control, relying on explicit environment modeling, hand-crafted cost functions, and local replanning mechanisms for path generation and obstacle avoidance. Fox et al. \cite{2} proposed the Dynamic Window Approach (DWA), which searches the velocity space for local control commands that satisfy kinodynamic constraints. Van den Berg et al. introduced Reciprocal Velocity Obstacles (RVO) \cite{3} and Optimal Reciprocal Collision Avoidance (ORCA) \cite{4} to resolve multi-agent motion conflicts through the principle of reciprocal avoidance. Helbing et al. \cite{5} proposed the Social Force Model, which characterizes crowd motion patterns from the perspective of pedestrian interaction dynamics. When scenes involve dense dynamic obstacles, complex local topological variations, and persistent interactive disturbances, however, these methods often require frequent replanning and extensive parameter tuning, and their performance tends to be limited by model accuracy, prediction errors, and local optima.
+
+Deep Reinforcement Learning (DRL) methods learn closed-loop policies that map sensory inputs to control outputs through environment interaction, offering a promising approach to mapless navigation in dynamic environments. DRL approaches based on Light Detection and Ranging (LiDAR), depth images, or visual information have shown the ability to partially eliminate the dependence on accurate maps and explicit rules, demonstrating considerable potential in dynamic obstacle avoidance, adaptive local decision-making, and end-to-end policy learning. Liu et al. \cite{6} combined LiDAR perception with Soft Actor-Critic (SAC), expert trajectories, and a Recurrent Neural Network (RNN) to improve training safety and obstacle avoidance in dynamic settings. Several studies have further incorporated memory structures, attention mechanisms, reward shaping, and path-level action modeling to enhance policy adaptation to complex interactions and partially observable environments. Samsani et al. \cite{7} proposed a memory-augmented navigation method for crowded environments that employs a Gated Recurrent Unit (GRU) to store relative dependencies among pedestrians and model human-robot interactions, improving collision-free navigation in dense crowds. Li et al. \cite{8}, addressing interactive visual navigation in cluttered environments, introduced Transformer memory to exploit historical interaction information for spatiotemporal dependency modeling, alleviating partial observability and non-stationarity during decision-making. Sun et al. \cite{9} incorporated attention mechanisms and value decomposition into the Actor-Critic framework to improve collision avoidance stability in dynamic scenes. Despite these advances, flat end-to-end DRL still faces evident challenges in long-range dynamic navigation: the policy must simultaneously handle long-range goal pursuit, local obstacle avoidance, and risk response, which readily leads to training difficulties and decision coupling, while reward design, training distribution shifts, and variations in scene complexity can also markedly degrade stability and generalization performance. Cheng et al. \cite{10} and Xue et al. \cite{11} both highlighted the multi-objective trade-off among safety, efficiency, comfort, and dynamic interaction from the perspective of crowd-aware navigation, yet these challenges remain largely unresolved in mapless long-range navigation scenarios.
+
+To address the aforementioned issues, Hierarchical Reinforcement Learning (HRL) has been increasingly adopted in robot navigation. Hierarchical frameworks typically organize the navigation process through a division of labor between high-level intent decisions and low-level motion execution, where high-level subgoal or skill selection guides low-level continuous control, thereby achieving task decomposition and decision abstraction (Sutton et al., 1999) \cite{12}. For mobile robot navigation, hierarchical structures help improve learning efficiency, local deadlock recovery, and behavioral organization in long-range tasks. Gao et al. \cite{13} employed congestion estimation to assist safe mapless navigation, and Jing et al. \cite{14} adopted a two-stage reinforcement learning approach for long-distance indoor navigation in dense crowds. In existing hierarchical methods, however, the timing of high-level subgoal updates often relies on fixed frequencies or simple termination conditions, making it difficult to adapt to local risk and navigation progress in a responsive manner. The continuous subgoal space also contains a large number of geometrically infeasible or high-risk candidate actions, which can increase high-level exploration difficulty and reduce decision executability.
+
+Event-triggered mechanisms offer a viable approach to resolving these issues. Unlike fixed-period replanning, event-triggered methods determine whether to update the policy or replan based on changes in system state or environmental risk, thereby reducing redundant computation while enhancing responsiveness to critical risk events. Sun et al. \cite{15} proposed an event-triggered reconfigurable Deep Deterministic Policy Gradient (DDPG) to improve training efficiency and motion planning performance in unknown dynamic environments. Chen et al. \cite{16} introduced an event-triggered hierarchical planner for Unmanned Aerial Vehicle (UAV) navigation in unknown environments, activating the high-level obstacle avoidance policy only when obstacles enter the perception range. These studies demonstrate that event-triggered update mechanisms can be combined with hierarchical decision structures for navigation in unknown environments. In mapless long-range navigation of ground mobile robots, however, three issues remain to be addressed: how to jointly leverage risk escalation and progress stagnation to trigger high-level updates, how to generate executable subgoals from local LiDAR geometry, and how to explicitly separate efficiency gains from safety costs in high-level subgoal evaluation.
+
+We therefore propose an event-triggered HRL framework for mapless navigation in unknown dynamic environments. Our framework organizes the navigation task as a hierarchical decision process consisting of high-level subgoal planning and low-level goal-conditioned continuous control. The high-level planner generates candidate subgoals from local LiDAR geometry and triggers replanning only upon risk-aware or progress-stagnation events. The low-level controller outputs continuous velocity commands conditioned on the current active subgoal to achieve short-horizon tracking and local obstacle avoidance. We also design a dual-head value evaluation network for efficiency and safety that separately characterizes the long-range progress gain and safety cost of each candidate subgoal, and completes high-level subgoal selection through a fused scoring criterion.
+
+Our main contributions are as follows. First, we propose an event-triggered hierarchical navigation framework that integrates risk perception and stagnation detection, allowing high-level subgoal updates to be driven by environmental state changes rather than fixed-frequency scheduling, which alleviates the delayed response and redundant replanning problems that fixed-period schemes suffer from in dynamic environments. Second, we design a candidate subgoal generation mechanism based on local LiDAR geometric information that constrains the continuous high-level action space to a finite candidate set consistent with the current traversable structure, improving the executability of high-level decisions and reducing ineffective exploration. Third, we construct a dual-head value evaluation structure for efficiency and safety that explicitly decouples the progress gain and safety cost of candidate subgoals, and achieves more stable subgoal selection in dynamic environments through a fused scoring criterion.
+
+% ============================================================
+% Part 2 [Translation] (中文回译，用于核对逻辑是否符合原意)
+% ============================================================
+
+% 第一段：
+% 近年来，随着自主移动机器人在医院、仓储物流设施、交通枢纽和公共服务空间中的
+% 持续部署，机器人导航已逐步从静态地图上的路径搜索转向面向复杂动态环境的实时
+% 决策与安全控制。在这类应用中，机器人不仅需要到达指定目标，还必须在局部感知
+% 受限、环境状态部分可观测、动态障碍物行为难以预测以及控制频率受限的条件下，
+% 持续保持安全、稳定和高效的运动。
+
+% 第二段：
+% 传统导航框架通常采用感知、建图、全局规划和局部控制的模块化流水线结构，依靠
+% 显式环境建模、人工设计的代价函数以及局部重规划机制完成路径生成与避障控制。
+% Fox等人提出了动态窗口法（DWA），从速度空间中搜索满足运动学约束的局部控制指令。
+% Van den Berg等人提出了互惠速度障碍（RVO）和最优互惠碰撞避免（ORCA），通过
+% 互惠避障原则解决多智能体运动冲突。Helbing等人提出了社会力模型，该模型从行人
+% 交互动力学角度描述人群运动规律。然而，当场景中存在密集动态障碍、复杂的局部
+% 拓扑变化以及持续的交互扰动时，这类方法往往需要频繁重规划和大量参数调节，
+% 其性能容易受限于模型精度、预测误差和局部最优问题。
+
+% 第三段：
+% 深度强化学习（DRL）方法通过与环境交互，学习从传感输入到控制输出的闭环策略，
+% 为动态环境下的无图导航提供了一种有前景的技术路径。基于LiDAR、深度图像或视觉
+% 信息的DRL方法已经展现出部分摆脱对精确地图和显式规则依赖的能力，在动态障碍
+% 规避、局部决策自适应及端到端策略学习方面表现出可观的潜力。Liu等人将LiDAR感知
+% 与SAC、专家轨迹和RNN相结合，以提升动态环境中的训练安全性与避障能力。一些研究
+% 进一步引入了记忆结构、注意力机制、奖励塑形与路径级动作建模，以增强策略对复杂
+% 交互和部分可观测环境的适应能力。Samsani等人提出了面向拥挤环境的记忆增强导航
+% 方法，利用GRU存储行人间的相对依赖关系并建模人机交互，从而改善密集人群中的
+% 无碰撞导航。Li等人针对杂乱环境中的交互式视觉导航，引入Transformer记忆以利用
+% 历史交互信息建模时空依赖，缓解决策过程中的部分可观测性与非平稳性。Sun等人在
+% Actor-Critic框架中引入注意力机制和价值分解，以提升动态场景下的碰撞规避稳定性。
+% 尽管取得了上述进展，单层端到端DRL在长距离动态导航中仍面临明显挑战：策略需要
+% 同时承担长程目标推进、局部避障和风险响应等多重职责，容易导致训练困难和决策
+% 耦合，而奖励设计、训练分布偏移和场景复杂度变化也会显著影响其稳定性与泛化
+% 表现。Cheng等人和Xue等人均从crowd-aware导航角度强调了安全、效率、舒适性和
+% 动态交互之间的多目标权衡，但这些挑战在无图长程导航场景中仍未得到充分解决。
+
+% 第四段：
+% 为缓解上述问题，分层强化学习（HRL）逐渐被引入机器人导航。分层框架通常通过
+% 高层意图决策与低层运动执行的分工组织导航过程，由高层子目标或技能选择引导低层
+% 连续控制，从而实现任务分解与决策抽象（Sutton等人，1999）。对于移动机器人导航，
+% 分层结构有助于提升长程导航任务中的学习效率、局部脱困能力与行为组织性。Gao等人
+% 采用拥堵估计辅助安全无图导航，Jing等人采用两阶段强化学习处理长距离室内密集人群
+% 导航。然而，在现有分层方法中，高层子目标的更新时机往往依赖固定频率或简单终止
+% 条件，难以根据局部风险和导航进展自适应调整。连续子目标空间中还存在大量几何上
+% 不可行或风险较高的候选动作，可能增加高层探索难度并降低决策可执行性。
+
+% 第五段：
+% 事件触发机制为解决上述问题提供了可行思路。与固定周期重规划不同，事件触发方法
+% 根据系统状态或环境风险变化决定是否更新策略或重规划，从而在降低冗余计算的同时
+% 增强对关键风险事件的响应能力。Sun等人提出事件触发可重构DDPG，用于改善未知动态
+% 环境中的训练效率和运动规划性能。Chen等人在UAV未知环境导航中提出事件触发分层
+% 规划器，仅在障碍物进入感知范围时激活高层避障策略。这些工作表明，事件触发更新
+% 机制可以与分层决策结构结合用于未知环境导航任务。但在地面移动机器人无图长距离
+% 导航中，仍需进一步解决三个问题：如何同时利用风险升高和进展停滞触发高层更新；
+% 如何从局部LiDAR几何中生成可执行子目标；以及如何在高层子目标评估中显式区分效率
+% 收益和安全代价。
+
+% 第六段：
+% 因此，我们提出一种面向未知动态环境无图导航的事件触发分层强化学习框架。该框架
+% 将导航任务组织为由高层子目标规划和低层目标条件连续控制构成的分层决策过程。
+% 高层规划器基于局部LiDAR几何生成候选子目标，并仅在风险感知或进展停滞等事件
+% 发生时触发重规划。低层控制器根据当前活动子目标输出连续速度命令，实现短时域
+% 跟踪与局部避障。我们还设计了效率和安全双头价值评估网络，分别刻画候选子目标的
+% 长程推进收益和安全代价，并通过融合评分准则完成高层子目标选择。
+
+% 第七段：
+% 我们的主要贡献如下。第一，我们提出了一种融合风险感知与停滞检测的事件触发式
+% 分层导航框架，使高层子目标更新由环境状态变化驱动而非固定频率调度，缓解了固定
+% 周期方案在动态环境中存在的响应滞后和冗余重规划问题。第二，我们设计了一种基于
+% 局部LiDAR几何信息的候选子目标生成机制，将连续高层动作空间约束为与当前可通行
+% 结构一致的有限候选集合，提高了高层决策的可执行性并降低了无效探索。第三，我们
+% 构建了一种效率与安全的双头价值评估结构，显式解耦候选子目标的推进收益和安全
+% 代价，并通过融合评分准则在动态环境下实现更稳定的子目标选择。

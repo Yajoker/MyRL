@@ -1,0 +1,129 @@
+% ============================================================
+% Part 1 [LaTeX]
+% ============================================================
+
+\section{Related Work}
+\label{sec:related_work}
+
+Mapless navigation in unknown dynamic environments requires coordinating goal pursuit, risk response, and obstacle avoidance under local observations. To contextualize our approach, this section reviews traditional planning methods, Deep Reinforcement Learning (DRL) based navigation, and Hierarchical Reinforcement Learning (HRL) based navigation in turn, tracing the methodological evolution from explicit modeling to closed-loop policy learning, and further to temporal abstraction with subgoal-level decision-making.
+
+\subsection{Traditional Planning Methods}
+\label{subsec:traditional_planning}
+
+Classical navigation systems predominantly adopt a modular architecture that couples global path planning with local obstacle avoidance and trajectory generation. The global layer typically produces a reference path through graph search, sampling-based planning, or optimization-based planning. Hart et al. \cite{17} proposed the A* search algorithm, which performs heuristic path search over discrete graph structures. Kavraki et al. \cite{18} introduced the Probabilistic Roadmap Method (PRM), which samples configurations and constructs a connectivity graph to characterize reachable regions in the configuration space. LaValle \cite{19} proposed the Rapidly-exploring Random Tree (RRT) for feasible path search in high-dimensional continuous spaces, and Karaman and Frazzoli \cite{20} later extended it to RRT*, strengthening its theoretical properties regarding asymptotic optimality. The local layer converts the global path into executable trajectories and control sequences that satisfy the kinematic constraints of the robot. Fox et al. \cite{2} proposed the Dynamic Window Approach (DWA), which samples feasible control commands in the velocity space for real-time obstacle avoidance. R\"{o}smann et al. \cite{21} introduced the Timed Elastic Band (TEB) method, which jointly optimizes trajectory topology and temporal parameters to improve local trajectory feasibility under dynamic constraints. To address trajectory generation under high-dimensional and collision constraints, Schulman et al. \cite{22} proposed TrajOpt, which employs sequential convex optimization and continuous-time collision checking to efficiently refine an initial trajectory into a feasible one.
+
+For dynamic obstacle and crowd interaction scenarios, traditional methods have further incorporated risk modeling and multi-agent avoidance mechanisms. Montero et al. \cite{23} improved safety and passing efficiency in crowded environments through dynamic vigilance zones and short-range targets, demonstrating that geometric rules can still provide useful insights for risk-aware and local goal design. Some studies have also attempted to embed learning mechanisms into the planning process. Veerapaneni et al. \cite{24} learned local heuristics to reduce node expansion, Li et al. \cite{25} proposed EARN to incorporate edge-collaborative computation into planning decisions for resource-constrained settings, and Zhao et al. \cite{26} introduced E(2)-equivariant structures into graph-based planning to improve representation sharing and generalization.
+
+These methods offer a clear separation among mapping, planning, and control, with each functional module amenable to independent design and debugging, yet they rely heavily on environment representation and cost modeling. In scenarios involving dense dynamic interactions, perceptual uncertainty, or long-range tasks, the computational burden and local-optimality risks arising from frequent replanning and parameter sensitivity remain prominent, motivating the further adoption of policy learning methods within the navigation loop.
+
+\subsection{DRL-based Navigation Methods}
+\label{subsec:drl_navigation}
+
+DRL-based navigation typically formulates mobile robot navigation as a sequential decision-making problem, learning a closed-loop policy that maps sensory inputs to control outputs through interaction with the environment. Compared with traditional planning methods that depend on complete maps, explicit obstacle models, and hand-crafted cost functions, DRL methods can directly consume inputs such as two-dimensional or three-dimensional Light Detection and Ranging (LiDAR) scans, depth images, visual information, relative goal poses, and action histories, and output linear velocities, angular velocities, or local motion commands, yielding stronger adaptability in unknown environments, dynamic obstacle avoidance, and crowd interaction scenarios. Zhu et al. \cite{28} surveyed recent DRL navigation methods for dynamic environments, categorizing them into value-based, policy-based, and actor-critic approaches, and noted that existing studies still face insufficient generalization, inadequate training in complex dynamic environments, difficulties in real-time deployment, and the simulation-to-reality transfer gap. In LiDAR-based mapless navigation tasks, the robot typically takes local laser scans together with the relative distance and bearing to the goal as state inputs, and completes obstacle avoidance and goal reaching through a continuous control policy. Liu et al. \cite{6} used LiDAR as the primary input to learn obstacle avoidance and goal-directed policies under mapless conditions, incorporating demonstration or constraint mechanisms to reduce exploration risk. To alleviate the decision instability caused by relying solely on instantaneous observations, Li et al. \cite{8} and Samsani et al. \cite{7} introduced memory mechanisms and GRU structures, respectively, to exploit historical interaction information, while the Transformer memory method proposed by Li et al. \cite{8} further enhanced spatiotemporal modeling in interactive visual navigation. These efforts indicate that historical information and interaction modeling play an important role in stabilizing decisions under partially observable dynamic environments.
+
+Beyond directly outputting low-level velocity actions, some studies have sought to raise the abstraction level of policy outputs or to strengthen risk assessment capabilities. Yu et al. \cite{27} proposed PathRL, which extends the reinforcement learning output from velocity control to path generation so as to better align collision avoidance, geometric constraints, and trajectory smoothness. Sun et al. \cite{9} employed attention mechanisms and categorical value estimation to enhance the reliability of collision-related decisions. Cheng et al. \cite{10} considered safety, time efficiency, obstacle avoidance, and smoothness simultaneously through multi-objective rewards. Xue et al. \cite{11} leveraged spatiotemporal reasoning and value networks to achieve socially compatible navigation. Sun et al. \cite{15} further proposed RS-DDPG, which reduces redundant updates and improves convergence through event-triggered activation and network structure adjustment, demonstrating that state-change-driven update mechanisms can enhance the adaptability of DRL-based motion planning.
+
+Flat single-level policies, however, still exhibit structural limitations in long-range dynamic navigation. A single policy must simultaneously handle goal pursuit, local obstacle avoidance, risk response, and action smoothing, which tends to complicate reward design, destabilize training, and induce action oscillations. When dynamic obstacle density increases or the environment topology becomes complex, single-step velocity control also struggles to sustain consistent progress over long distances. Navigation decision-making therefore calls for the introduction of temporal abstraction and task decomposition mechanisms that separate long-range intent generation from local continuous control.
+
+% ============================================================
+% Part 2 [Translation] (中文回译，用于核对逻辑是否符合原意)
+% ============================================================
+
+% 引言段：
+% 未知动态环境下的无图导航需要在局部观测中协调目标推进、风险响应与避障控制。
+% 为了为我们的方法提供背景，本节依次回顾传统规划方法、基于深度强化学习的导航
+% 和基于分层强化学习的导航，追溯从显式建模到闭环策略学习，再到时间抽象与子目标
+% 级决策的方法演进。
+
+% 2.1段落1：
+% 经典导航系统主要采用全局路径规划与局部避障/轨迹生成相结合的模块化架构。全局
+% 层通常通过图搜索、基于采样的规划或基于优化的规划生成参考路径。Hart等人提出了
+% A*搜索算法，在离散图结构上进行启发式路径搜索。Kavraki等人提出了概率路图方法
+% （PRM），通过在构型空间中采样并构建连通图来描述可达区域。LaValle提出了快速扩展
+% 随机树（RRT），用于高维连续空间中的可行路径搜索，Karaman和Frazzoli后来将其
+% 扩展为RRT*，增强了其在渐近最优性方面的理论性质。局部层将全局路径转化为满足
+% 机器人运动学约束的可执行轨迹和控制序列。Fox等人提出了动态窗口法（DWA），通过
+% 在速度空间中采样可行控制指令实现实时避障。Rösmann等人提出了时间弹性带（TEB）
+% 方法，通过联合优化轨迹拓扑和时间参数来提高动态约束下局部轨迹的可执行性。为
+% 解决高维和碰撞约束下的轨迹生成问题，Schulman等人提出了TrajOpt，利用序列凸
+% 优化和连续时间碰撞检测将初始轨迹高效修正为可行轨迹。
+
+% 2.1段落2：
+% 针对动态障碍和人群交互场景，传统方法进一步引入了风险建模和多智能体避障机制。
+% Montero等人通过动态警戒区和短距离目标改善了拥挤环境中的安全性和通行效率，
+% 表明几何规则仍能为风险感知和局部目标设计提供有益启发。一些研究还尝试将学习
+% 机制嵌入规划过程。Veerapaneni等人学习局部启发以减少节点展开，Li等人提出EARN
+% 将边缘协同计算纳入规划决策以适配资源约束设置，Zhao等人在基于图的规划中引入
+% E(2)等变结构以提升表征共享与泛化。
+
+% 2.1段落3：
+% 这类方法在建图、规划和控制之间提供了清晰的分离，各功能模块便于独立设计和调试，
+% 但对环境表征和代价建模依赖较强。在涉及密集动态交互、感知不确定或长程任务的
+% 场景中，频繁重规划和参数敏感性带来的计算负担与局部最优风险仍较突出，从而推动
+% 了策略学习方法在导航闭环中的进一步引入。
+
+% 2.2段落1：
+% 基于DRL的导航通常将移动机器人导航建模为序列决策问题，通过与环境交互学习从
+% 传感输入到控制输出的闭环策略。与依赖完整地图、显式障碍物模型和人工代价函数
+% 的传统规划方法相比，DRL方法可以直接利用二维或三维LiDAR扫描、深度图像、视觉
+% 信息、目标相对位姿和动作历史等输入，输出线速度、角速度或局部运动指令，在未知
+% 环境、动态避障和人群交互场景中具有更强的适应性。Zhu等人综述了近年来面向动态
+% 环境的DRL导航方法，将其分为基于价值、基于策略和actor-critic等路线，并指出现有
+% 研究仍面临泛化能力不足、复杂动态环境训练不充分、实时部署困难以及仿真到现实
+% 迁移差距等问题。在基于LiDAR的无图导航任务中，机器人通常以局部激光扫描及目标
+% 相对距离和方位角作为状态输入，通过连续控制策略完成避障与目标到达。Liu等人以
+% LiDAR为主要输入，在无图条件下学习避障和目标导引策略，并结合示教或约束机制
+% 降低探索风险。为缓解仅依赖瞬时观测导致的决策不稳定，Li等人和Samsani等人分别
+% 引入记忆机制和GRU结构以利用历史交互信息，而Li等人提出的Transformer记忆方法
+% 进一步增强了交互式视觉导航中的时空建模能力。这些工作表明，历史信息和交互建模
+% 对于部分可观测动态环境中的稳定决策具有重要作用。
+
+% 2.2段落2：
+% 除了直接输出底层速度动作外，部分研究尝试提升策略输出的抽象层级或增强风险评估
+% 能力。Yu等人提出PathRL，将强化学习输出从速度控制扩展为路径生成，以更好地对齐
+% 碰撞规避、几何约束与轨迹平滑。Sun等人采用注意力机制和分类式价值评估增强碰撞
+% 相关决策的可靠性。Cheng等人通过多目标奖励同时考虑安全性、时间效率、避障和
+% 平滑性。Xue等人利用时空推理和值网络实现社会兼容导航。Sun等人进一步提出
+% RS-DDPG，通过事件触发激活和网络结构调整减少冗余更新并改善收敛过程，表明
+% 状态变化驱动的更新机制能够提升DRL运动规划的适应性。
+
+% 2.2段落3：
+% 然而，单层策略在长距离动态导航中仍存在结构性局限。同一策略需要同时处理目标
+% 推进、局部避障、风险响应和动作平滑，容易导致奖励设计复杂化、训练不稳定和动作
+% 振荡；当动态障碍物密度增加或环境拓扑变得复杂时，单步速度控制也难以在长距离
+% 任务中维持一致的推进。因此，导航决策需要引入时间抽象和任务分解机制，将长程
+% 意图生成与局部连续控制分离。
+
+\subsection{HRL-based Navigation Methods}
+\label{subsec:hrl_navigation}
+
+Hierarchical Reinforcement Learning (HRL) leverages temporal abstraction to decompose navigation into high-level subgoal or skill selection and low-level continuous control execution. The Options framework proposed by Sutton et al. \cite{12} established a formal foundation for temporally abstract reinforcement learning, enabling a high-level policy to select options, or subtasks that persist over multiple low-level time steps, within a semi-Markov decision process. Nachum et al. \cite{28} proposed HIRO, which improves trainability and data efficiency in two-level structures through goal-conditioned low-level policies and high-level off-policy correction. Recent studies have shown that hierarchical structures and subgoal mechanisms can alleviate the myopic behavior of flat policies in long-range tasks. Jing et al. \cite{14} adopted a two-stage reinforcement learning framework that decomposes long-distance indoor navigation in dense crowds into stage-wise decision-making and local execution, improving deadlock recovery in structurally complex environments. Gao et al. \cite{13} used congestion estimation to assist subgoal updates for safe mapless navigation in complex crowd environments. To avoid ineffective replanning and constrain the high-level update frequency, event-triggered mechanisms have been further integrated into hierarchical navigation frameworks. Chen et al. \cite{16} proposed an event-triggered hierarchical planner that activates high-level decisions only when risk events arise during autonomous navigation in unknown environments, with the high-level module producing intermediate goals and the low-level controller performing goal tracking. Chen and Xue \cite{29} adopted event-triggered hierarchical DRL for UAV navigation, reducing redundant computation while maintaining responsiveness to obstacle appearances. Hierarchical frameworks show potential for decoupling long-range decision-making from local feasible control, yet the design of inter-level interfaces, including subgoal spaces and termination conditions, cross-level credit assignment, and training pipeline complexity still constrain reusability and deployability, particularly in dense dynamic and long-range tasks where safety constraints, online adaptation, and computational budgets must be balanced simultaneously.
+
+Existing hierarchical navigation methods, however, still face several issues in dynamic long-range tasks. If the high-level policy updates at a fixed period or under simple termination conditions, it may respond with delay when local risks change rapidly, or produce redundant replanning when the environment is relatively stable. In crowded or topologically complex environments, the robot may still experience local stagnation, reduced detour efficiency, or policy oscillation. Many methods also rely on a single reward or value signal to coordinate goal pursuit and safe obstacle avoidance, making it difficult to maintain a stable safety-efficiency trade-off under high dynamic obstacle densities. To address these issues, we construct an event-triggered hierarchical decision framework that integrates geometric constraints and risk perception, employing adaptive replanning, LiDAR-based candidate subgoal generation, and dual-head value evaluation to improve the stability and safety of long-range mapless navigation in dynamic environments.
+
+% 2.3段落1：
+% 分层强化学习（HRL）利用时间抽象将导航分解为高层子目标或技能选择与低层连续
+% 控制执行。Sutton等人提出的Options框架为基于时间抽象的强化学习建立了形式化
+% 基础，使高层策略能够在半马尔可夫决策过程中选择持续若干低层时间步的选项或
+% 子任务。Nachum等人提出HIRO，通过目标条件低层策略和高层离策略校正提升两层
+% 结构的可训练性和数据效率。近期研究表明，分层结构和子目标机制能够缓解单层
+% 策略在长程任务中的短视行为。Jing等人采用两阶段强化学习框架，将密集人群中的
+% 长距离室内导航分解为阶段性决策与局部执行，改善了结构复杂环境中的脱困能力。
+% Gao等人利用拥堵估计辅助子目标更新，服务于复杂人群环境下的安全无图导航。为
+% 避免无效重规划并约束高层更新频率，事件触发机制被进一步引入分层导航框架。
+% Chen等人提出事件触发分层规划器，仅在风险事件出现时激活高层决策，由高层模块
+% 产生中间目标，低层控制器负责目标跟踪。Chen和Xue在无人机导航中采用事件触发
+% 分层DRL，减少冗余计算同时保持对障碍物出现的响应能力。分层框架在长程决策与
+% 局部可行控制的解耦方面具备潜力，但层级接口（包括子目标空间和终止条件）的设计、
+% 跨层信用分配以及训练流程复杂度仍对复用性和可部署性构成约束，尤其在密集动态
+% 与长程任务中需要同时平衡安全约束、在线适应与计算预算。
+
+% 2.3段落2：
+% 然而，现有分层导航方法在动态长程任务中仍面临若干问题。若高层策略以固定周期
+% 或简单终止条件进行更新，可能在局部风险快速变化时响应滞后，也可能在环境相对
+% 稳定时产生冗余重规划。在拥挤或拓扑复杂的环境中，机器人仍可能出现局部停滞、
+% 绕行效率下降或策略振荡等现象。许多方法还依赖单一奖励或价值信号协调目标推进
+% 与安全避障，难以在高动态障碍密度下保持稳定的安全效率权衡。针对这些问题，我们
+% 构建了融合几何约束与风险感知机制的事件触发分层决策框架，通过自适应重规划、
+% 基于LiDAR的候选子目标生成和双头价值评估，以提高动态环境下长程无图导航的
+% 稳定性与安全性。
